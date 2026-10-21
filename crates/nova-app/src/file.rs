@@ -6,13 +6,16 @@
 //! byte  5     tipo de documento (1 = texto)
 //! bytes 6..   estado do documento
 //! ```
+//!
+//! Versões: 1 = parágrafos como `YText` (incremento 1); 2 = parágrafos como
+//! `YMap` com estilo e texto formatado. A versão 1 não é mais lida.
 
 use crate::AppError;
 use nova_crdt::ClientId;
 use nova_domain_text::TextDocument;
 
 const MAGIC: &[u8; 4] = b"NOVA";
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 const KIND_TEXT: u8 = 1;
 const HEADER_LEN: usize = 6;
 
@@ -49,10 +52,13 @@ mod tests {
 
     #[test]
     fn rejeita_arquivo_estranho() {
-        assert!(matches!(decode(1, b"PK\x03\x04zip"), Err(AppError::NotANovaFile)));
         assert!(matches!(
-            decode(1, b"NOVA\x09\x01"),
-            Err(AppError::UnsupportedVersion(9))
+            decode(1, b"PK\x03\x04zip"),
+            Err(AppError::NotANovaFile)
+        ));
+        assert!(matches!(
+            decode(1, b"NOVA\x01\x01"),
+            Err(AppError::UnsupportedVersion(1))
         ));
     }
 }

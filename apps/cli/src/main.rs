@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use nova_app::{file, Session};
+use clap::{Parser, Subcommand, ValueEnum};
+use nova_app::{file, markdown, Session};
 use nova_crdt::ClientId;
 use nova_domain_text::TextDocument;
 
@@ -21,30 +21,52 @@ enum Command {
     New { out: PathBuf },
     /// Converte um .txt (UTF-8) em documento .nova, um parágrafo por linha
     Import { input: PathBuf, out: PathBuf },
-    /// Exporta um .nova como texto; sem OUT, imprime no terminal
-    Export { input: PathBuf, out: Option<PathBuf> },
+    /// Exporta um .nova como texto ou Markdown; sem OUT, imprime no terminal
+    Export {
+        input: PathBuf,
+        out: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = ExportFormat::Txt)]
+        format: ExportFormat,
+    },
     /// Executa um comando JSON no documento e grava o resultado
     ///
     /// Exemplo: nova exec doc.nova '{"type":"text.insert","block":0,"offset":0,"text":"Olá"}'
     /// Com @arquivo.json o comando é lido do arquivo.
     Exec { doc: PathBuf, command: String },
     /// Funde duas cópias editadas em separado do mesmo documento
-    Merge { a: PathBuf, b: PathBuf, out: PathBuf },
+    Merge {
+        a: PathBuf,
+        b: PathBuf,
+        out: PathBuf,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ExportFormat {
+    /// Texto simples, um parágrafo por linha
+    Txt,
+    /// Markdown com títulos, ênfase, citações e código
+    Md,
 }
 
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::New { out } => write_doc(&out, &TextDocument::new(client_id())),
         Command::Import { input, out } => {
-            let text = fs::read_to_string(&input)
-                .with_context(|| format!("lendo {}", input.display()))?;
+            let text =
+                fs::read_to_string(&input).with_context(|| format!("lendo {}", input.display()))?;
             write_doc(&out, &TextDocument::from_plain_text(client_id(), &text))
         }
-        Command::Export { input, out } => {
-            let text = read_doc(&input)?.to_plain_text();
+        Command::Export { input, out, format } => {
+            let doc = read_doc(&input)?;
+            let text = match format {
+                ExportFormat::Txt => doc.to_plain_text(),
+                ExportFormat::Md => markdown::export(&doc),
+            };
             match out {
-                Some(out) => fs::write(&out, text)
-                    .with_context(|| format!("gravando {}", out.display())),
+                Some(out) => {
+                    fs::write(&out, text).with_context(|| format!("gravando {}", out.display()))
+                }
                 None => {
                     println!("{text}");
                     Ok(())
@@ -53,8 +75,9 @@ fn main() -> Result<()> {
         }
         Command::Exec { doc, command } => {
             let command = match command.strip_prefix('@') {
-                Some(path) => fs::read_to_string(path)
-                    .with_context(|| format!("lendo comando de {path}"))?,
+                Some(path) => {
+                    fs::read_to_string(path).with_context(|| format!("lendo comando de {path}"))?
+                }
                 None => command,
             };
             let mut session = Session::new(read_doc(&doc)?);

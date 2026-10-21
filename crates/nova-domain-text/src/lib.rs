@@ -6,7 +6,11 @@
 //!
 //! Offsets são unidades UTF-16 dentro de um bloco (parágrafo).
 
-use nova_crdt::{utf16_len, ClientId, CrdtError, Replica};
+mod format;
+
+pub use format::{BlockStyle, Mark, MarkKind, Span};
+
+use nova_crdt::{utf16_len, AttrMap, ClientId, CrdtError, Replica};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -15,31 +19,102 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum TextCommand {
+    /// Sem `marks`, o texto herda a formatação à esquerda; com `marks`
+    /// (mesmo vazio), recebe exatamente essas marcas.
     #[serde(rename = "text.insert")]
-    InsertText { block: u32, offset: u32, text: String },
+    InsertText {
+        block: u32,
+        offset: u32,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        marks: Option<Vec<Mark>>,
+    },
     #[serde(rename = "text.delete")]
     DeleteText { block: u32, offset: u32, len: u32 },
+    #[serde(rename = "text.applyMark")]
+    ApplyMark {
+        block: u32,
+        offset: u32,
+        len: u32,
+        mark: Mark,
+    },
+    #[serde(rename = "text.removeMark")]
+    RemoveMark {
+        block: u32,
+        offset: u32,
+        len: u32,
+        kind: MarkKind,
+    },
     #[serde(rename = "block.split")]
     SplitBlock { block: u32, offset: u32 },
     #[serde(rename = "block.mergeNext")]
     MergeWithNext { block: u32 },
     #[serde(rename = "block.insert")]
-    InsertBlock { index: u32, text: String },
+    InsertBlock {
+        index: u32,
+        text: String,
+        #[serde(default)]
+        style: BlockStyle,
+    },
     #[serde(rename = "block.remove")]
     RemoveBlock { block: u32 },
+    #[serde(rename = "block.setStyle")]
+    SetBlockStyle { block: u32, style: BlockStyle },
+    #[serde(rename = "history.undo")]
+    Undo,
+    #[serde(rename = "history.redo")]
+    Redo,
 }
 
-/// Eventos de domínio. Carregam o que foi removido para que o desfazer e a
-/// auditoria não precisem consultar o estado anterior.
+/// Eventos de domínio. Carregam o que foi removido para que auditoria e
+/// interface não precisem consultar o estado anterior.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum TextEvent {
-    TextInserted { block: u32, offset: u32, len: u32 },
-    TextDeleted { block: u32, offset: u32, text: String },
-    BlockSplit { block: u32, offset: u32 },
-    BlocksMerged { block: u32, at: u32 },
-    BlockInserted { index: u32 },
-    BlockRemoved { index: u32, text: String },
+    TextInserted {
+        block: u32,
+        offset: u32,
+        len: u32,
+    },
+    TextDeleted {
+        block: u32,
+        offset: u32,
+        text: String,
+    },
+    MarkApplied {
+        block: u32,
+        offset: u32,
+        len: u32,
+        mark: Mark,
+    },
+    MarkRemoved {
+        block: u32,
+        offset: u32,
+        len: u32,
+        kind: MarkKind,
+    },
+    BlockSplit {
+        block: u32,
+        offset: u32,
+    },
+    BlocksMerged {
+        block: u32,
+        at: u32,
+    },
+    BlockInserted {
+        index: u32,
+    },
+    BlockRemoved {
+        index: u32,
+        text: String,
+    },
+    BlockStyled {
+        block: u32,
+        style: BlockStyle,
+    },
+    /// O documento voltou a um estado anterior; a interface deve redesenhar tudo.
+    Undone,
+    Redone,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -54,6 +129,8 @@ pub enum DomainError {
     LastBlock,
     #[error("o estado carregado não tem nenhum bloco")]
     EmptyDocument,
+    #[error("marca inválida: {0}")]
+    InvalidMark(String),
 }
 
 pub struct TextDocument {
@@ -70,14 +147,19 @@ impl TextDocument {
         Self::from_plain_text(client, "")
     }
 
-    /// Um bloco por linha; `\r\n` e `\n` são aceitos.
+    /// Um parágrafo por linha; `\r\n` e `\n` são aceitos.
     pub fn from_plain_text(client: ClientId, text: &str) -> Self {
-        let replica = Replica::new(client);
+        let mut replica = Replica::new(client);
         for (i, line) in text.split('\n').enumerate() {
             replica
-                .insert_block(i as u32, line.strip_suffix('\r').unwrap_or(line))
+                .insert_block(
+                    i as u32,
+                    line.strip_suffix('\r').unwrap_or(line),
+                    BlockStyle::Paragraph.as_str(),
+                )
                 .expect("inserir no fim do array sempre é válido");
         }
+        replica.clear_history();
         Self { replica }
     }
 
@@ -90,32 +172,104 @@ impl TextDocument {
     }
 
     pub fn execute(&mut self, command: TextCommand) -> Result<Vec<TextEvent>, DomainError> {
+        // Digitar e apagar se agrupam no desfazer (janela de 500 ms do Yrs);
+        // os demais comandos viram um passo de desfazer próprio.
+        let discrete = !matches!(
+            command,
+            TextCommand::InsertText { .. } | TextCommand::DeleteText { .. }
+        );
+        if discrete {
+            self.replica.checkpoint();
+        }
+        let events = self.run(command)?;
+        if discrete {
+            self.replica.checkpoint();
+        }
+        Ok(events)
+    }
+
+    fn run(&mut self, command: TextCommand) -> Result<Vec<TextEvent>, DomainError> {
         let event = match command {
-            TextCommand::InsertText { block, offset, text } => {
+            TextCommand::InsertText {
+                block,
+                offset,
+                text,
+                marks,
+            } => {
                 validate_inline(&text)?;
-                self.replica.insert_text(block, offset, &text)?;
-                TextEvent::TextInserted { block, offset, len: utf16_len(&text) }
+                let attrs = marks.map(|marks| marks_to_attrs(&marks)).transpose()?;
+                self.replica
+                    .insert_text(block, offset, &text, attrs.as_ref())?;
+                TextEvent::TextInserted {
+                    block,
+                    offset,
+                    len: utf16_len(&text),
+                }
             }
             TextCommand::DeleteText { block, offset, len } => {
                 if len == 0 {
                     return Ok(Vec::new());
                 }
                 let text = self.replica.delete_text(block, offset, len)?;
-                TextEvent::TextDeleted { block, offset, text }
+                TextEvent::TextDeleted {
+                    block,
+                    offset,
+                    text,
+                }
+            }
+            TextCommand::ApplyMark {
+                block,
+                offset,
+                len,
+                mark,
+            } => {
+                mark.validate()?;
+                let change = (mark.kind().key().to_string(), Some(mark.value()));
+                self.replica.format_text(block, offset, len, &[change])?;
+                TextEvent::MarkApplied {
+                    block,
+                    offset,
+                    len,
+                    mark,
+                }
+            }
+            TextCommand::RemoveMark {
+                block,
+                offset,
+                len,
+                kind,
+            } => {
+                self.replica
+                    .format_text(block, offset, len, &[(kind.key().to_string(), None)])?;
+                TextEvent::MarkRemoved {
+                    block,
+                    offset,
+                    len,
+                    kind,
+                }
             }
             TextCommand::SplitBlock { block, offset } => {
-                self.replica.split_block(block, offset)?;
+                let style = self.block_style(block)?;
+                let at_end = offset == utf16_len(&self.replica.block_text(block)?);
+                // Enter no fim de um título continua com parágrafo normal.
+                let new_style = if at_end && style.is_heading() {
+                    BlockStyle::Paragraph
+                } else {
+                    style
+                };
+                self.replica
+                    .split_block(block, offset, new_style.as_str())?;
                 TextEvent::BlockSplit { block, offset }
             }
             TextCommand::MergeWithNext { block } => {
                 let at = self.replica.merge_with_next(block)?;
                 TextEvent::BlocksMerged { block, at }
             }
-            TextCommand::InsertBlock { index, text } => {
+            TextCommand::InsertBlock { index, text, style } => {
                 if text.contains(['\n', '\r']) {
                     return Err(DomainError::LineBreakInText);
                 }
-                self.replica.insert_block(index, &text)?;
+                self.replica.insert_block(index, &text, style.as_str())?;
                 TextEvent::BlockInserted { index }
             }
             TextCommand::RemoveBlock { block } => {
@@ -124,6 +278,22 @@ impl TextDocument {
                 }
                 let text = self.replica.remove_block(block)?;
                 TextEvent::BlockRemoved { index: block, text }
+            }
+            TextCommand::SetBlockStyle { block, style } => {
+                self.replica.set_block_style(block, style.as_str())?;
+                TextEvent::BlockStyled { block, style }
+            }
+            TextCommand::Undo => {
+                if !self.replica.undo() {
+                    return Ok(Vec::new());
+                }
+                TextEvent::Undone
+            }
+            TextCommand::Redo => {
+                if !self.replica.redo() {
+                    return Ok(Vec::new());
+                }
+                TextEvent::Redone
             }
         };
         Ok(vec![event])
@@ -137,8 +307,29 @@ impl TextDocument {
         Ok(self.replica.block_text(block)?)
     }
 
+    pub fn block_style(&self, block: u32) -> Result<BlockStyle, DomainError> {
+        Ok(BlockStyle::parse(&self.replica.block_style(block)?))
+    }
+
+    pub fn block_spans(&self, block: u32) -> Result<Vec<Span>, DomainError> {
+        Ok(self
+            .replica
+            .block_spans(block)?
+            .into_iter()
+            .map(Span::from)
+            .collect())
+    }
+
     pub fn blocks(&self) -> Vec<String> {
         self.replica.blocks()
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.replica.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.replica.can_redo()
     }
 
     pub fn to_plain_text(&self) -> String {
@@ -158,7 +349,7 @@ impl TextDocument {
         Ok(self.replica.encode_diff(remote_state_vector)?)
     }
 
-    /// Aplica mudanças de outra réplica.
+    /// Aplica mudanças de outra réplica. Elas não entram no desfazer local.
     // TODO: emitir TextEvent para mudanças remotas (observadores do Yrs) e
     // normalizar o caso em que duas réplicas apagam o último bloco ao mesmo tempo.
     pub fn apply_remote(&mut self, update: &[u8]) -> Result<(), DomainError> {
@@ -176,135 +367,15 @@ fn validate_inline(text: &str) -> Result<(), DomainError> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn insert(block: u32, offset: u32, text: &str) -> TextCommand {
-        TextCommand::InsertText { block, offset, text: text.into() }
-    }
-
-    /// Troca as diferenças nos dois sentidos, como faria o servidor de sync.
-    fn sync(a: &mut TextDocument, b: &mut TextDocument) {
-        let a_to_b = a.diff_since(&b.state_vector()).unwrap();
-        let b_to_a = b.diff_since(&a.state_vector()).unwrap();
-        b.apply_remote(&a_to_b).unwrap();
-        a.apply_remote(&b_to_a).unwrap();
-    }
-
-    #[test]
-    fn documento_novo_tem_um_bloco_vazio() {
-        let doc = TextDocument::new(1);
-        assert_eq!(doc.blocks(), vec![""]);
-    }
-
-    #[test]
-    fn inserir_e_apagar_emitem_eventos() {
-        let mut doc = TextDocument::new(1);
-        let events = doc.execute(insert(0, 0, "Olá")).unwrap();
-        assert_eq!(events, vec![TextEvent::TextInserted { block: 0, offset: 0, len: 3 }]);
-
-        let events = doc
-            .execute(TextCommand::DeleteText { block: 0, offset: 1, len: 2 })
-            .unwrap();
-        assert_eq!(
-            events,
-            vec![TextEvent::TextDeleted { block: 0, offset: 1, text: "lá".into() }]
-        );
-        assert_eq!(doc.to_plain_text(), "O");
-    }
-
-    #[test]
-    fn enter_e_backspace_no_inicio_do_paragrafo() {
-        let mut doc = TextDocument::from_plain_text(1, "Primeira linha");
-        doc.execute(TextCommand::SplitBlock { block: 0, offset: 8 }).unwrap();
-        assert_eq!(doc.blocks(), vec!["Primeira", " linha"]);
-
-        let events = doc.execute(TextCommand::MergeWithNext { block: 0 }).unwrap();
-        assert_eq!(events, vec![TextEvent::BlocksMerged { block: 0, at: 8 }]);
-        assert_eq!(doc.to_plain_text(), "Primeira linha");
-    }
-
-    #[test]
-    fn texto_simples_ida_e_volta() {
-        let text = "Título\n\nCorpo com acentuação\r\nFim";
-        let doc = TextDocument::from_plain_text(1, text);
-        assert_eq!(doc.block_count(), 4);
-        assert_eq!(doc.to_plain_text(), "Título\n\nCorpo com acentuação\nFim");
-    }
-
-    #[test]
-    fn offsets_em_utf16_nao_cortam_emoji() {
-        let mut doc = TextDocument::from_plain_text(1, "a😀b");
-        assert!(matches!(
-            doc.execute(insert(0, 2, "X")),
-            Err(DomainError::Crdt(CrdtError::InvalidOffset { .. }))
-        ));
-        doc.execute(insert(0, 3, "X")).unwrap();
-        assert_eq!(doc.to_plain_text(), "a😀Xb");
-    }
-
-    #[test]
-    fn rejeita_comandos_invalidos() {
-        let mut doc = TextDocument::new(1);
-        assert_eq!(doc.execute(insert(0, 0, "")), Err(DomainError::EmptyText));
-        assert_eq!(doc.execute(insert(0, 0, "a\nb")), Err(DomainError::LineBreakInText));
-        assert_eq!(
-            doc.execute(TextCommand::RemoveBlock { block: 0 }),
-            Err(DomainError::LastBlock)
-        );
-        assert_eq!(
-            doc.execute(insert(5, 0, "x")),
-            Err(DomainError::Crdt(CrdtError::BlockNotFound(5)))
-        );
-    }
-
-    #[test]
-    fn salvar_e_carregar() {
-        let original = TextDocument::from_plain_text(1, "um\ndois");
-        let loaded = TextDocument::load(2, &original.save()).unwrap();
-        assert_eq!(loaded.blocks(), original.blocks());
-    }
-
-    #[test]
-    fn edicoes_concorrentes_convergem() {
-        let mut a = TextDocument::from_plain_text(1, "Olá mundo");
-        let mut b = TextDocument::load(2, &a.save()).unwrap();
-
-        a.execute(insert(0, 0, "A: ")).unwrap();
-        b.execute(insert(0, 9, "!")).unwrap();
-        b.execute(TextCommand::InsertBlock { index: 1, text: "nova linha".into() }).unwrap();
-
-        sync(&mut a, &mut b);
-
-        assert_eq!(a.to_plain_text(), b.to_plain_text());
-        assert_eq!(a.to_plain_text(), "A: Olá mundo!\nnova linha");
-    }
-
-    #[test]
-    fn divisao_concorrente_com_digitacao_converge() {
-        let mut a = TextDocument::from_plain_text(1, "abcdef");
-        let mut b = TextDocument::load(2, &a.save()).unwrap();
-
-        a.execute(TextCommand::SplitBlock { block: 0, offset: 3 }).unwrap();
-        b.execute(insert(0, 6, "g")).unwrap();
-
-        sync(&mut a, &mut b);
-
-        assert_eq!(a.blocks(), b.blocks());
-    }
-
-    #[test]
-    fn comandos_em_json() {
-        let cmd: TextCommand =
-            serde_json::from_str(r#"{"type":"text.insert","block":0,"offset":2,"text":"oi"}"#)
-                .unwrap();
-        assert_eq!(cmd, insert(0, 2, "oi"));
-
-        let event = TextEvent::BlocksMerged { block: 1, at: 4 };
-        assert_eq!(
-            serde_json::to_string(&event).unwrap(),
-            r#"{"type":"blocksMerged","block":1,"at":4}"#
-        );
-    }
+fn marks_to_attrs(marks: &[Mark]) -> Result<AttrMap, DomainError> {
+    marks
+        .iter()
+        .map(|mark| {
+            mark.validate()?;
+            Ok((mark.kind().key().to_string(), mark.value()))
+        })
+        .collect()
 }
+
+#[cfg(test)]
+mod tests;

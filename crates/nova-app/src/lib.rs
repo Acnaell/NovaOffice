@@ -4,6 +4,7 @@
 //! `Session`, que os executa no agregado e publica os eventos resultantes.
 
 pub mod file;
+pub mod markdown;
 
 use nova_domain_text::{DomainError, TextCommand, TextDocument, TextEvent};
 use thiserror::Error;
@@ -29,7 +30,10 @@ pub struct Session {
 
 impl Session {
     pub fn new(document: TextDocument) -> Self {
-        Self { document, listeners: Vec::new() }
+        Self {
+            document,
+            listeners: Vec::new(),
+        }
     }
 
     pub fn document(&self) -> &TextDocument {
@@ -80,7 +84,10 @@ mod tests {
             .dispatch_json(r#"{"type":"text.insert","block":0,"offset":0,"text":"Oi"}"#)
             .unwrap();
 
-        assert_eq!(out, r#"[{"type":"textInserted","block":0,"offset":0,"len":2}]"#);
+        assert_eq!(
+            out,
+            r#"[{"type":"textInserted","block":0,"offset":0,"len":2}]"#
+        );
         assert_eq!(seen.lock().unwrap().len(), 1);
         assert_eq!(session.document().to_plain_text(), "Oi");
     }
