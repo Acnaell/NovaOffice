@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "apps/cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+[workspace.dependencies]
+nova-crdt = { path = "crates/nova-crdt" }
+nova-domain-text = { path = "crates/nova-domain-text" }
+nova-app = { path = "crates/nova-app" }
+
+yrs = "0.21"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }

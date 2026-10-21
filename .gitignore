@@ -1,0 +1,4 @@
+/target
+*.nova
+!corpus/**/*.nova
+node_modules/
