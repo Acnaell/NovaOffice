@@ -90,7 +90,7 @@ cargo run -p nova-cli -- --help
 
 ## App desktop
 
-Requer Node.js 20 ou mais recente e, no Windows, o WebView2 (já vem no Windows 10 e 11 atualizados).
+Requer Node.js 22 ou mais recente e, no Windows, o WebView2 (já vem no Windows 10 e 11 atualizados).
 No Linux, instale também as dependências do Tauri:
 `sudo apt install libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`.
 
