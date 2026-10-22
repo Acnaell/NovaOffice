@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  LINUX_DEPS: libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+jobs:
+  lint:
+    name: fmt, clippy e front-end
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependências do Tauri (Linux)
+        run: sudo apt-get update && sudo apt-get install -y $LINUX_DEPS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Front-end (tipos, testes e build)
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: testes (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependências do Tauri (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y $LINUX_DEPS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # O app desktop embute apps/desktop/dist na compilação, então o front-end vem primeiro
+      - name: Build do front-end
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run build
+      - run: cargo test --workspace --locked
+      - name: Teste rápido do CLI
+        shell: bash
+        run: |
+          cargo run -q -p nova-cli --locked -- new smoke.nova
+          cargo run -q -p nova-cli --locked -- exec smoke.nova @.github/smoke-command.json
+          test "$(cargo run -q -p nova-cli --locked -- export smoke.nova | tr -d '\r')" = "NovaOffice"

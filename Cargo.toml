@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "apps/cli"]
+members = ["crates/*", "apps/cli", "apps/desktop/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,9 +13,13 @@ nova-crdt = { path = "crates/nova-crdt" }
 nova-domain-text = { path = "crates/nova-domain-text" }
 nova-app = { path = "crates/nova-app" }
 
-yrs = "0.21"
+# `sync`: documentos e desfazer podem ser compartilhados entre threads (exigido pelo estado do Tauri).
+yrs = { version = "0.21", features = ["sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+tauri = { version = "2", features = [] }
+tauri-build = { version = "2", features = [] }
+tauri-plugin-dialog = "2"

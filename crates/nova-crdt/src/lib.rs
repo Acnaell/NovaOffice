@@ -324,6 +324,12 @@ pub fn utf16_len(s: &str) -> u32 {
     s.encode_utf16().count() as u32
 }
 
+/// `true` se `offset` é uma posição válida em `s` (não passa do fim e não
+/// cai no meio de um par substituto).
+pub fn is_boundary(s: &str, offset: u32) -> bool {
+    byte_index(s, offset).is_some()
+}
+
 /// Trechos do texto com seus atributos crus do Yrs.
 fn raw_spans<T: ReadTxn>(text: &TextRef, txn: &T) -> Vec<(String, Attrs)> {
     text.diff(txn, |_| ())

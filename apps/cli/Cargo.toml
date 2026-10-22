@@ -11,7 +11,6 @@ name = "nova"
 path = "src/main.rs"
 
 [dependencies]
-nova-crdt.workspace = true
 nova-domain-text.workspace = true
 nova-app.workspace = true
 anyhow.workspace = true

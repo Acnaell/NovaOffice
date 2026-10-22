@@ -10,9 +10,16 @@ mod format;
 
 pub use format::{BlockStyle, Mark, MarkKind, Span};
 
-use nova_crdt::{utf16_len, AttrMap, ClientId, CrdtError, Replica};
+use nova_crdt::{is_boundary, utf16_len, AttrMap, ClientId, CrdtError, Replica};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+/// Posição no documento: bloco e offset UTF-16 dentro dele.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Pos {
+    pub block: u32,
+    pub offset: u32,
+}
 
 /// Comandos aceitos pelo agregado. O campo `type` do JSON é o nome do comando,
 /// o mesmo usado pela UI, por plugins e por agentes de IA.
@@ -31,6 +38,10 @@ pub enum TextCommand {
     },
     #[serde(rename = "text.delete")]
     DeleteText { block: u32, offset: u32, len: u32 },
+    /// Apaga de `from` até `to`, mesmo atravessando parágrafos; os parágrafos
+    /// das pontas são unidos, como ao apagar uma seleção num editor.
+    #[serde(rename = "text.deleteRange")]
+    DeleteRange { from: Pos, to: Pos },
     #[serde(rename = "text.applyMark")]
     ApplyMark {
         block: u32,
@@ -64,6 +75,11 @@ pub enum TextCommand {
     Undo,
     #[serde(rename = "history.redo")]
     Redo,
+    /// Vários comandos como um único passo de desfazer (colar várias linhas,
+    /// formatar vários parágrafos). Não é atômico: se um comando falha, os
+    /// anteriores já foram aplicados.
+    #[serde(rename = "batch")]
+    Batch { commands: Vec<TextCommand> },
 }
 
 /// Eventos de domínio. Carregam o que foi removido para que auditoria e
@@ -80,6 +96,10 @@ pub enum TextEvent {
         block: u32,
         offset: u32,
         text: String,
+    },
+    RangeDeleted {
+        from: Pos,
+        to: Pos,
     },
     MarkApplied {
         block: u32,
@@ -131,6 +151,10 @@ pub enum DomainError {
     EmptyDocument,
     #[error("marca inválida: {0}")]
     InvalidMark(String),
+    #[error("intervalo inválido: o início vem depois do fim")]
+    InvalidRange,
+    #[error("batch não pode conter batch, history.undo ou history.redo")]
+    InvalidBatch,
 }
 
 pub struct TextDocument {
@@ -189,6 +213,19 @@ impl TextDocument {
     }
 
     fn run(&mut self, command: TextCommand) -> Result<Vec<TextEvent>, DomainError> {
+        if let TextCommand::Batch { commands } = command {
+            let mut events = Vec::new();
+            for command in commands {
+                if matches!(
+                    command,
+                    TextCommand::Batch { .. } | TextCommand::Undo | TextCommand::Redo
+                ) {
+                    return Err(DomainError::InvalidBatch);
+                }
+                events.extend(self.run(command)?);
+            }
+            return Ok(events);
+        }
         let event = match command {
             TextCommand::InsertText {
                 block,
@@ -216,6 +253,13 @@ impl TextDocument {
                     offset,
                     text,
                 }
+            }
+            TextCommand::DeleteRange { from, to } => {
+                if from == to {
+                    return Ok(Vec::new());
+                }
+                self.delete_range(from, to)?;
+                TextEvent::RangeDeleted { from, to }
             }
             TextCommand::ApplyMark {
                 block,
@@ -295,8 +339,48 @@ impl TextDocument {
                 }
                 TextEvent::Redone
             }
+            TextCommand::Batch { .. } => unreachable!("tratado no início de run"),
         };
         Ok(vec![event])
+    }
+
+    /// Valida as duas pontas antes de mudar qualquer coisa, para não deixar
+    /// o documento pela metade.
+    fn delete_range(&mut self, from: Pos, to: Pos) -> Result<(), DomainError> {
+        if from > to {
+            return Err(DomainError::InvalidRange);
+        }
+        let first = self.replica.block_text(from.block)?;
+        let last = self.replica.block_text(to.block)?;
+        for (pos, text) in [(from, &first), (to, &last)] {
+            if !is_boundary(text, pos.offset) {
+                return Err(CrdtError::InvalidOffset {
+                    block: pos.block,
+                    offset: pos.offset,
+                    len: utf16_len(text),
+                }
+                .into());
+            }
+        }
+
+        if from.block == to.block {
+            self.replica
+                .delete_text(from.block, from.offset, to.offset - from.offset)?;
+            return Ok(());
+        }
+        let first_len = utf16_len(&first);
+        if from.offset < first_len {
+            self.replica
+                .delete_text(from.block, from.offset, first_len - from.offset)?;
+        }
+        if to.offset > 0 {
+            self.replica.delete_text(to.block, 0, to.offset)?;
+        }
+        for block in (from.block + 1..to.block).rev() {
+            self.replica.remove_block(block)?;
+        }
+        self.replica.merge_with_next(from.block)?;
+        Ok(())
     }
 
     pub fn block_count(&self) -> u32 {

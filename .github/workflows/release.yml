@@ -1,0 +1,219 @@
+name: Release
+
+# Publica uma versão quando uma tag vX.Y.Z é enviada:
+#   git tag v0.1.0 && git push origin v0.1.0
+# A release é criada como rascunho, recebe os arquivos de todas as plataformas
+# e só é publicada no fim, quando tudo compilou.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag já existente para (re)publicar, ex.: v0.1.0"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  prepare:
+    name: Conferir versão e criar rascunho
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Tag deve bater com as versões do projeto
+        run: |
+          want="${TAG#v}"
+          cargo_v=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "nova-cli") | .version')
+          tauri_v=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+          npm_v=$(jq -r .version apps/desktop/package.json)
+          echo "tag=$want Cargo=$cargo_v tauri.conf=$tauri_v package.json=$npm_v"
+          for v in "$cargo_v" "$tauri_v" "$npm_v"; do
+            if [ "$v" != "$want" ]; then
+              echo "::error::A tag ${TAG} não bate com todas as versões (Cargo.toml, tauri.conf.json, package.json)"
+              exit 1
+            fi
+          done
+
+      - name: Notas da versão a partir do CHANGELOG
+        run: |
+          version="${TAG#v}"
+          awk -v v="$version" '
+            /^## \[/ { if (found) exit; if (index($0, "[" v "]")) { found = 1; next } }
+            /^\[[^]]+\]: / { if (found) exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Versão ${TAG} da NovaOffice." > notes.md
+          cat notes.md
+
+      - name: Criar rascunho da release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "A release $TAG já existe; os arquivos serão substituídos."
+          else
+            gh release create "$TAG" --draft --verify-tag \
+              --title "NovaOffice ${TAG}" --notes-file notes.md
+          fi
+
+  cli:
+    name: CLI ${{ matrix.target }}
+    needs: prepare
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-pc-windows-msvc,    os: windows-latest }
+          - { target: x86_64-unknown-linux-gnu,  os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { target: x86_64-apple-darwin,       os: macos-latest }
+          - { target: aarch64-apple-darwin,      os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-${{ matrix.target }}
+
+      - name: Compilar
+        run: cargo build --release --locked -p nova-cli --target ${{ matrix.target }}
+
+      - name: Empacotar e enviar
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name="nova-${{ matrix.target }}"
+          mkdir -p "dist/${name}"
+          cp README.md LICENSE CHANGELOG.md "dist/${name}/"
+          cd dist
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cp "../target/${{ matrix.target }}/release/nova.exe" "${name}/"
+            7z a -tzip "${name}.zip" "${name}" > /dev/null
+            archive="${name}.zip"
+          else
+            cp "../target/${{ matrix.target }}/release/nova" "${name}/"
+            tar -czf "${name}.tar.gz" "${name}"
+            archive="${name}.tar.gz"
+          fi
+          if command -v sha256sum > /dev/null; then
+            sha256sum "${archive}" > "${archive}.sha256"
+          else
+            shasum -a 256 "${archive}" > "${archive}.sha256"
+          fi
+          gh release upload "$TAG" "${archive}" "${archive}.sha256" --clobber
+
+  desktop:
+    name: App desktop ${{ matrix.target }}
+    needs: prepare
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-pc-windows-msvc,   os: windows-latest }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: x86_64-apple-darwin,      os: macos-latest }
+          - { target: aarch64-apple-darwin,     os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Dependências do Tauri (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-${{ matrix.target }}
+
+      - name: Instalar dependências do front-end
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Compilar instaladores
+        working-directory: apps/desktop
+        run: npx tauri build --target ${{ matrix.target }}
+
+      - name: Enviar instaladores
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bundle="target/${{ matrix.target }}/release/bundle"
+          shopt -s nullglob
+          files=(
+            "$bundle"/nsis/*.exe "$bundle"/msi/*.msi
+            "$bundle"/dmg/*.dmg
+            "$bundle"/appimage/*.AppImage "$bundle"/deb/*.deb "$bundle"/rpm/*.rpm
+          )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::Nenhum instalador encontrado em $bundle"
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            if command -v sha256sum > /dev/null; then
+              (cd "$(dirname "$f")" && sha256sum "$(basename "$f")" > "$(basename "$f").sha256")
+            else
+              (cd "$(dirname "$f")" && shasum -a 256 "$(basename "$f")" > "$(basename "$f").sha256")
+            fi
+            gh release upload "$TAG" "$f" "$f.sha256" --clobber
+          done
+
+  publish:
+    name: Publicar a release
+    needs: [cli, desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: SHA256SUMS e publicação
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir sums && cd sums
+          gh release download "$TAG" --pattern '*.sha256'
+          cat *.sha256 | sort -k2 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --clobber
+          # Tags com sufixo (v0.2.0-beta.1) viram pré-lançamento e não aparecem como "latest"
+          if [[ "$TAG" == *-* ]]; then
+            gh release edit "$TAG" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --draft=false --latest
+          fi

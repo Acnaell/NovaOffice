@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>NovaOffice</title>
+  <rect width="256" height="256" fill="#1D2D3D"/>
+  <!-- Text -->
+  <rect x="32" y="66" width="56" height="20" fill="#70B3F7"/>
+  <rect x="32" y="102" width="35" height="20" fill="#70B3F7"/>
+  <!-- Sheets -->
+  <rect x="100" y="66" width="24" height="24" fill="#73C385"/>
+  <rect x="132" y="66" width="24" height="24" fill="#73C385"/>
+  <rect x="100" y="98" width="24" height="24" fill="#73C385"/>
+  <rect x="132" y="98" width="24" height="24" fill="#73C385"/>
+  <!-- Slides -->
+  <path d="M167 66 L223 94 L167 122 Z" fill="#ED946C"/>
+  <!-- Draw -->
+  <circle cx="60" cy="162" r="28" fill="#D094DD"/>
+  <!-- Base -->
+  <path d="M100 190 V134 A56 56 0 0 1 156 190 Z" fill="#D1A84B"/>
+  <!-- Math -->
+  <path d="M188.5 134 h14 v21 h21 v14 h-21 v21 h-14 v-21 h-21 v-14 h21 Z" fill="#2AC4CC"/>
+</svg>

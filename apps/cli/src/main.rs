@@ -1,11 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use nova_app::{file, markdown, Session};
-use nova_crdt::ClientId;
+use nova_app::{file, markdown, new_client_id as client_id, Session};
 use nova_domain_text::TextDocument;
 
 #[derive(Parser)]
@@ -101,15 +99,4 @@ fn read_doc(path: &Path) -> Result<TextDocument> {
 
 fn write_doc(path: &Path, doc: &TextDocument) -> Result<()> {
     fs::write(path, file::encode(doc)).with_context(|| format!("gravando {}", path.display()))
-}
-
-/// Cada execução do CLI é um cliente CRDT novo. O Yjs usa ids de 32 bits,
-/// então o valor fica nessa faixa para manter compatibilidade com o front-end.
-fn client_id() -> ClientId {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| u64::from(d.subsec_nanos()))
-        .unwrap_or(0);
-    let pid = u64::from(std::process::id());
-    ((nanos ^ (pid << 16)) & 0xFFFF_FFFF).max(1)
 }

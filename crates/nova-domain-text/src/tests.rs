@@ -26,6 +26,103 @@ fn sync(a: &mut TextDocument, b: &mut TextDocument) {
     a.apply_remote(&b_to_a).unwrap();
 }
 
+fn pos(block: u32, offset: u32) -> Pos {
+    Pos { block, offset }
+}
+
+#[test]
+fn apagar_intervalo_no_mesmo_paragrafo() {
+    let mut doc = TextDocument::from_plain_text(1, "abcdef");
+    let events = doc
+        .execute(TextCommand::DeleteRange {
+            from: pos(0, 1),
+            to: pos(0, 4),
+        })
+        .unwrap();
+    assert_eq!(
+        events,
+        vec![TextEvent::RangeDeleted {
+            from: pos(0, 1),
+            to: pos(0, 4)
+        }]
+    );
+    assert_eq!(doc.to_plain_text(), "aef");
+}
+
+#[test]
+fn apagar_intervalo_entre_paragrafos_une_as_pontas() {
+    let mut doc = TextDocument::from_plain_text(1, "primeiro\nmeio\noutro meio\nultimo");
+    doc.execute(apply(3, 0, 6, Mark::Bold)).unwrap();
+    doc.execute(TextCommand::DeleteRange {
+        from: pos(0, 4),
+        to: pos(3, 2),
+    })
+    .unwrap();
+
+    assert_eq!(doc.blocks(), vec!["primtimo"]);
+    let spans = doc.block_spans(0).unwrap();
+    assert_eq!(texts(&spans), vec!["prim", "timo"]);
+    assert!(spans[1].has(MarkKind::Bold));
+
+    // Um único passo de desfazer restaura tudo.
+    doc.execute(TextCommand::Undo).unwrap();
+    assert_eq!(doc.block_count(), 4);
+    assert_eq!(doc.to_plain_text(), "primeiro\nmeio\noutro meio\nultimo");
+}
+
+#[test]
+fn intervalo_invalido_nao_altera_nada() {
+    let mut doc = TextDocument::from_plain_text(1, "abc\ndef");
+    assert_eq!(
+        doc.execute(TextCommand::DeleteRange {
+            from: pos(1, 0),
+            to: pos(0, 1)
+        }),
+        Err(DomainError::InvalidRange)
+    );
+    assert!(doc
+        .execute(TextCommand::DeleteRange {
+            from: pos(0, 1),
+            to: pos(1, 9)
+        })
+        .is_err());
+    assert_eq!(doc.to_plain_text(), "abc\ndef");
+}
+
+#[test]
+fn batch_vira_um_passo_de_desfazer() {
+    let mut doc = TextDocument::from_plain_text(1, "um\ndois");
+    let events = doc
+        .execute(TextCommand::Batch {
+            commands: vec![apply(0, 0, 2, Mark::Bold), apply(1, 0, 4, Mark::Bold)],
+        })
+        .unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(doc.block_spans(1).unwrap()[0].has(MarkKind::Bold));
+
+    doc.execute(TextCommand::Undo).unwrap();
+    assert!(doc.block_spans(0).unwrap()[0].marks.is_empty());
+    assert!(doc.block_spans(1).unwrap()[0].marks.is_empty());
+}
+
+#[test]
+fn batch_rejeita_desfazer_e_aninhamento() {
+    let mut doc = TextDocument::new(1);
+    for inner in [
+        TextCommand::Undo,
+        TextCommand::Batch {
+            commands: Vec::new(),
+        },
+    ] {
+        assert_eq!(
+            doc.execute(TextCommand::Batch {
+                commands: vec![inner]
+            }),
+            Err(DomainError::InvalidBatch)
+        );
+    }
+}
+
 fn texts(spans: &[Span]) -> Vec<&str> {
     spans.iter().map(|s| s.text.as_str()).collect()
 }

@@ -6,8 +6,22 @@
 pub mod file;
 pub mod markdown;
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use nova_crdt::ClientId;
 use nova_domain_text::{DomainError, TextCommand, TextDocument, TextEvent};
 use thiserror::Error;
+
+/// Id de cliente CRDT para uma nova sessão. O Yjs usa ids de 32 bits, então o
+/// valor fica nessa faixa para manter compatibilidade com clientes web.
+pub fn new_client_id() -> ClientId {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| u64::from(d.subsec_nanos()))
+        .unwrap_or(0);
+    let pid = u64::from(std::process::id());
+    ((nanos ^ (pid << 16)) & 0xFFFF_FFFF).max(1)
+}
 
 #[derive(Debug, Error)]
 pub enum AppError {

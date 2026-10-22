@@ -1,0 +1,537 @@
+/* Cores da marca NovaOffice (ver icons.tsx) e tokens da interface.
+   O tema claro é o padrão; o escuro vale com data-theme="dark" ou, sem
+   data-theme, quando o sistema pede. A página do documento fica sempre clara,
+   como papel. */
+:root {
+  --nova-navy: #1d2d3d;
+  --nova-outline: #416180;
+  --nova-blue: #70b3f7;
+  --nova-green: #73c385;
+  --nova-orange: #ed946c;
+  --nova-lilac: #d094dd;
+  --nova-gold: #d1a84b;
+  --nova-teal: #2ac4cc;
+
+  --titlebar-bg: var(--nova-navy);
+  --titlebar-text: #f3f6fa;
+  --titlebar-muted: #9fb3c8;
+  --titlebar-hover: #2a3f55;
+
+  --chrome-bg: #f4f6f9;
+  --ribbon-bg: #ffffff;
+  --chrome-border: #dce3ea;
+  --chrome-text: #1d2d3d;
+  --chrome-muted: #5d7085;
+  --button-hover: #edf2f7;
+  --button-active: #e2effd;
+  /* Azul do Nova Text escurecido para contraste sobre fundo claro. */
+  --accent: #2a78c9;
+  --accent-strong: #1d5fa6;
+  --focus-ring: #2a78c9;
+
+  --workspace-bg: #e8edf2;
+  --page-bg: #ffffff;
+  --page-text: #1d1d1b;
+  --page-shadow: 0 1px 3px rgb(29 45 61 / 0.14), 0 4px 16px rgb(29 45 61 / 0.07);
+
+  color-scheme: light;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  color: var(--chrome-text);
+  background: var(--chrome-bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --titlebar-bg: #121c27;
+    --titlebar-hover: #22344a;
+    --chrome-bg: #16212d;
+    --ribbon-bg: #1d2d3d;
+    --chrome-border: #2e4258;
+    --chrome-text: #e6edf5;
+    --chrome-muted: #9aaabb;
+    --button-hover: #273c52;
+    --button-active: #24476b;
+    --accent: #70b3f7;
+    --accent-strong: #9ccbfa;
+    --focus-ring: #70b3f7;
+    --workspace-bg: #0f1822;
+    --page-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 4px 16px rgb(0 0 0 / 0.3);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --titlebar-bg: #121c27;
+  --titlebar-hover: #22344a;
+  --chrome-bg: #16212d;
+  --ribbon-bg: #1d2d3d;
+  --chrome-border: #2e4258;
+  --chrome-text: #e6edf5;
+  --chrome-muted: #9aaabb;
+  --button-hover: #273c52;
+  --button-active: #24476b;
+  --accent: #70b3f7;
+  --accent-strong: #9ccbfa;
+  --focus-ring: #70b3f7;
+  --workspace-bg: #0f1822;
+  --page-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 4px 16px rgb(0 0 0 / 0.3);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--chrome-bg);
+}
+
+button,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--chrome-muted);
+}
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+}
+
+/* ---------- Barra de título ---------- */
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 40px;
+  padding: 0 12px;
+  background: var(--titlebar-bg);
+  color: var(--titlebar-text);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand-name {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+
+.quick {
+  display: flex;
+  gap: 2px;
+  padding-left: 12px;
+  border-left: 1px solid var(--titlebar-hover);
+}
+
+.quick-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.quick-button:hover:not(:disabled) {
+  background: var(--titlebar-hover);
+}
+
+.quick-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.doc-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--titlebar-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dirty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--nova-gold);
+}
+
+/* ---------- Faixa de opções ---------- */
+
+.ribbon {
+  background: var(--ribbon-bg);
+  border-bottom: 1px solid var(--chrome-border);
+}
+
+.tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 36px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--chrome-border);
+}
+
+.tab {
+  position: relative;
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  color: var(--chrome-muted);
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--chrome-text);
+}
+
+.tab[aria-selected="true"] {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--accent);
+}
+
+.tab-file {
+  color: var(--accent-strong);
+}
+
+.collapse {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 0 4px auto;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--chrome-muted);
+  cursor: pointer;
+}
+
+.collapse:hover {
+  background: var(--button-hover);
+}
+
+.panel {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-height: 96px;
+  padding: 6px 8px 0;
+  overflow-x: auto;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  padding: 0 10px;
+}
+
+.group + .group {
+  border-left: 1px solid var(--chrome-border);
+}
+
+.group-body {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+}
+
+.group-label {
+  padding: 4px 0 6px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--chrome-muted);
+  white-space: nowrap;
+}
+
+.panel button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.panel button:hover:not(:disabled) {
+  background: var(--button-hover);
+}
+
+.panel button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.panel button[aria-pressed="true"],
+.panel button[aria-selected="true"],
+.panel button[aria-checked="true"] {
+  background: var(--button-active);
+  border-color: var(--accent);
+}
+
+.big-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 64px;
+  height: 64px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.big-button svg {
+  width: 26px;
+  height: 26px;
+  color: var(--accent);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.small-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.marks {
+  display: flex;
+  gap: 2px;
+}
+
+.mark-button {
+  width: 32px;
+  height: 32px;
+  font-size: 15px;
+}
+
+.mark-bold {
+  font-weight: 700;
+}
+
+.mark-italic {
+  font-style: italic;
+  font-family: Georgia, serif;
+}
+
+.mark-underline {
+  text-decoration: underline;
+}
+
+.mark-strike {
+  text-decoration: line-through;
+}
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(3, 104px);
+  gap: 4px;
+}
+
+.style-chip {
+  height: 28px;
+  padding: 0 8px;
+  overflow: hidden;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border-color: var(--chrome-border) !important;
+  font-size: 12px;
+}
+
+.style-heading1 {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.style-heading2 {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.style-heading3 {
+  font-weight: 700;
+}
+
+.style-quote {
+  font-style: italic;
+  color: var(--chrome-muted);
+}
+
+.style-code {
+  font-family: "Cascadia Mono", Consolas, monospace;
+}
+
+.style-select,
+.language select {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 6px;
+  background: var(--ribbon-bg);
+  font-size: 12px;
+}
+
+.style-select {
+  align-self: flex-start;
+  margin-top: 0;
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 8px;
+}
+
+.segmented button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.language {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--chrome-muted);
+}
+
+/* ---------- Área de trabalho e página ---------- */
+
+.workspace {
+  overflow: auto;
+  padding: 32px 16px 64px;
+  background: var(--workspace-bg);
+}
+
+/* Página A4 (210 mm) com margens de 2,5 cm. */
+.page {
+  max-width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto;
+  padding: 25mm;
+  background: var(--page-bg);
+  color: var(--page-text);
+  color-scheme: light;
+  box-shadow: var(--page-shadow);
+  font-family: "Calibri", "Carlito", "Segoe UI", sans-serif;
+  font-size: 11pt;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 4;
+  outline: none;
+  caret-color: var(--page-text);
+}
+
+.page .block {
+  margin: 0 0 8pt;
+}
+
+.page h1 {
+  font-size: 20pt;
+  margin-top: 12pt;
+}
+
+.page h2 {
+  font-size: 16pt;
+  margin-top: 10pt;
+}
+
+.page h3 {
+  font-size: 14pt;
+}
+
+.page h4,
+.page h5,
+.page h6 {
+  font-size: 12pt;
+}
+
+.page blockquote {
+  margin-left: 0;
+  padding-left: 12pt;
+  border-left: 3px solid #c8c8c2;
+  color: #4a4a46;
+}
+
+.page pre {
+  padding: 4pt 8pt;
+  background: #f4f4f1;
+  border-radius: 4px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10pt;
+}
+
+/* ---------- Barra de status ---------- */
+
+.statusbar {
+  display: flex;
+  gap: 20px;
+  padding: 4px 12px;
+  border-top: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+  font-size: 12px;
+  color: var(--chrome-muted);
+}
+
+.statusbar .status {
+  margin-left: auto;
+}
