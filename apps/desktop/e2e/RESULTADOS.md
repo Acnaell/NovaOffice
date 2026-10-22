@@ -2,7 +2,7 @@
 
 Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real com o núcleo Rust real.
 
-**81 funcionam · 3 parciais · 0 com falha · 11 ainda não existem**
+**88 funcionam · 3 parciais · 0 com falha · 7 ainda não existem**
 
 | | Área | Fluxo | Observação |
 | --- | --- | --- | --- |
@@ -66,15 +66,8 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Parágrafo | Lista automática ao digitar "- " ou "1. " |  |
 | ✅ | Parágrafo | Aumentar/diminuir recuo (Ctrl+M / Ctrl+Shift+M) | 2 níveis = 96px |
 | ✅ | Parágrafo | Espaçamento entre linhas (Ctrl+1/2/5 e menu) e antes/depois |  |
-| ⬜ | Parágrafo | Quebra de página (Ctrl+Enter) | Fica para a fase Layout (páginas reais); Ctrl+Enter resulta em ["antesdepois"]. |
+| ✅ | Parágrafo | Sombreamento do parágrafo | Texto automático fica branco sobre fundo escuro, como no Word. |
 | ✅ | Parágrafo | Mostrar Tudo ¶ (Ctrl+Shift+8) | Espaços (·), tabulações (→) e ¶ aparecem sem entrar no texto. |
-| ⬜ | Inserir | Tabela | Não há tabelas (roadmap). |
-| ⬜ | Inserir | Imagem | Não há imagens (roadmap); colar uma imagem é ignorado sem erro. |
-| ⬜ | Inserir | Hiperlink (Ctrl+K) | Hiperlink não existe; Control+k não altera o documento. |
-| ⬜ | Inserir | Links digitados viram clicáveis | Endereços como https://… ficam como texto comum. |
-| ⬜ | Inserir | Símbolos e caracteres especiais | Não há janela de símbolos (dá para colar ou usar o teclado do sistema). |
-| ⬜ | Inserir | Cabeçalho, rodapé e número de página | Não há cabeçalho/rodapé nem paginação. |
-| ⬜ | Inserir | Comentários | Não há comentários. |
 | ✅ | Ferramentas | Localizar (Ctrl+L): painel, resultados e destaque | Enter vai para o próximo; Esc volta ao texto com a ocorrência selecionada. |
 | ✅ | Ferramentas | Substituir e Substituir Tudo (Ctrl+U) | "Concluído. 2 substituições feitas."; Ctrl+Z desfaz o Substituir Tudo de uma vez. |
 | 🟡 | Ferramentas | Verificação ortográfica | Usa o corretor do sistema/WebView (sublinhado vermelho); o idioma não acompanha o documento e não há verificação gramatical. Precisa ser confirmado no app instalado (WebView2/WebKit). |
@@ -95,9 +88,19 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Arquivo | Salvamento automático / recuperação | Cópia a cada minuto; ao abrir de novo, a tela inicial oferece Recuperar. |
 | ✅ | NovaOffice | Tela inicial ao abrir o programa | 6 aplicativos, Novo e Recentes; título "NovaOffice". |
 | ✅ | NovaOffice | Menu de aplicativos (grade ao lado do logo) | Nova Text, Nova Sheets, Nova Slides, Nova Draw, Nova Base, Nova Math; os outros 5 aparecem como "Em breve"; Esc fecha. |
+| ✅ | Inserir | Quebra de Página (Ctrl+Enter) | Linha "Quebra de Página" na tela, página nova ao imprimir e no .docx/.odt; Backspace apaga a quebra. |
+| ✅ | Inserir | Link no texto selecionado (Ctrl+K) e Ctrl+clique | "exemplo.com" vira https://exemplo.com; Ctrl+clique abre no navegador. |
+| ✅ | Inserir | Link sem seleção, editar e remover |  |
+| ✅ | Inserir | Endereço digitado vira link (AutoFormatação) |  |
+| ✅ | Inserir | Data e Hora | 9 formatos; Alt+Shift+D insere a data. |
+| ✅ | Inserir | Símbolo |  |
+| ⬜ | Inserir | Tabela | Próxima parte da aba Inserir. |
+| ⬜ | Inserir | Imagem | Próxima parte da aba Inserir; colar uma imagem é ignorado sem erro. |
+| ⬜ | Inserir | Cabeçalho, rodapé e número de página | Depende das páginas reais (aba Layout). |
+| ⬜ | Inserir | Comentários | Não há comentários. |
 | 🟡 | Exibição | Página com tamanho A4 e margens; várias páginas | Uma única "folha" contínua de 4108 px de altura: sem paginação, tamanho de papel ou margens configuráveis. |
 | ⬜ | Exibição | Zoom (Ctrl + roda / controle de zoom) | Não há controle de zoom no app. |
 | ✅ | Exibição | Tema claro/escuro | Recurso que o Word não tem nesta forma. |
 | ⬜ | Exibição | Régua | Não há régua. |
 | ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 8 ms por tecla. |
-| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 13 ms por tecla. |
+| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 16 ms por tecla. |
