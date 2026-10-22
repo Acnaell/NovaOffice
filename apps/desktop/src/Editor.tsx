@@ -3,8 +3,12 @@
 // e vira um comando para o núcleo, que devolve o documento para redesenhar.
 
 import { memo, useEffect, useLayoutEffect, useRef, type CSSProperties, type JSX } from "react";
-import { readSelection, writeSelection } from "./dom";
+import { fragmentHtml, fragmentOf, fragmentText, HIGHLIGHT_CSS, insertFragment, NOVA_MIME, parseHtml, plainFragment, type Fragment } from "./clipboard";
+import { posToDom, readSelection, writeSelection } from "./dom";
+import type { Match } from "./find";
+import { autoList, changeIndent, listMarkers } from "./formatting";
 import {
+  blockText,
   deleteBackward,
   deleteForward,
   deleteToBlockEdge,
@@ -12,6 +16,7 @@ import {
   deleteWordForward,
   insertText,
   isCollapsed,
+  marksAt,
   ordered,
   deleteRange,
   splitBlock,
@@ -19,8 +24,8 @@ import {
   type Selection,
 } from "./model";
 import { useI18n } from "./i18n";
-import { matchShortcut, type CommandId } from "./shortcuts";
-import type { BlockView, DocView, Mark } from "./types";
+import { matchShortcut, type CommandId, type Profile } from "./shortcuts";
+import type { BlockView, DocView, Mark, ParaAttrs } from "./types";
 
 export type EditFn = (doc: DocView, sel: Selection) => Edit | null;
 
@@ -30,11 +35,25 @@ interface Props {
   selection: Selection;
   /** Marcas escolhidas com o cursor parado, para o próximo texto digitado. */
   pendingMarks: Mark[] | null;
+  profile: Profile;
+  /** Mostrar ¶, espaços (·) e tabulações (→), como o botão Mostrar Tudo do Word. */
+  showMarks: boolean;
+  /** Ocorrências da pesquisa para destacar; `current` em outra cor. */
+  highlights: { all: Match[]; current: Match | null };
   onEdit: (fn: EditFn) => void;
   onSelect: (sel: Selection) => void;
   /** Comandos de edição e formatação (atalhos e menu nativo); os de arquivo ficam com a janela. */
   onCommand: (command: CommandId) => void;
+  /** Botão do mouse solto no texto (o Pincel de Formatação aplica aqui). */
+  onPointerUp: () => void;
+  onEscape: () => void;
 }
+
+/** Quebra de linha manual (Shift+Enter), como no Word. */
+const LINE_BREAK = "\u000B";
+
+/** Recuo por nível, como o Word (1,27 cm = 0,5 pol). */
+const INDENT_STEP = "1.27cm";
 
 export function Editor(props: Props) {
   const { t } = useI18n();
@@ -49,7 +68,31 @@ export function Editor(props: Props) {
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (root && document.activeElement === root) writeSelection(root, latest.current.selection);
-  }, [props.revision]);
+  }, [props.revision, props.showMarks]);
+
+  // Destaque das ocorrências da pesquisa, sem tocar no DOM do texto.
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const registry = (globalThis as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
+    const HighlightCtor = (globalThis as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
+    if (!root || !registry || !HighlightCtor) return;
+    const toRange = (m: Match) => {
+      const start = posToDom(root, { block: m.block, offset: m.start });
+      const end = posToDom(root, { block: m.block, offset: m.end });
+      if (!start || !end) return null;
+      const range = document.createRange();
+      range.setStart(start[0], start[1]);
+      range.setEnd(end[0], end[1]);
+      return range;
+    };
+    const all = props.highlights.all.map(toRange).filter((r): r is Range => !!r);
+    registry.set("nova-find", new HighlightCtor(...all));
+    const current = props.highlights.current && toRange(props.highlights.current);
+    registry.set("nova-find-current", new HighlightCtor(...(current ? [current] : [])));
+    if (props.highlights.current) {
+      root.querySelector(`[data-block="${props.highlights.current.block}"]`)?.scrollIntoView({ block: "nearest" });
+    }
+  }, [props.revision, props.highlights]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -59,7 +102,13 @@ export function Editor(props: Props) {
 
     const edit = (fn: EditFn) => latest.current.onEdit(fn);
     const typed = (text: string): EditFn => (doc, sel) =>
-      insertText(doc, sel, text, latest.current.pendingMarks ?? undefined);
+      // AutoFormatação: "- " ou "1. " no início do parágrafo vira lista.
+      (() => {
+        const list = autoList(doc, sel, text);
+        return list ? { command: list, selection: { anchor: { block: sel.focus.block, offset: 0 }, focus: { block: sel.focus.block, offset: 0 } } } : null;
+      })() ?? insertText(doc, sel, text, latest.current.pendingMarks ?? undefined);
+
+    const paste = (fragment: Fragment) => edit((doc, sel) => insertFragment(doc, sel, fragment));
 
     const onBeforeInput = (e: InputEvent) => {
       // Durante a composição (acentos com tecla morta, IME) o navegador escreve
@@ -69,15 +118,23 @@ export function Editor(props: Props) {
       switch (e.inputType) {
         case "insertText":
         case "insertReplacementText":
-        case "insertFromPaste":
         case "insertFromYank": {
           const text = e.data ?? e.dataTransfer?.getData("text/plain") ?? "";
           if (text) edit(typed(text));
           break;
         }
+        case "insertFromPaste": {
+          // Normalmente o evento paste já cuidou; isto cobre colagens sem ele.
+          const text = e.dataTransfer?.getData("text/plain") ?? "";
+          if (text) edit(typed(text));
+          break;
+        }
         case "insertParagraph":
-        case "insertLineBreak":
           edit(splitBlock);
+          break;
+        case "insertLineBreak":
+          // Shift+Enter: quebra de linha dentro do parágrafo (o mesmo caractere do Word, U+000B).
+          edit((doc, sel) => insertText(doc, sel, LINE_BREAK, latest.current.pendingMarks ?? undefined));
           break;
         case "deleteContentBackward":
           edit(deleteBackward);
@@ -127,15 +184,67 @@ export function Editor(props: Props) {
       }
     };
 
+    // Durante a composição (tecla morta do ABNT2, IME) o navegador escreve um
+    // texto provisório no DOM e move o cursor dentro dele. Essas posições não
+    // existem no modelo: a seleção fica congelada desde o início da composição.
+    let composingFrom: Selection | null = null;
+
+    const onCompositionStart = () => {
+      composingFrom = latest.current.selection;
+    };
+
     const onCompositionEnd = (e: CompositionEvent) => {
       // Mesmo sem texto, o edit força um redesenho que descarta o que o IME escreveu no DOM.
       const text = e.data;
-      edit((doc, sel) => (text ? typed(text)(doc, sel) : { command: null, selection: sel }));
+      const from = composingFrom;
+      composingFrom = null;
+      edit((doc, sel) => {
+        const at = from ?? sel;
+        return text ? insertText(doc, at, text, latest.current.pendingMarks ?? undefined) : { command: null, selection: at };
+      });
     };
 
     const onSelectionChange = () => {
+      if (composingFrom) return;
       const sel = readSelection(root);
       if (sel) latest.current.onSelect(sel);
+    };
+
+    /** Copiar e recortar: formato do Nova, HTML e texto, a partir do modelo (não do DOM). */
+    const onCopy = (e: ClipboardEvent, cut: boolean) => {
+      const { view, selection } = latest.current;
+      if (isCollapsed(selection) || !e.clipboardData) return;
+      e.preventDefault();
+      const fragment = fragmentOf(view, selection);
+      e.clipboardData.setData("text/plain", fragmentText(fragment));
+      e.clipboardData.setData("text/html", fragmentHtml(fragment));
+      e.clipboardData.setData(NOVA_MIME, JSON.stringify(fragment));
+      if (cut) edit((_doc, sel) => deleteRange(...ordered(sel)));
+    };
+
+    const onPaste = (e: ClipboardEvent) => {
+      const data = e.clipboardData;
+      if (!data) return;
+      e.preventDefault();
+      const nova = data.getData(NOVA_MIME);
+      if (nova) {
+        try {
+          return paste(JSON.parse(nova) as Fragment);
+        } catch {
+          // Conteúdo inválido: cai para HTML ou texto.
+        }
+      }
+      const html = data.getData("text/html");
+      if (html) {
+        const fragment = parseHtml(html);
+        if (fragment.length) return paste(fragment);
+      }
+      const text = data.getData("text/plain");
+      if (text) {
+        edit((doc, sel) =>
+          insertFragment(doc, sel, plainFragment(text, latest.current.pendingMarks ?? marksAt(doc, ordered(sel)[0]))),
+        );
+      }
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -143,31 +252,91 @@ export function Editor(props: Props) {
         e.preventDefault();
         e.stopPropagation();
       };
-      const command = matchShortcut(e);
+      const command = matchShortcut(e, latest.current.profile);
       // Atalhos de arquivo sobem até a janela, que cuida deles.
       if (command && !command.startsWith("file.")) {
         handled();
         latest.current.onCommand(command);
-      } else if (e.key === "Tab" && !(e.ctrlKey || e.metaKey) && !e.altKey) {
+        return;
+      }
+      if (e.key === "Escape") {
+        latest.current.onEscape();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        // Ctrl+↓ vai ao início do próximo parágrafo; Ctrl+↑ ao início deste ou do anterior.
         handled();
-        edit(typed("\t"));
+        const down = e.key === "ArrowDown";
+        edit((doc, sel) => {
+          const { block, offset } = sel.focus;
+          const last = doc.blocks.length - 1;
+          const target = down
+            ? block < last
+              ? { block: block + 1, offset: 0 }
+              : { block, offset: blockText(doc.blocks[block]).length }
+            : offset > 0
+              ? { block, offset: 0 }
+              : { block: Math.max(0, block - 1), offset: 0 };
+          return { command: null, selection: { anchor: e.shiftKey ? sel.anchor : target, focus: target } };
+        });
+        return;
+      }
+      if (e.key === "Tab" && !(e.ctrlKey || e.metaKey) && !e.altKey) {
+        handled();
+        const { view, selection } = latest.current;
+        const [from, to] = ordered(selection);
+        const inList = !!view.blocks[from.block]?.attrs.list;
+        // Como no Word: Tab no início de um item de lista (ou com vários parágrafos
+        // selecionados) muda o nível; Shift+Tab num item volta um nível.
+        if ((inList && (from.offset === 0 || e.shiftKey)) || from.block !== to.block) {
+          edit((doc, sel) => ({ command: changeIndent(doc, sel, e.shiftKey ? -1 : 1), selection: sel }));
+        } else if (!e.shiftKey) {
+          edit(typed("\t"));
+        }
       }
     };
 
     const block = (e: Event) => e.preventDefault();
+    const copy = (e: ClipboardEvent) => onCopy(e, false);
+    const cut = (e: ClipboardEvent) => onCopy(e, true);
+    const pointerUp = (e: MouseEvent) => {
+      // Clique triplo: o navegador estende a seleção até o começo do parágrafo
+      // seguinte; o Word seleciona só o parágrafo clicado.
+      if (e.detail >= 3) {
+        const sel = readSelection(root);
+        if (sel) {
+          const [from, to] = ordered(sel);
+          if (to.offset === 0 && to.block > from.block) {
+            const end = { block: to.block - 1, offset: blockText(latest.current.view.blocks[to.block - 1]).length };
+            writeSelection(root, { anchor: from, focus: end });
+          }
+        }
+      }
+      latest.current.onPointerUp();
+    };
 
     root.addEventListener("beforeinput", onBeforeInput);
+    root.addEventListener("compositionstart", onCompositionStart);
     root.addEventListener("compositionend", onCompositionEnd);
     root.addEventListener("keydown", onKeyDown);
+    root.addEventListener("copy", copy);
+    root.addEventListener("cut", cut);
+    root.addEventListener("paste", onPaste);
     root.addEventListener("dragstart", block);
     root.addEventListener("drop", block);
+    root.addEventListener("mouseup", pointerUp);
     document.addEventListener("selectionchange", onSelectionChange);
     return () => {
       root.removeEventListener("beforeinput", onBeforeInput);
+      root.removeEventListener("compositionstart", onCompositionStart);
       root.removeEventListener("compositionend", onCompositionEnd);
       root.removeEventListener("keydown", onKeyDown);
+      root.removeEventListener("copy", copy);
+      root.removeEventListener("cut", cut);
+      root.removeEventListener("paste", onPaste);
       root.removeEventListener("dragstart", block);
       root.removeEventListener("drop", block);
+      root.removeEventListener("mouseup", pointerUp);
       document.removeEventListener("selectionchange", onSelectionChange);
     };
   }, []);
@@ -175,7 +344,7 @@ export function Editor(props: Props) {
   return (
     <div
       ref={rootRef}
-      className="page"
+      className={`page${props.showMarks ? " show-marks" : ""}`}
       contentEditable
       suppressContentEditableWarning
       spellCheck
@@ -183,36 +352,95 @@ export function Editor(props: Props) {
       aria-multiline="true"
       aria-label={t("editor.label")}
     >
-      {/* A chave muda a cada resposta do núcleo: o DOM é recriado do zero,
-          descartando qualquer coisa que o navegador tenha escrito nele. */}
-      <Blocks key={props.revision} blocks={props.view.blocks} />
+      <Blocks
+        blocks={props.view.blocks}
+        showMarks={props.showMarks}
+        caretBlock={props.selection.focus.block}
+        revision={props.revision}
+      />
     </div>
   );
 }
 
-const Blocks = memo(function Blocks({ blocks }: { blocks: BlockView[] }) {
+/**
+ * Identidade de cada parágrafo. O remendo do núcleo mantém os objetos dos
+ * parágrafos que não mudaram, então eles continuam com a mesma chave e não são
+ * redesenhados; parágrafos alterados são objetos novos e ganham DOM novo,
+ * descartando qualquer coisa que o navegador tenha escrito neles.
+ */
+const blockIds = new WeakMap<BlockView, number>();
+let nextBlockId = 0;
+function blockId(block: BlockView): number {
+  let id = blockIds.get(block);
+  if (id === undefined) {
+    id = ++nextBlockId;
+    blockIds.set(block, id);
+  }
+  return id;
+}
+
+function Blocks({ blocks, showMarks, caretBlock, revision }: { blocks: BlockView[]; showMarks: boolean; caretBlock: number; revision: number }) {
+  const markers = listMarkers(blocks);
   return (
     <>
-      {blocks.map((block, i) => {
-        const Tag = tagFor(block.style);
-        const empty = block.spans.every((s) => s.text === "");
-        return (
-          <Tag key={i} data-block={i} className={`block block-${block.style}`}>
-            {empty ? (
-              <br />
-            ) : (
-              block.spans.map((span, j) => (
-                <span key={j} style={spanStyle(span.marks)}>
-                  {span.text}
-                </span>
-              ))
-            )}
-          </Tag>
-        );
-      })}
+      {blocks.map((block, i) => (
+        // O parágrafo do cursor é sempre recriado depois de uma edição: é onde o
+        // navegador pode ter escrito (composição de acentos e IME).
+        <Block
+          key={i === caretBlock ? `${blockId(block)}-${revision}` : blockId(block)}
+          index={i}
+          block={block}
+          marker={markers[i]}
+          showMarks={showMarks}
+        />
+      ))}
     </>
   );
+}
+
+const Block = memo(function Block({ index, block, marker, showMarks }: { index: number; block: BlockView; marker: string | null; showMarks: boolean }) {
+  const Tag = tagFor(block.style);
+  const empty = block.spans.every((s) => s.text === "");
+  return (
+    <Tag
+      data-block={index}
+      data-marker={marker ?? undefined}
+      className={`block block-${block.style}${marker ? ` list list-${block.attrs.list}` : ""}`}
+      style={paragraphStyle(block.attrs)}
+    >
+      {empty ? (
+        <br />
+      ) : (
+        block.spans.map((span, j) => (
+          <span key={j} style={spanStyle(span.marks)}>
+            {showMarks ? visibleMarks(span.text) : lineBreaks(span.text)}
+          </span>
+        ))
+      )}
+      {/* Uma quebra de linha no fim só aparece com um <br> depois dela. */}
+      {!empty && blockText(block).endsWith(LINE_BREAK) && <br />}
+    </Tag>
+  );
 });
+
+/** A quebra de linha do modelo (U+000B) aparece como \n, que o CSS pre-wrap quebra; mesmo comprimento. */
+const lineBreaks = (text: string) => text.replace(/\u000B/g, "\n");
+
+/** Espaço vira · e tabulação vira →, com o mesmo comprimento (offsets não mudam). */
+const visibleMarks = (text: string) => lineBreaks(text).replace(/ /g, "·").replace(/\t/g, "→");
+
+function paragraphStyle(attrs: ParaAttrs | undefined): CSSProperties | undefined {
+  if (!attrs) return undefined;
+  const style: CSSProperties = {};
+  if (attrs.align !== "left") style.textAlign = attrs.align;
+  const levels = attrs.indent + (attrs.list ? 1 : 0);
+  if (levels) style.marginLeft = `calc(${INDENT_STEP} * ${levels})`;
+  // "Simples" no Word corresponde a cerca de 1,15 da altura da fonte.
+  if (attrs.lineSpacing !== null) style.lineHeight = String((attrs.lineSpacing / 100) * 1.15);
+  if (attrs.spaceBefore !== null) style.marginTop = `${attrs.spaceBefore}pt`;
+  if (attrs.spaceAfter !== null) style.marginBottom = `${attrs.spaceAfter}pt`;
+  return style;
+}
 
 function tagFor(style: BlockView["style"]): keyof JSX.IntrinsicElements {
   switch (style) {
@@ -256,7 +484,7 @@ function spanStyle(marks: Mark[]): CSSProperties | undefined {
         decorations.push("line-through");
         break;
       case "fontFamily":
-        style.fontFamily = m.value;
+        style.fontFamily = `'${m.value}'`;
         break;
       case "fontSize":
         style.fontSize = `${m.halfPoints / 2}pt`;
@@ -264,7 +492,19 @@ function spanStyle(marks: Mark[]): CSSProperties | undefined {
       case "color":
         style.color = m.value;
         break;
+      case "highlight":
+        style.backgroundColor = HIGHLIGHT_CSS[m.value];
+        break;
+      case "vertAlign":
+        style.verticalAlign = m.value === "superscript" ? "super" : "sub";
+        break;
     }
+  }
+  // Sobrescrito e subscrito ficam com 65% do tamanho do trecho, como no Word.
+  const vert = marks.some((m) => m.mark === "vertAlign");
+  if (vert) {
+    const size = marks.find((m) => m.mark === "fontSize");
+    style.fontSize = size && size.mark === "fontSize" ? `${(size.halfPoints / 2) * 0.65}pt` : "0.65em";
   }
   if (decorations.length) style.textDecoration = decorations.join(" ");
   return style;

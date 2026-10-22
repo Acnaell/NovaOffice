@@ -148,6 +148,36 @@ impl Replica {
         Ok(())
     }
 
+    /// Atributos de parágrafo (alinhamento, recuo, lista…): todas as chaves do
+    /// bloco exceto `style` e `text`.
+    pub fn block_attrs(&self, block: u32) -> Result<AttrMap, CrdtError> {
+        let txn = self.doc.transact();
+        let map = self.block_at(&txn, block)?;
+        Ok(paragraph_attrs(&map, &txn))
+    }
+
+    /// Define ou remove (`None`) atributos de parágrafo.
+    pub fn set_block_attrs(
+        &self,
+        block: u32,
+        changes: &[(String, Option<AttrValue>)],
+    ) -> Result<(), CrdtError> {
+        let mut txn = self.doc.transact_mut();
+        let map = self.block_at(&txn, block)?;
+        for (key, value) in changes {
+            debug_assert!(key != "style" && key != "text", "chave reservada: {key}");
+            match value {
+                Some(value) => {
+                    map.insert(&mut txn, key.as_str(), to_any(value));
+                }
+                None => {
+                    map.remove(&mut txn, key);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Insere texto. Sem `attrs`, o texto herda a formatação à esquerda (como
     /// continuar digitando em negrito); com `attrs`, recebe exatamente essa.
     pub fn insert_text(
@@ -205,7 +235,8 @@ impl Replica {
     }
 
     /// Divide o bloco em `offset`; o trecho final, com a formatação dele, vira
-    /// um novo bloco com estilo `new_style` logo abaixo. Tudo numa transação.
+    /// um novo bloco com estilo `new_style` e os mesmos atributos de parágrafo,
+    /// logo abaixo. Tudo numa transação.
     pub fn split_block(&self, block: u32, offset: u32, new_style: &str) -> Result<(), CrdtError> {
         let mut txn = self.doc.transact_mut();
         let text = self.text_at(&txn, block)?;
@@ -216,7 +247,12 @@ impl Replica {
         if offset < len {
             text.remove_range(&mut txn, offset, len - offset);
         }
+        let attrs = paragraph_attrs(&self.block_at(&txn, block)?, &txn);
         let new_text = self.insert_block_in(&mut txn, block + 1, new_style)?;
+        let new_map = self.block_at(&txn, block + 1)?;
+        for (key, value) in &attrs {
+            new_map.insert(&mut txn, key.as_str(), to_any(value));
+        }
         append_spans(&new_text, &mut txn, 0, tail);
         Ok(())
     }
@@ -406,6 +442,22 @@ fn to_attr_map(attrs: &Attrs) -> AttrMap {
         .collect()
 }
 
+fn paragraph_attrs<T: ReadTxn>(map: &MapRef, txn: &T) -> AttrMap {
+    map.iter(txn)
+        .filter(|(key, _)| *key != "style" && *key != "text")
+        .filter_map(|(key, value)| {
+            let value = match value {
+                Out::Any(Any::Bool(b)) => AttrValue::Bool(b),
+                Out::Any(Any::String(s)) => AttrValue::Text(s.to_string()),
+                Out::Any(Any::Number(n)) => AttrValue::Number(n),
+                Out::Any(Any::BigInt(n)) => AttrValue::Number(n as f64),
+                _ => return None,
+            };
+            Some((key.to_string(), value))
+        })
+        .collect()
+}
+
 /// Converte um offset UTF-16 em índice de byte. `None` se o offset passa do fim
 /// ou cai no meio de um par substituto (por exemplo, dentro de um emoji).
 fn byte_index(s: &str, offset: u32) -> Option<usize> {
@@ -450,6 +502,21 @@ mod tests {
 
     fn texts(spans: &[Span]) -> Vec<&str> {
         spans.iter().map(|s| s.text.as_str()).collect()
+    }
+
+    #[test]
+    fn atributos_de_paragrafo_e_divisao() {
+        let r = Replica::new(1);
+        r.insert_block(0, "lista", DEFAULT_STYLE).unwrap();
+        let align = ("align".to_string(), Some(AttrValue::Text("center".into())));
+        let list = ("list".to_string(), Some(AttrValue::Text("bullet".into())));
+        r.set_block_attrs(0, &[align, list]).unwrap();
+        r.split_block(0, 2, DEFAULT_STYLE).unwrap();
+        assert_eq!(r.block_attrs(1).unwrap(), r.block_attrs(0).unwrap());
+        assert_eq!(r.block_attrs(1).unwrap().len(), 2);
+        r.set_block_attrs(1, &[("list".to_string(), None)]).unwrap();
+        assert_eq!(r.block_attrs(1).unwrap().len(), 1);
+        assert_eq!(r.block_style(1).unwrap(), DEFAULT_STYLE);
     }
 
     #[test]

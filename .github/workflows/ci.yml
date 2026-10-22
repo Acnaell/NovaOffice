@@ -75,3 +75,31 @@ jobs:
           cargo run -q -p nova-cli --locked -- new smoke.nova
           cargo run -q -p nova-cli --locked -- exec smoke.nova @.github/smoke-command.json
           test "$(cargo run -q -p nova-cli --locked -- export smoke.nova | tr -d '\r')" = "NovaOffice"
+
+  e2e:
+    name: fluxos do Word (e2e)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/e2e/bridge
+      - name: Rodar os fluxos na interface real
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run build
+          npm run e2e
+      - name: Relatório dos fluxos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxos-word
+          path: apps/desktop/e2e/RESULTADOS.md

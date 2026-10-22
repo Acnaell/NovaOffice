@@ -490,3 +490,216 @@ fn comandos_e_eventos_em_json() {
         r#"{"type":"undone"}"#
     );
 }
+
+#[test]
+fn atributo_de_paragrafo_em_json() {
+    let json = r#"{"type":"block.setAttr","block":0,"attr":"align","value":"center"}"#;
+    let command: TextCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        command,
+        TextCommand::SetBlockAttr {
+            block: 0,
+            attr: ParaAttr::Align(Align::Center)
+        }
+    );
+    assert_eq!(serde_json::to_string(&command).unwrap(), json);
+
+    let clear: TextCommand =
+        serde_json::from_str(r#"{"type":"block.setAttr","block":2,"attr":"list","value":null}"#)
+            .unwrap();
+    assert_eq!(
+        clear,
+        TextCommand::SetBlockAttr {
+            block: 2,
+            attr: ParaAttr::List(None)
+        }
+    );
+}
+
+#[test]
+fn alinhamento_recuo_espacamento_e_lista() {
+    let mut doc = TextDocument::from_plain_text(1, "um\ndois");
+    for attr in [
+        ParaAttr::Align(Align::Justify),
+        ParaAttr::Indent(2),
+        ParaAttr::LineSpacing(Some(150)),
+        ParaAttr::SpaceAfter(Some(12)),
+        ParaAttr::List(Some(ListKind::Number)),
+    ] {
+        doc.execute(TextCommand::SetBlockAttr { block: 0, attr })
+            .unwrap();
+    }
+    let attrs = doc.block_attrs(0).unwrap();
+    assert_eq!(
+        attrs,
+        ParaAttrs {
+            align: Align::Justify,
+            indent: 2,
+            line_spacing: Some(150),
+            space_before: None,
+            space_after: Some(12),
+            list: Some(ListKind::Number),
+        }
+    );
+    assert_eq!(doc.block_attrs(1).unwrap(), ParaAttrs::default());
+
+    // Voltar ao padrão remove a chave.
+    doc.execute(TextCommand::SetBlockAttr {
+        block: 0,
+        attr: ParaAttr::Align(Align::Left),
+    })
+    .unwrap();
+    assert_eq!(doc.block_attrs(0).unwrap().align, Align::Left);
+
+    doc.execute(TextCommand::Undo).unwrap();
+    assert_eq!(doc.block_attrs(0).unwrap().align, Align::Justify);
+}
+
+#[test]
+fn atributos_invalidos_sao_recusados() {
+    let mut doc = TextDocument::new(1);
+    for attr in [
+        ParaAttr::Indent(MAX_INDENT + 1),
+        ParaAttr::LineSpacing(Some(20)),
+        ParaAttr::SpaceBefore(Some(5000)),
+    ] {
+        let err = doc
+            .execute(TextCommand::SetBlockAttr { block: 0, attr })
+            .unwrap_err();
+        assert!(matches!(err, DomainError::InvalidAttr(_)), "{err:?}");
+    }
+    assert!(!doc.can_undo());
+}
+
+#[test]
+fn enter_continua_a_lista_e_item_vazio_sai_dela() {
+    let mut doc = TextDocument::from_plain_text(1, "item");
+    doc.execute(TextCommand::SetBlockAttr {
+        block: 0,
+        attr: ParaAttr::List(Some(ListKind::Bullet)),
+    })
+    .unwrap();
+    doc.execute(TextCommand::SetBlockAttr {
+        block: 0,
+        attr: ParaAttr::Indent(1),
+    })
+    .unwrap();
+
+    doc.execute(TextCommand::SplitBlock {
+        block: 0,
+        offset: 4,
+    })
+    .unwrap();
+    assert_eq!(doc.block_count(), 2);
+    assert_eq!(doc.block_attrs(1).unwrap(), doc.block_attrs(0).unwrap());
+
+    // Enter no item vazio: primeiro volta um nível, depois sai da lista.
+    let events = doc
+        .execute(TextCommand::SplitBlock {
+            block: 1,
+            offset: 0,
+        })
+        .unwrap();
+    assert_eq!(
+        events,
+        vec![TextEvent::BlockAttrSet {
+            block: 1,
+            attr: ParaAttr::Indent(0)
+        }]
+    );
+    doc.execute(TextCommand::SplitBlock {
+        block: 1,
+        offset: 0,
+    })
+    .unwrap();
+    assert_eq!(doc.block_count(), 2);
+    assert_eq!(doc.block_attrs(1).unwrap().list, None);
+}
+
+#[test]
+fn realce_e_sobrescrito() {
+    let mut doc = TextDocument::from_plain_text(1, "H2O e x2");
+    doc.execute(apply(
+        0,
+        1,
+        1,
+        Mark::VertAlign {
+            value: "subscript".into(),
+        },
+    ))
+    .unwrap();
+    doc.execute(apply(
+        0,
+        7,
+        1,
+        Mark::VertAlign {
+            value: "superscript".into(),
+        },
+    ))
+    .unwrap();
+    doc.execute(apply(
+        0,
+        0,
+        3,
+        Mark::Highlight {
+            value: "yellow".into(),
+        },
+    ))
+    .unwrap();
+    let spans = doc.block_spans(0).unwrap();
+    assert!(spans[1].has(MarkKind::VertAlign) && spans[1].has(MarkKind::Highlight));
+    assert_eq!(spans[1].text, "2");
+
+    // Sobrescrito no mesmo trecho substitui o subscrito.
+    doc.execute(apply(
+        0,
+        1,
+        1,
+        Mark::VertAlign {
+            value: "superscript".into(),
+        },
+    ))
+    .unwrap();
+    let marks = &doc.block_spans(0).unwrap()[1].marks;
+    assert!(marks.contains(&Mark::VertAlign {
+        value: "superscript".into()
+    }));
+
+    for bad in [
+        Mark::Highlight {
+            value: "#FFFF00".into(),
+        },
+        Mark::VertAlign {
+            value: "baixo".into(),
+        },
+    ] {
+        assert!(matches!(
+            doc.execute(apply(0, 0, 1, bad)).unwrap_err(),
+            DomainError::InvalidMark(_)
+        ));
+    }
+}
+
+#[test]
+fn atributos_de_paragrafo_sincronizam() {
+    let mut a = TextDocument::from_plain_text(1, "texto");
+    let mut b = TextDocument::load(2, &a.save()).unwrap();
+    a.execute(TextCommand::SetBlockAttr {
+        block: 0,
+        attr: ParaAttr::Align(Align::Center),
+    })
+    .unwrap();
+    b.execute(TextCommand::SetBlockAttr {
+        block: 0,
+        attr: ParaAttr::List(Some(ListKind::Bullet)),
+    })
+    .unwrap();
+    sync(&mut a, &mut b);
+    let expected = ParaAttrs {
+        align: Align::Center,
+        list: Some(ListKind::Bullet),
+        ..ParaAttrs::default()
+    };
+    assert_eq!(a.block_attrs(0).unwrap(), expected);
+    assert_eq!(b.block_attrs(0).unwrap(), expected);
+}

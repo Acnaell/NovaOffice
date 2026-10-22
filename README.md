@@ -100,22 +100,63 @@ npm install
 npm run tauri dev      # abre o app com recarga automática do front-end
 npm test               # testes da lógica do editor (Vitest)
 npm run tauri build    # instalador em target/release/bundle
+npm run build && npm run e2e   # fluxos do Word na interface real (ver abaixo)
+```   # fluxos do Word na interface real (ver abaixo)
 ```
 
-Como funciona: o editor usa um `contenteditable` só para ter cursor, seleção e IME nativos. Cada
-`beforeinput` é cancelado e vira um comando do núcleo (`src/model.ts`); a resposta traz o documento,
-que é redesenhado do zero. O DOM nunca é a fonte da verdade.
+### Página Inicial
 
-| Atalho | Ação |
+A faixa de opções segue a organização do Microsoft Word, com os mesmos grupos e botões:
+
+| Grupo | Comandos |
 | --- | --- |
-| Ctrl+B, Ctrl+I, Ctrl+U, Alt+Shift+5 | Negrito, itálico, sublinhado, tachado |
-| Ctrl+Alt+1 a 6, Ctrl+Alt+0 | Título 1 a 6, texto normal |
-| Ctrl+Z, Ctrl+Y (ou Ctrl+Shift+Z) | Desfazer, refazer |
-| Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S | Novo, abrir, salvar, salvar como |
-| Ctrl+Backspace, Ctrl+Delete | Apagar palavra |
+| Área de Transferência | Colar (manter formatação original ou somente texto), Recortar, Copiar, Pincel de Formatação (clique duplo deixa fixo) |
+| Fonte | Fonte (fontes do tema e instaladas), tamanho, aumentar/diminuir tamanho, Maiúsculas e Minúsculas, Limpar Toda a Formatação, N I S T, subscrito, sobrescrito, realce, cor da fonte |
+| Parágrafo | Marcadores, numeração (1. → a. → i. por nível), diminuir/aumentar recuo, Mostrar Tudo ¶, alinhamentos, espaçamento entre linhas e antes/depois do parágrafo |
+| Estilos | Texto normal, Título 1 a 6, Citação, Código |
+| Editando | Localizar e Substituir no painel de Navegação, Selecionar Tudo |
 
-Limitações conhecidas: fechar a janela não pergunta sobre alterações não salvas; colar mantém só o
-texto (sem formatação); arrastar e soltar texto está desativado.
+Como no Word: com o cursor parado dentro de uma palavra, negrito, cor ou fonte valem para a palavra
+inteira; "- " ou "1. " no começo do parágrafo viram lista; Enter num item vazio sai da lista; Tab e
+Shift+Tab mudam o nível do item; copiar leva a formatação para o Word, navegador e e-mail, e colar de
+lá traz negrito, cores, tamanhos, títulos, listas e alinhamento.
+
+### Atalhos
+
+Os atalhos acompanham o idioma da interface, como no Word: em português valem os do Word em
+português; em inglês, os do Word em inglês.
+
+| Ação | Português | Inglês |
+| --- | --- | --- |
+| Negrito, itálico, sublinhado | Ctrl+N, Ctrl+I, Ctrl+S | Ctrl+B, Ctrl+I, Ctrl+U |
+| Novo, abrir, salvar, salvar como | Ctrl+O, Ctrl+A, Ctrl+B, F12 | Ctrl+N, Ctrl+O, Ctrl+S, F12 |
+| Selecionar tudo | Ctrl+T | Ctrl+A |
+| Localizar, substituir | Ctrl+L, Ctrl+U | Ctrl+F, Ctrl+H |
+| Alinhar à esquerda, centralizar, à direita, justificar | Ctrl+Q, Ctrl+E, Ctrl+G, Ctrl+J | Ctrl+L, Ctrl+E, Ctrl+R, Ctrl+J |
+| Desfazer, refazer | Ctrl+Z, Ctrl+R ou Ctrl+Y | Ctrl+Z, Ctrl+Y |
+
+Iguais nos dois: Ctrl+= e Ctrl+Shift+= (subscrito e sobrescrito), Ctrl+Espaço (limpar formatação),
+Ctrl+Shift+> e Ctrl+Shift+< (tamanho da fonte), Shift+F3 (maiúsculas e minúsculas), Ctrl+Shift+C e
+Ctrl+Shift+V (copiar e colar formatação), Ctrl+M e Ctrl+Shift+M (recuo), Ctrl+1, Ctrl+5 e Ctrl+2
+(entrelinhas 1,0, 1,5 e 2,0), Ctrl+Shift+L (marcadores), Ctrl+Shift+8 (Mostrar Tudo), Ctrl+Alt+1 a 6
+(títulos), Shift+Enter (quebra de linha), Ctrl+↑/↓ (parágrafo anterior/seguinte).
+
+### Como funciona
+
+O editor usa um `contenteditable` só para ter cursor, seleção e IME nativos. Cada `beforeinput` é
+cancelado e vira um comando do núcleo (`src/model.ts`, `src/formatting.ts`); a resposta traz só os
+parágrafos que mudaram, e só eles são redesenhados. O DOM nunca é a fonte da verdade.
+
+### Fluxos do Word (e2e)
+
+`apps/desktop/e2e` tem uma bateria com cerca de 90 fluxos do Word (digitar com acentos, selecionar,
+formatar, listas, colar do Word, localizar e substituir, salvar e reabrir…). Cada fluxo dirige a
+interface real no Chromium, com o núcleo Rust real por trás (`e2e/bridge`, no lugar do IPC do Tauri),
+e é classificado como funciona, parcial, com falha ou ainda não existe. O resultado fica em
+`e2e/RESULTADOS.md` e o CI falha se algum fluxo que já funcionava quebrar.
+
+Limitações conhecidas: fechar a janela não pergunta sobre alterações não salvas; arrastar e soltar
+texto está desativado; ainda não há paginação, tabelas, imagens nem revisão ortográfica própria.
 
 ## CLI
 

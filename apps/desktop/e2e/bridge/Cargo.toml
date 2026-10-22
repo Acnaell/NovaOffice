@@ -1,0 +1,17 @@
+# Ponte de teste: o núcleo do app desktop atrás de HTTP, no lugar do IPC do
+# Tauri, para os fluxos de e2e/ rodarem a interface real num navegador.
+# Fica fora do workspace principal (não entra no build do app).
+[package]
+name = "nova-e2e-bridge"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+nova-app = { path = "../../../../crates/nova-app" }
+nova-domain-text = { path = "../../../../crates/nova-domain-text" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"
+
+[workspace]

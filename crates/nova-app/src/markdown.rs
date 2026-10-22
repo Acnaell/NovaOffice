@@ -2,13 +2,46 @@
 //!
 //! Fonte, tamanho e cor não têm equivalente em Markdown e são descartados.
 
-use nova_domain_text::{BlockStyle, MarkKind, Span, TextDocument};
+use nova_domain_text::{BlockStyle, ListKind, MarkKind, Span, TextDocument};
 
 pub fn export(doc: &TextDocument) -> String {
-    (0..doc.block_count())
-        .map(|i| block(doc, i))
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    let mut out = String::new();
+    // Contador de cada nível de lista numerada; zera quando a lista acaba.
+    let mut counters = [0u32; 9];
+    let mut previous_was_list = false;
+    for i in 0..doc.block_count() {
+        let attrs = doc.block_attrs(i).expect("índice dentro do documento");
+        let text = block(doc, i);
+        let line = match attrs.list {
+            Some(kind) => {
+                let level = attrs.indent as usize;
+                counters[level + 1..].iter_mut().for_each(|c| *c = 0);
+                let marker = match kind {
+                    ListKind::Bullet => "-".to_string(),
+                    ListKind::Number => {
+                        counters[level] += 1;
+                        format!("{}.", counters[level])
+                    }
+                };
+                format!("{}{marker} {text}", "    ".repeat(level))
+            }
+            None => {
+                counters = [0; 9];
+                text
+            }
+        };
+        if i > 0 {
+            // Itens seguidos da mesma lista ficam em linhas vizinhas.
+            out.push_str(if previous_was_list && attrs.list.is_some() {
+                "\n"
+            } else {
+                "\n\n"
+            });
+        }
+        previous_was_list = attrs.list.is_some();
+        out.push_str(&line);
+    }
+    out
 }
 
 fn block(doc: &TextDocument, index: u32) -> String {
@@ -60,6 +93,11 @@ fn inline(span: &Span) -> String {
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
+        // Quebra de linha manual (Shift+Enter): quebra forçada do CommonMark.
+        if ch == '\u{b}' {
+            out.push_str("\\\n");
+            continue;
+        }
         if "\\`*_~[]<>#".contains(ch) {
             out.push('\\');
         }
@@ -109,6 +147,43 @@ mod tests {
             export(&doc),
             "# Relatório\n\num **dois** *tres*\n\n> frase\n\n    let x = 1;"
         );
+    }
+
+    #[test]
+    fn listas_com_marcadores_numeradas_e_niveis() {
+        use nova_domain_text::ParaAttr;
+        let mut doc = TextDocument::from_plain_text(
+            1,
+            "Compras\npão\nleite\nintegral\nPassos\nabrir\nfechar",
+        );
+        let set = |doc: &mut TextDocument, block, attr| {
+            doc.execute(TextCommand::SetBlockAttr { block, attr })
+                .unwrap();
+        };
+        for b in 1..=3 {
+            set(&mut doc, b, ParaAttr::List(Some(ListKind::Bullet)));
+        }
+        set(&mut doc, 3, ParaAttr::Indent(1));
+        for b in 5..=6 {
+            set(&mut doc, b, ParaAttr::List(Some(ListKind::Number)));
+        }
+        assert_eq!(
+            export(&doc),
+            "Compras\n\n- pão\n- leite\n    - integral\n\nPassos\n\n1. abrir\n2. fechar"
+        );
+    }
+
+    #[test]
+    fn quebra_de_linha_manual_vira_quebra_forcada() {
+        let mut doc = TextDocument::new(1);
+        doc.execute(TextCommand::InsertText {
+            block: 0,
+            offset: 0,
+            text: "Rua A, 10\u{b}São Paulo".into(),
+            marks: None,
+        })
+        .unwrap();
+        assert_eq!(export(&doc), "Rua A, 10\\\nSão Paulo");
     }
 
     #[test]
