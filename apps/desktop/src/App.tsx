@@ -7,7 +7,7 @@ import { Backstage, LOSSY, SAVE_FORMATS, type BackstagePage } from "./Backstage"
 import { insertFragment, NOVA_MIME, parseHtml, plainFragment, type Fragment } from "./clipboard";
 import { writeSelection } from "./dom";
 import { Editor, type EditFn } from "./Editor";
-import { matchSelection, nextMatch, replaceAll, replaceMatch } from "./find";
+import { matchSelection, nextMatch, replaceAll, replaceMatch, type Match } from "./find";
 import { FindPanel, useMatches, type FindState } from "./FindPanel";
 import {
   changeCase,
@@ -53,6 +53,9 @@ import { SaveChangesDialog, type SaveChoice } from "./SaveDialog";
 import { DateTimeDialog, LinkDialog, MarginsDialog, type LinkRequest } from "./Insert";
 import { deleteColumns, deleteRows, deleteTable, insertColumn, insertRow, insertTable } from "./tables";
 import { fileToBase64, insertImage, resizeImage, setImage, TEXT_WIDTH_PT } from "./images";
+import { defaultProofing, matchAt, matchText, parseProofing, SPELL_LANGUAGES, useSpelling, type Proofing } from "./spell";
+import { SpellMenu } from "./SpellMenu";
+import { load, store } from "./storage";
 import { matchShortcut, profileFor } from "./shortcuts";
 import { useTheme } from "./theme";
 import { applyPatch, DEFAULT_PAGE, type BlockStyle, type PageSetup, type DocView, type FileFormat, type Recent, type RecoveryInfo, type HighlightColor, type Mark, type MarkKind, type ParaAttr, type TextCommand, type ToggleMark } from "./types";
@@ -77,6 +80,9 @@ const AUTOSAVE_MS = 60_000;
 
 const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false, format: null, page: DEFAULT_PAGE };
 
+/** Idioma de revisão escolhido na barra de status (sem escolha, segue o da interface). */
+const PROOFING_KEY = "nova.proofing";
+
 export default function App() {
   const [state, setState] = useState<State | null>(null);
   const [pendingMarks, setPendingMarks] = useState<Mark[] | null>(null);
@@ -98,6 +104,9 @@ export default function App() {
   const [recovery, setRecovery] = useState<RecoveryInfo | null>(null);
   const [saveAsk, setSaveAsk] = useState<{ title: string; resolve: (choice: SaveChoice) => void } | null>(null);
   const { t, locale } = useI18n();
+  const [proofingChoice, setProofingChoice] = useState<Proofing | null>(() => parseProofing(load(PROOFING_KEY)));
+  const proofing = proofingChoice ?? defaultProofing(locale);
+  const [spellMenu, setSpellMenu] = useState<{ match: Match; word: string; x: number; y: number } | null>(null);
   const profile = profileFor(locale);
   const [theme, setTheme] = useTheme();
   // Callbacks estáveis leem a tradução atual daqui; trocar de idioma não os recria.
@@ -547,6 +556,39 @@ export default function App() {
     const m = matches[find.current];
     if (m) run(() => ({ command: null, selection: matchSelection(m) }));
   }, [matches]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------- Ortografia ----------
+
+  const spelling = useSpelling(state?.view ?? EMPTY_VIEW, state?.selection ?? START, proofing);
+
+  const onContextMenu = (pos: { block: number; offset: number }, x: number, y: number) => {
+    const current = stateRef.current;
+    const match = proofing === "off" || !current ? null : matchAt(spelling.all, pos);
+    if (!current || !match) return false;
+    setSpellMenu({ match, word: matchText(current.view, match), x, y });
+    return true;
+  };
+
+  const closeSpellMenu = useCallback(() => {
+    setSpellMenu(null);
+    focusEditor();
+  }, [focusEditor]);
+
+  const pickSuggestion = (match: Match, word: string, suggestion: string) => {
+    closeSpellMenu();
+    run((doc) =>
+      // O documento pode ter mudado com o menu aberto: só troca se a palavra continua lá.
+      matchText(doc, match) === word
+        ? { command: replaceMatch(doc, match, suggestion), selection: caret({ block: match.block, offset: match.start + suggestion.length }) }
+        : null,
+    );
+  };
+
+  const rememberWord = (action: "add" | "ignore", word: string) => {
+    closeSpellMenu();
+    if (proofing === "off") return;
+    (action === "add" ? api.spellAddWord(proofing, word) : api.spellIgnoreAll(proofing, word)).then(spelling.recheck, showError);
+  };
 
   // ---------- Arquivo ----------
 
@@ -1053,6 +1095,8 @@ export default function App() {
             profile={profile}
             showMarks={showMarks}
             highlights={highlights}
+            misspelled={spelling.painted}
+            onContextMenu={onContextMenu}
             onEdit={run}
             onSelect={onSelect}
             onCommand={onCommand}
@@ -1074,12 +1118,43 @@ export default function App() {
           {words === 1 ? t("status.word") : t("status.words", { words })} ·{" "}
           {blocks === 1 ? t("status.paragraph") : t("status.paragraphs", { blocks })}
         </span>
+        <select
+          className="proofing"
+          aria-label={t("spell.language")}
+          title={t("spell.language")}
+          value={proofing}
+          onChange={(e) => {
+            const value = e.target.value as Proofing;
+            setProofingChoice(value);
+            store(PROOFING_KEY, value);
+            focusEditor();
+          }}
+        >
+          {SPELL_LANGUAGES.map((language) => (
+            <option key={language} value={language}>
+              {t(`spell.lang.${language}`)}
+            </option>
+          ))}
+          <option value="off">{t("spell.off")}</option>
+        </select>
         <span className="status">
           {painter
             ? t(painter.sticky ? "status.painterSticky" : "status.painter")
             : status || (view.dirty ? t("status.unsaved") : view.path ? t("status.saved") : "")}
         </span>
       </footer>
+      {spellMenu && proofing !== "off" && (
+        <SpellMenu
+          word={spellMenu.word}
+          language={proofing}
+          x={spellMenu.x}
+          y={spellMenu.y}
+          onPick={(s) => pickSuggestion(spellMenu.match, spellMenu.word, s)}
+          onIgnoreAll={() => rememberWord("ignore", spellMenu.word)}
+          onAdd={() => rememberWord("add", spellMenu.word)}
+          onClose={closeSpellMenu}
+        />
+      )}
     </div>
   );
 }

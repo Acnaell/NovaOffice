@@ -6,7 +6,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSPr
 import { api } from "./api";
 import { cachedMediaUrl, mediaUrl, resizeImage, setImage } from "./images";
 import { fragmentHtml, fragmentOf, fragmentText, HIGHLIGHT_CSS, insertFragment, NOVA_MIME, parseHtml, plainFragment, type Fragment } from "./clipboard";
-import { posToDom, readSelection, writeSelection } from "./dom";
+import { posFromDom, posToDom, readSelection, writeSelection } from "./dom";
 import type { Match } from "./find";
 import { autoLink, autoList, changeIndent, isDark, linkOf, listMarkers } from "./formatting";
 import { moveToCell, tableGrid } from "./tables";
@@ -29,7 +29,7 @@ import {
 } from "./model";
 import { useI18n } from "./i18n";
 import { matchShortcut, type CommandId, type Profile } from "./shortcuts";
-import type { BlockView, DocView, ImageRef, Mark, ParaAttrs } from "./types";
+import type { BlockView, DocView, ImageRef, Mark, ParaAttrs, Pos } from "./types";
 
 export type EditFn = (doc: DocView, sel: Selection) => Edit | null;
 
@@ -44,6 +44,10 @@ interface Props {
   showMarks: boolean;
   /** Ocorrências da pesquisa para destacar; `current` em outra cor. */
   highlights: { all: Match[]; current: Match | null };
+  /** Palavras erradas, sublinhadas em vermelho ondulado. */
+  misspelled: Match[];
+  /** Clique direito no texto; `true` se o app mostrou o próprio menu. */
+  onContextMenu: (pos: Pos, x: number, y: number) => boolean;
   onEdit: (fn: EditFn) => void;
   onSelect: (sel: Selection) => void;
   /** Comandos de edição e formatação (atalhos e menu nativo); os de arquivo ficam com a janela. */
@@ -146,15 +150,7 @@ export function Editor(props: Props) {
     const registry = (globalThis as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
     const HighlightCtor = (globalThis as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
     if (!root || !registry || !HighlightCtor) return;
-    const toRange = (m: Match) => {
-      const start = posToDom(root, { block: m.block, offset: m.start });
-      const end = posToDom(root, { block: m.block, offset: m.end });
-      if (!start || !end) return null;
-      const range = document.createRange();
-      range.setStart(start[0], start[1]);
-      range.setEnd(end[0], end[1]);
-      return range;
-    };
+    const toRange = (m: Match) => matchRange(root, m);
     const all = props.highlights.all.map(toRange).filter((r): r is Range => !!r);
     registry.set("nova-find", new HighlightCtor(...all));
     const current = props.highlights.current && toRange(props.highlights.current);
@@ -163,6 +159,16 @@ export function Editor(props: Props) {
       root.querySelector(`[data-block="${props.highlights.current.block}"]`)?.scrollIntoView({ block: "nearest" });
     }
   }, [props.revision, props.highlights]);
+
+  // Sublinhado do corretor ortográfico, pelo mesmo mecanismo.
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const registry = (globalThis as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
+    const HighlightCtor = (globalThis as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
+    if (!root || !registry || !HighlightCtor) return;
+    const ranges = props.misspelled.map((m) => matchRange(root, m)).filter((r): r is Range => !!r);
+    registry.set("nova-spell", new HighlightCtor(...ranges));
+  }, [props.revision, props.misspelled, props.showMarks]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -389,6 +395,11 @@ export function Editor(props: Props) {
       }
     };
 
+    const onContextMenu = (e: MouseEvent) => {
+      const pos = posFromPoint(root, e.clientX, e.clientY);
+      if (pos && latest.current.onContextMenu(pos, e.clientX, e.clientY)) e.preventDefault();
+    };
+
     const block = (e: Event) => e.preventDefault();
     const copy = (e: ClipboardEvent) => onCopy(e, false);
     const cut = (e: ClipboardEvent) => onCopy(e, true);
@@ -459,6 +470,7 @@ export function Editor(props: Props) {
     root.addEventListener("mouseup", pointerUp);
     root.addEventListener("click", onClick);
     root.addEventListener("mousedown", onMouseDown);
+    root.addEventListener("contextmenu", onContextMenu);
     document.addEventListener("selectionchange", onSelectionChange);
     return () => {
       root.removeEventListener("beforeinput", onBeforeInput);
@@ -472,6 +484,7 @@ export function Editor(props: Props) {
       root.removeEventListener("dragstart", block);
       root.removeEventListener("drop", block);
       root.removeEventListener("mouseup", pointerUp);
+      root.removeEventListener("contextmenu", onContextMenu);
       document.removeEventListener("selectionchange", onSelectionChange);
     };
   }, []);
@@ -491,7 +504,8 @@ export function Editor(props: Props) {
       }}
       contentEditable
       suppressContentEditableWarning
-      spellCheck
+      // O corretor é o da NovaOffice (nova-spell), não o do WebView.
+      spellCheck={false}
       role="textbox"
       aria-multiline="true"
       aria-label={t("editor.label")}
@@ -506,6 +520,27 @@ export function Editor(props: Props) {
     </div>
     </div>
   );
+}
+
+function matchRange(root: HTMLElement, m: Match): Range | null {
+  const start = posToDom(root, { block: m.block, offset: m.start });
+  const end = posToDom(root, { block: m.block, offset: m.end });
+  if (!start || !end) return null;
+  const range = document.createRange();
+  range.setStart(start[0], start[1]);
+  range.setEnd(end[0], end[1]);
+  return range;
+}
+
+/** Posição do modelo sob o ponteiro (clique direito). */
+function posFromPoint(root: HTMLElement, x: number, y: number): Pos | null {
+  const doc = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  };
+  const caretPos = doc.caretPositionFromPoint?.(x, y);
+  if (caretPos) return posFromDom(root, caretPos.offsetNode, caretPos.offset);
+  const range = document.caretRangeFromPoint?.(x, y);
+  return range ? posFromDom(root, range.startContainer, range.startOffset) : null;
 }
 
 /**

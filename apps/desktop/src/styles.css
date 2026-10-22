@@ -1055,6 +1055,41 @@ select {
   color: #1d1d1b;
 }
 
+/* Corretor ortográfico: sublinhado vermelho ondulado, como no Word. */
+::highlight(nova-spell) {
+  text-decoration: underline wavy #e81123;
+  text-decoration-skip-ink: none;
+}
+
+.spell-menu {
+  min-width: 200px;
+}
+
+.spell-menu .spell-suggestion {
+  font-weight: 600;
+}
+
+.spell-note {
+  padding: 6px 10px;
+  color: var(--chrome-muted);
+}
+
+.statusbar .proofing {
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.statusbar .proofing:hover,
+.statusbar .proofing:focus-visible {
+  border-color: var(--chrome-border);
+  background: var(--button-hover);
+}
+
 /* ---------- Listas, marcas de formatação e pincel ---------- */
 
 .page .list {
