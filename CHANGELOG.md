@@ -8,7 +8,7 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
-## [0.1.0] - 2026-10-21
+## [0.1.0] - 2026-10-22
 
 Primeira versão pública da NovaOffice: o app desktop com o editor Nova Text e o CLI `nova`.
 
