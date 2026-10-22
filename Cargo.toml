@@ -12,6 +12,7 @@ publish = false
 nova-crdt = { path = "crates/nova-crdt" }
 nova-domain-text = { path = "crates/nova-domain-text" }
 nova-app = { path = "crates/nova-app" }
+nova-spell = { path = "crates/nova-spell" }
 
 # `sync`: documentos e desfazer podem ser compartilhados entre threads (exigido pelo estado do Tauri).
 yrs = { version = "0.21", features = ["sync"] }
@@ -28,3 +29,12 @@ tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+spellbook = "0.4"
+
+# O corretor verifica o documento inteiro a cada pausa na digitação; sem
+# otimização, o spellbook fica dezenas de vezes mais lento, inclusive nos testes.
+[profile.dev.package.spellbook]
+opt-level = 3
+
+[profile.dev.package.nova-spell]
+opt-level = 3
