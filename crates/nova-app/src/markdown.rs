@@ -1,8 +1,13 @@
-//! Exportação para Markdown (CommonMark, com `~~tachado~~` do GFM).
+//! Markdown (CommonMark, com `~~tachado~~` do GFM): exportar e abrir.
 //!
 //! Fonte, tamanho e cor não têm equivalente em Markdown e são descartados.
 
-use nova_domain_text::{BlockStyle, ListKind, MarkKind, Span, TextDocument};
+use nova_crdt::ClientId;
+use nova_domain_text::{
+    BlockStyle, ListKind, Mark, MarkKind, ParaAttrs, Paragraph, Span, TextDocument, MAX_INDENT,
+};
+
+use crate::AppError;
 
 pub fn export(doc: &TextDocument) -> String {
     let mut out = String::new();
@@ -106,6 +111,291 @@ fn escape(text: &str) -> String {
     out
 }
 
+// ---------------------------------------------------------------- abrir
+
+/// Abre Markdown: títulos, citações, código, listas aninhadas, ênfase,
+/// tachado, `<u>`, links (fica o texto) e quebras forçadas.
+pub fn import(client: ClientId, text: &str) -> Result<TextDocument, AppError> {
+    Ok(TextDocument::from_paragraphs(client, &parse(text))?)
+}
+
+fn parse(text: &str) -> Vec<Paragraph> {
+    let mut out: Vec<Paragraph> = Vec::new();
+    // Parágrafo de texto em montagem (linhas seguidas se juntam).
+    let mut pending: Option<(BlockStyle, ParaAttrs, String)> = None;
+    let mut list_indents: Vec<usize> = Vec::new();
+    let mut fence: Option<String> = None;
+
+    let flush = |out: &mut Vec<Paragraph>,
+                 pending: &mut Option<(BlockStyle, ParaAttrs, String)>| {
+        if let Some((style, attrs, raw)) = pending.take() {
+            out.push(Paragraph {
+                style,
+                attrs,
+                spans: parse_inline(&raw),
+            });
+        }
+    };
+
+    for line in text.replace("\r\n", "\n").replace('\r', "\n").split('\n') {
+        if let Some(marker) = &fence {
+            if line.trim_start().starts_with(marker.as_str()) {
+                fence = None;
+            } else {
+                out.push(code_paragraph(line));
+            }
+            continue;
+        }
+        let trimmed = line.trim_start();
+        let spaces = line.len() - trimmed.len();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            flush(&mut out, &mut pending);
+            fence = Some(trimmed[..3].to_string());
+            continue;
+        }
+        if trimmed.is_empty() {
+            flush(&mut out, &mut pending);
+            continue;
+        }
+        // Código indentado (fora de listas).
+        if spaces >= 4 && list_indents.is_empty() && pending.is_none() {
+            out.push(code_paragraph(&line[4.min(line.len())..]));
+            continue;
+        }
+        if let Some((level, rest)) = heading(trimmed) {
+            flush(&mut out, &mut pending);
+            list_indents.clear();
+            let style = [
+                BlockStyle::Heading1,
+                BlockStyle::Heading2,
+                BlockStyle::Heading3,
+                BlockStyle::Heading4,
+                BlockStyle::Heading5,
+                BlockStyle::Heading6,
+            ][level - 1];
+            out.push(Paragraph {
+                style,
+                attrs: ParaAttrs::default(),
+                spans: parse_inline(rest),
+            });
+            continue;
+        }
+        if is_rule(trimmed) {
+            flush(&mut out, &mut pending);
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix('>') {
+            flush(&mut out, &mut pending);
+            list_indents.clear();
+            let rest = rest.strip_prefix(' ').unwrap_or(rest);
+            pending = Some((BlockStyle::Quote, ParaAttrs::default(), rest.to_string()));
+            continue;
+        }
+        if let Some((kind, rest)) = list_item(trimmed) {
+            flush(&mut out, &mut pending);
+            while list_indents.last().is_some_and(|&i| spaces < i) {
+                list_indents.pop();
+            }
+            if !list_indents.last().is_some_and(|&i| spaces <= i) {
+                list_indents.push(spaces);
+            }
+            let attrs = ParaAttrs {
+                list: Some(kind),
+                indent: ((list_indents.len() - 1) as u8).min(MAX_INDENT),
+                ..ParaAttrs::default()
+            };
+            pending = Some((BlockStyle::Paragraph, attrs, rest.to_string()));
+            continue;
+        }
+        // Continuação do parágrafo (ou do item) anterior.
+        match pending.as_mut() {
+            Some((_, _, raw)) => {
+                // Dois espaços ou "\" no fim: quebra forçada.
+                if raw.ends_with("  ") || raw.ends_with('\\') {
+                    let keep = raw.trim_end_matches(' ').trim_end_matches('\\').len();
+                    raw.truncate(keep);
+                    raw.push('\u{b}');
+                } else {
+                    raw.push(' ');
+                }
+                raw.push_str(trimmed);
+            }
+            None => {
+                list_indents.clear();
+                pending = Some((
+                    BlockStyle::Paragraph,
+                    ParaAttrs::default(),
+                    trimmed.to_string(),
+                ));
+            }
+        }
+    }
+    flush(&mut out, &mut pending);
+    if out.is_empty() {
+        out.push(Paragraph::default());
+    }
+    crate::docx::normalize(&mut out);
+    out
+}
+
+fn code_paragraph(line: &str) -> Paragraph {
+    Paragraph {
+        style: BlockStyle::Code,
+        attrs: ParaAttrs::default(),
+        spans: vec![Span {
+            text: line.to_string(),
+            marks: vec![],
+        }],
+    }
+}
+
+fn heading(line: &str) -> Option<(usize, &str)> {
+    let hashes = line.chars().take_while(|&c| c == '#').count();
+    if !(1..=6).contains(&hashes) {
+        return None;
+    }
+    let rest = &line[hashes..];
+    if !(rest.is_empty() || rest.starts_with(' ')) {
+        return None;
+    }
+    Some((hashes, rest.trim().trim_end_matches('#').trim_end()))
+}
+
+fn is_rule(line: &str) -> bool {
+    let l: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+    l.len() >= 3
+        && (l.chars().all(|c| c == '-')
+            || l.chars().all(|c| c == '*')
+            || l.chars().all(|c| c == '_'))
+}
+
+fn list_item(line: &str) -> Option<(ListKind, &str)> {
+    for bullet in ["- ", "* ", "+ "] {
+        if let Some(rest) = line.strip_prefix(bullet) {
+            return Some((ListKind::Bullet, rest));
+        }
+    }
+    let digits = line.chars().take_while(|c| c.is_ascii_digit()).count();
+    if (1..=9).contains(&digits) {
+        let rest = &line[digits..];
+        if let Some(rest) = rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") ")) {
+            return Some((ListKind::Number, rest));
+        }
+    }
+    None
+}
+
+/// Ênfase e afins dentro de um parágrafo. Um marcador só conta se houver o de
+/// fechamento depois dele; sem par, fica como texto.
+fn parse_inline(raw: &str) -> Vec<Span> {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut spans: Vec<Span> = Vec::new();
+    let mut marks: Vec<Mark> = Vec::new();
+    let mut text = String::new();
+    let mut i = 0;
+
+    let has_ahead = |from: usize, token: &str| -> bool {
+        let t: Vec<char> = token.chars().collect();
+        (from..chars.len().saturating_sub(t.len() - 1)).any(|j| chars[j..j + t.len()] == t[..])
+    };
+    let push = |spans: &mut Vec<Span>, text: &mut String, marks: &[Mark]| {
+        if !text.is_empty() {
+            spans.push(Span {
+                text: std::mem::take(text),
+                marks: marks.to_vec(),
+            });
+        }
+    };
+    let toggle = |marks: &mut Vec<Mark>, mark: Mark| {
+        if let Some(pos) = marks.iter().position(|m| *m == mark) {
+            marks.remove(pos);
+        } else {
+            marks.push(mark);
+        }
+    };
+
+    while i < chars.len() {
+        let rest: String = chars[i..chars.len().min(i + 4)].iter().collect();
+        let c = chars[i];
+        if c == '\\' && i + 1 < chars.len() && "\\`*_~[]<>#!+-.()".contains(chars[i + 1]) {
+            text.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        if c == '`' {
+            if let Some(end) = (i + 1..chars.len()).find(|&j| chars[j] == '`') {
+                push(&mut spans, &mut text, &marks);
+                let code: String = chars[i + 1..end].iter().collect();
+                let mut m = marks.clone();
+                m.push(Mark::FontFamily {
+                    value: "Consolas".into(),
+                });
+                spans.push(Span {
+                    text: code,
+                    marks: m,
+                });
+                i = end + 1;
+                continue;
+            }
+        }
+        // Regra do CommonMark: abre se o próximo caractere não é espaço; fecha
+        // se o anterior não é espaço ("2 * 3 * 4" fica como está).
+        let at = i;
+        let opens = |len: usize| chars.get(at + len).is_some_and(|c| !c.is_whitespace());
+        let closes = i > 0 && !chars[i - 1].is_whitespace();
+        for (token, mark) in [("**", Mark::Bold), ("__", Mark::Bold), ("~~", Mark::Strike)] {
+            if rest.starts_with(token) {
+                let on = marks.contains(&mark);
+                if (on && closes) || (!on && opens(2) && has_ahead(i + 2, token)) {
+                    push(&mut spans, &mut text, &marks);
+                    toggle(&mut marks, mark);
+                    i += 2;
+                    break;
+                }
+            }
+        }
+        if i < chars.len() && chars[i] != c {
+            continue;
+        }
+        if rest.starts_with("<u>") || rest.starts_with("</u>") {
+            push(&mut spans, &mut text, &marks);
+            toggle(&mut marks, Mark::Underline);
+            i += if rest.starts_with("<u>") { 3 } else { 4 };
+            continue;
+        }
+        if (c == '*' || c == '_') && !rest.starts_with("**") && !rest.starts_with("__") {
+            let on = marks.contains(&Mark::Italic);
+            // "_" no meio de palavra (nome_de_arquivo) não é ênfase.
+            let intraword = c == '_' && i > 0 && chars[i - 1].is_alphanumeric() && !on;
+            if !intraword
+                && ((on && closes) || (!on && opens(1) && has_ahead(i + 1, &c.to_string())))
+            {
+                push(&mut spans, &mut text, &marks);
+                toggle(&mut marks, Mark::Italic);
+                i += 1;
+                continue;
+            }
+        }
+        if c == '[' {
+            // [texto](endereço) → texto
+            let close = (i + 1..chars.len()).find(|&j| chars[j] == ']');
+            if let Some(close) = close {
+                if chars.get(close + 1) == Some(&'(') {
+                    if let Some(end) = (close + 2..chars.len()).find(|&j| chars[j] == ')') {
+                        text.extend(&chars[i + 1..close]);
+                        i = end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        text.push(c);
+        i += 1;
+    }
+    push(&mut spans, &mut text, &marks);
+    spans
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +474,82 @@ mod tests {
         })
         .unwrap();
         assert_eq!(export(&doc), "Rua A, 10\\\nSão Paulo");
+    }
+
+    #[test]
+    fn abre_markdown() {
+        let md = "# Título\n\nTexto com **negrito**, *itálico*, ~~fora~~ e <u>sub</u>.\nContinua [aqui](http://x) com `código`.  \nDepois da quebra.\n\n> citação\n\n- um\n  - dois\n- três\n\n1. a\n2. b\n\n```\nlet x = 1;\n```\n\nnome_de_arquivo e 2 * 3 * 4 e **sem fim";
+        let p = parse(md);
+        let texts: Vec<String> = p.iter().map(Paragraph::text).collect();
+        assert_eq!(
+            texts,
+            [
+                "Título",
+                "Texto com negrito, itálico, fora e sub. Continua aqui com código.\u{b}Depois da quebra.",
+                "citação",
+                "um",
+                "dois",
+                "três",
+                "a",
+                "b",
+                "let x = 1;",
+                "nome_de_arquivo e 2 * 3 * 4 e **sem fim",
+            ]
+        );
+        assert_eq!(p[0].style, BlockStyle::Heading1);
+        let marks: Vec<Vec<MarkKind>> = p[1]
+            .spans
+            .iter()
+            .map(|s| s.marks.iter().map(Mark::kind).collect())
+            .collect();
+        assert!(marks.contains(&vec![MarkKind::Bold]) && marks.contains(&vec![MarkKind::Italic]));
+        assert!(
+            marks.contains(&vec![MarkKind::Strike]) && marks.contains(&vec![MarkKind::Underline])
+        );
+        assert_eq!(p[2].style, BlockStyle::Quote);
+        assert_eq!(
+            (p[4].attrs.list, p[4].attrs.indent),
+            (Some(ListKind::Bullet), 1)
+        );
+        assert_eq!(p[6].attrs.list, Some(ListKind::Number));
+        assert_eq!(p[8].style, BlockStyle::Code);
+    }
+
+    #[test]
+    fn exportar_e_abrir_de_novo() {
+        use nova_domain_text::ParaAttr;
+        let mut doc = TextDocument::from_plain_text(
+            1,
+            "Capítulo\num *dois* três\nitem\nsub\nlinha um\u{b}linha dois",
+        );
+        for c in [
+            TextCommand::SetBlockStyle {
+                block: 0,
+                style: BlockStyle::Heading2,
+            },
+            TextCommand::ApplyMark {
+                block: 1,
+                offset: 3,
+                len: 6,
+                mark: Mark::Bold,
+            },
+            TextCommand::SetBlockAttr {
+                block: 2,
+                attr: ParaAttr::List(Some(ListKind::Bullet)),
+            },
+            TextCommand::SetBlockAttr {
+                block: 3,
+                attr: ParaAttr::List(Some(ListKind::Bullet)),
+            },
+            TextCommand::SetBlockAttr {
+                block: 3,
+                attr: ParaAttr::Indent(1),
+            },
+        ] {
+            doc.execute(c).unwrap();
+        }
+        let back = import(2, &export(&doc)).unwrap();
+        assert_eq!(back.paragraphs(), doc.paragraphs());
     }
 
     #[test]

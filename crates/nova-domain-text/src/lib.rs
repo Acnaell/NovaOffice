@@ -9,8 +9,8 @@
 mod format;
 
 pub use format::{
-    Align, BlockStyle, ListKind, Mark, MarkKind, ParaAttr, ParaAttrs, Span, HIGHLIGHT_COLORS,
-    MAX_INDENT,
+    Align, BlockStyle, ListKind, Mark, MarkKind, ParaAttr, ParaAttrs, Paragraph, Span,
+    HIGHLIGHT_COLORS, MAX_INDENT,
 };
 
 use nova_crdt::{is_boundary, utf16_len, AttrMap, ClientId, CrdtError, Replica};
@@ -202,6 +202,80 @@ impl TextDocument {
         }
         replica.clear_history();
         Self { replica }
+    }
+
+    /// Documento montado a partir de parágrafos (importação de .docx, .odt,
+    /// Markdown). A montagem não entra no histórico de desfazer. Quebras de
+    /// linha (`\n`) dentro de um trecho viram quebras manuais (U+000B).
+    pub fn from_paragraphs(
+        client: ClientId,
+        paragraphs: &[Paragraph],
+    ) -> Result<Self, DomainError> {
+        let mut doc = Self::new(client);
+        let mut commands = Vec::new();
+        for (i, p) in paragraphs.iter().enumerate() {
+            let index = i as u32;
+            if i > 0 {
+                commands.push(TextCommand::InsertBlock {
+                    index,
+                    text: String::new(),
+                    style: p.style,
+                });
+            } else if p.style != BlockStyle::Paragraph {
+                commands.push(TextCommand::SetBlockStyle {
+                    block: 0,
+                    style: p.style,
+                });
+            }
+            let mut offset = 0;
+            for span in &p.spans {
+                let text = span.text.replace(['\r', '\n'], "\u{b}");
+                if text.is_empty() {
+                    continue;
+                }
+                let len = utf16_len(&text);
+                commands.push(TextCommand::InsertText {
+                    block: index,
+                    offset,
+                    text,
+                    marks: Some(span.marks.clone()),
+                });
+                offset += len;
+            }
+            let d = &p.attrs;
+            let defaults = ParaAttrs::default();
+            let changes = [
+                (d.align != defaults.align).then_some(ParaAttr::Align(d.align)),
+                (d.indent != 0).then_some(ParaAttr::Indent(d.indent.min(MAX_INDENT))),
+                d.line_spacing
+                    .map(|v| ParaAttr::LineSpacing(Some(v.clamp(50, 500)))),
+                d.space_before
+                    .map(|v| ParaAttr::SpaceBefore(Some(v.min(1584)))),
+                d.space_after
+                    .map(|v| ParaAttr::SpaceAfter(Some(v.min(1584)))),
+                d.list.map(|k| ParaAttr::List(Some(k))),
+            ];
+            commands.extend(
+                changes
+                    .into_iter()
+                    .flatten()
+                    .map(|attr| TextCommand::SetBlockAttr { block: index, attr }),
+            );
+        }
+        doc.execute(TextCommand::Batch { commands })?;
+        doc.replica.clear_history();
+        Ok(doc)
+    }
+
+    /// Todos os parágrafos, para exportar.
+    pub fn paragraphs(&self) -> Vec<Paragraph> {
+        (0..self.block_count())
+            .map(|i| Paragraph {
+                style: self.block_style(i).expect("índice dentro do documento"),
+                attrs: self.block_attrs(i).expect("índice dentro do documento"),
+                spans: self.block_spans(i).expect("índice dentro do documento"),
+            })
+            .collect()
     }
 
     pub fn load(client: ClientId, state: &[u8]) -> Result<Self, DomainError> {
