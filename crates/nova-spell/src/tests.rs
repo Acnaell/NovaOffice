@@ -231,3 +231,96 @@ fn misspelled_em_texto_vazio() {
     assert!(pt().misspelled("").is_empty());
     assert!(pt().misspelled("   \n\t ").is_empty());
 }
+
+/// Caminho de dicionário num diretório temporário só deste teste.
+fn temp_path(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("nova-spell-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir.join("usuario").join("dicionario.json")
+}
+
+#[test]
+fn add_word_aceita_a_palavra_e_variacoes_de_caixa() {
+    let mut speller = Speller::load(Language::PtBr).unwrap();
+    assert!(!speller.check("NovaOffice"));
+    assert_eq!(speller.misspelled("Use o NovaOffice"), [(6, 16)]);
+    speller.add_word("NovaOffice").unwrap();
+    assert!(speller.check("NovaOffice"));
+    assert!(speller.misspelled("Use o NovaOffice").is_empty());
+
+    speller.add_word("tuitar").unwrap();
+    assert!(speller.check("Tuitar"), "início de frase");
+    assert!(speller.suggest("tuitarr").iter().any(|s| s == "tuitar"));
+}
+
+#[test]
+fn ignore_all_vale_so_para_a_grafia_exata_e_nao_sugere() {
+    let mut speller = Speller::load(Language::PtBr).unwrap();
+    speller.ignore_all("Acnaell").unwrap();
+    assert!(speller.check("Acnaell"));
+    assert!(!speller.check("acnaell"));
+    assert!(!speller.suggest("Acnael").iter().any(|s| s == "Acnaell"));
+}
+
+#[test]
+fn dicionario_do_usuario_persiste_em_json() {
+    let path = temp_path("persiste");
+    let user = UserDictionary::open(&path).unwrap();
+    assert_eq!(user.words().count(), 0, "arquivo inexistente começa vazio");
+    assert!(!path.exists());
+
+    let mut speller = Speller::load(Language::PtBr)
+        .unwrap()
+        .with_user_dictionary(user);
+    speller.add_word("NovaOffice").unwrap();
+    speller.ignore_all("Acnaell").unwrap();
+    speller.add_word("NovaOffice").unwrap();
+
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "version": 1, "words": ["NovaOffice"], "ignored": ["Acnaell"] })
+    );
+
+    // Outra sessão, outro idioma: o dicionário do usuário vale para todos.
+    let reopened = UserDictionary::open(&path).unwrap();
+    assert_eq!(reopened.path(), Some(path.as_path()));
+    let speller = Speller::load(Language::EnUs)
+        .unwrap()
+        .with_user_dictionary(reopened);
+    assert!(speller.check("NovaOffice"));
+    assert!(speller.check("Acnaell"));
+    assert!(speller.misspelled("NovaOffice by Acnaell").is_empty());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+}
+
+#[test]
+fn dicionario_do_usuario_em_memoria_nao_grava_nada() {
+    let mut speller = Speller::load(Language::Es).unwrap();
+    speller.add_word("NovaOffice").unwrap();
+    assert_eq!(speller.user_dictionary().path(), None);
+    assert_eq!(
+        speller.user_dictionary().words().collect::<Vec<_>>(),
+        ["NovaOffice"]
+    );
+}
+
+#[test]
+fn json_do_usuario() {
+    let user = UserDictionary::from_json(r#"{ "words": ["sextou", "a/b"] }"#).unwrap();
+    assert!(user.contains("sextou"));
+    assert_eq!(user.ignored().count(), 0);
+    let speller = Speller::load(Language::PtBr)
+        .unwrap()
+        .with_user_dictionary(user);
+    assert!(speller.check("sextou"));
+    assert!(
+        speller.check("a/b"),
+        "palavra com barra fica só no dicionário do usuário"
+    );
+    assert!(matches!(
+        UserDictionary::from_json("{ não é json"),
+        Err(SpellError::Json(_))
+    ));
+}

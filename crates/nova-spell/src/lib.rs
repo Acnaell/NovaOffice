@@ -4,10 +4,13 @@
 //!
 //! `Speller` verifica palavras soltas (`check`, `suggest`) e texto corrido
 //! (`misspelled`), que devolve intervalos em unidades UTF-16, como os offsets
-//! do `nova-domain-text`.
+//! do `nova-domain-text`. O dicionário do usuário (`UserDictionary`) guarda as
+//! palavras adicionadas e as ignoradas num arquivo JSON.
 
+mod user_dict;
 mod words;
 
+pub use user_dict::UserDictionary;
 pub use words::{words, Word};
 
 use std::collections::HashMap;
@@ -92,27 +95,33 @@ pub enum SpellError {
     UnknownLanguage(String),
     #[error("dicionário {language} inválido: {message}")]
     Dictionary { language: Language, message: String },
+    #[error("dicionário do usuário: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("dicionário do usuário: JSON inválido: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
-/// Corretor de um idioma.
+/// Corretor de um idioma, com o dicionário do usuário por cima.
 ///
 /// Carregar é caro (o dicionário pt-BR tem mais de 300 mil radicais); a
 /// aplicação deve carregar uma vez por idioma e compartilhar o `Speller`.
 pub struct Speller {
     language: Language,
     dict: spellbook::Dictionary,
+    user: UserDictionary,
 }
 
 impl fmt::Debug for Speller {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Speller")
             .field("language", &self.language)
+            .field("user", &self.user)
             .finish_non_exhaustive()
     }
 }
 
 impl Speller {
-    /// Carrega o dicionário embutido do idioma.
+    /// Carrega o dicionário embutido do idioma, com um dicionário do usuário vazio.
     pub fn load(language: Language) -> Result<Self, SpellError> {
         let (aff, dic) = language.files();
         let dict = spellbook::Dictionary::new(strip_bom(aff), strip_bom(dic)).map_err(|e| {
@@ -121,22 +130,43 @@ impl Speller {
                 message: e.to_string(),
             }
         })?;
-        Ok(Speller { language, dict })
+        Ok(Speller {
+            language,
+            dict,
+            user: UserDictionary::new(),
+        })
+    }
+
+    /// Troca o dicionário do usuário, por exemplo pelo de `UserDictionary::open`.
+    pub fn with_user_dictionary(mut self, user: UserDictionary) -> Self {
+        for word in user.words() {
+            add_to_dict(&mut self.dict, word);
+        }
+        self.user = user;
+        self
     }
 
     pub fn language(&self) -> Language {
         self.language
     }
 
-    /// A palavra está no dicionário.
+    pub fn user_dictionary(&self) -> &UserDictionary {
+        &self.user
+    }
+
+    /// A palavra está correta: no dicionário, adicionada pelo usuário ou ignorada.
     pub fn check(&self, word: &str) -> bool {
         let word = word.trim();
-        if word.is_empty() || self.dict.check(word) {
+        if word.is_empty() || self.check_exact(word) {
             return true;
         }
         // Os dicionários usam o apóstrofo e o hífen ASCII; o texto digitado
         // costuma trazer os tipográficos (’ e ‐).
-        normalize(word).is_some_and(|w| self.dict.check(&w))
+        normalize(word).is_some_and(|w| self.check_exact(&w))
+    }
+
+    fn check_exact(&self, word: &str) -> bool {
+        self.user.is_ignored(word) || self.user.contains(word) || self.dict.check(word)
     }
 
     /// Até `MAX_SUGGESTIONS` sugestões, a melhor primeiro. As regras REP e MAP
@@ -174,6 +204,38 @@ impl Speller {
             .filter(|w| !*known.entry(w.text).or_insert_with(|| self.check(w.text)))
             .map(|w| (w.start, w.end))
             .collect()
+    }
+
+    /// "Adicionar ao dicionário": a palavra passa a valer em todos os
+    /// documentos, com as variações de maiúsculas que o Hunspell aceita
+    /// ("Nova" também vale "NOVA"), e pode aparecer nas sugestões. Se o
+    /// dicionário do usuário veio de um arquivo, ele é salvo.
+    pub fn add_word(&mut self, word: &str) -> Result<(), SpellError> {
+        let word = word.trim();
+        if word.is_empty() || !self.user.insert_word(word) {
+            return Ok(());
+        }
+        add_to_dict(&mut self.dict, word);
+        self.user.save()
+    }
+
+    /// "Ignorar tudo": esta grafia exata deixa de ser marcada, mas não vira
+    /// sugestão. Também é salva no dicionário do usuário.
+    pub fn ignore_all(&mut self, word: &str) -> Result<(), SpellError> {
+        let word = word.trim();
+        if word.is_empty() || !self.user.insert_ignored(word) {
+            return Ok(());
+        }
+        self.user.save()
+    }
+}
+
+/// No formato do Hunspell, "/" separa o radical das flags; palavras com "/"
+/// ficam só no `UserDictionary`, que `check` também consulta.
+fn add_to_dict(dict: &mut spellbook::Dictionary, word: &str) {
+    if !word.contains('/') {
+        // Sem flags, a análise não tem como falhar.
+        let _ = dict.add(word);
     }
 }
 
