@@ -211,6 +211,10 @@ export function deleteBackward(doc: DocView, sel: Selection): Edit {
     const len = charLenBefore(blockText(doc.blocks[block]), offset);
     return deleteRange({ block, offset: offset - len }, sel.focus);
   }
+  // No início do parágrafo de uma imagem, o Backspace apaga a imagem (o texto fica).
+  if (doc.blocks[block].attrs?.image) {
+    return { command: { type: "block.setAttr", block, attr: "image", value: null }, selection: sel };
+  }
   // No início de um parágrafo depois de uma quebra de página, o Backspace apaga a quebra.
   if (doc.blocks[block].attrs?.pageBreakBefore) {
     return { command: { type: "block.setAttr", block, attr: "pageBreakBefore", value: false }, selection: sel };
@@ -241,6 +245,10 @@ export function deleteForward(doc: DocView, sel: Selection): Edit {
   }
   if (block < doc.blocks.length - 1) {
     if (!sameCellRef(doc.blocks[block].attrs?.cell, doc.blocks[block + 1].attrs?.cell)) return { command: null, selection: sel };
+    // Delete antes de uma imagem apaga a imagem, como no Word.
+    if (doc.blocks[block + 1].attrs?.image) {
+      return { command: { type: "block.setAttr", block: block + 1, attr: "image", value: null }, selection: sel };
+    }
     return deleteRange(sel.focus, { block: block + 1, offset: 0 });
   }
   return { command: null, selection: sel };

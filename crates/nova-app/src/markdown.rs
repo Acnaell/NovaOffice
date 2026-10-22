@@ -62,7 +62,14 @@ pub fn export(doc: &TextDocument) -> String {
             counters = [0; 9];
             continue;
         }
-        let text = block(doc, i);
+        let text = match &attrs.image {
+            // Imagem embutida no próprio Markdown (data URL), para o arquivo abrir sozinho.
+            Some(image) => match doc.media(&image.id) {
+                Some((mime, data)) => format!("![]({})", crate::media::data_url(&mime, &data)),
+                None => String::new(),
+            },
+            None => block(doc, i),
+        };
         let line = match attrs.list {
             Some(kind) => {
                 let level = attrs.indent as usize;
@@ -184,7 +191,44 @@ fn escape(text: &str) -> String {
 /// Abre Markdown: títulos, citações, código, listas aninhadas, ênfase,
 /// tachado, `<u>`, links (fica o texto) e quebras forçadas.
 pub fn import(client: ClientId, text: &str) -> Result<TextDocument, AppError> {
-    Ok(TextDocument::from_paragraphs(client, &parse(text))?)
+    let paragraphs = parse(text);
+    // Imagens em data URL (![](data:image/png;base64,…)) viram imagens embutidas.
+    let mut images: Vec<(usize, Vec<u8>)> = Vec::new();
+    let mut paragraphs: Vec<Paragraph> = paragraphs
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut p)| {
+            let raw = p.text();
+            let line = raw.trim();
+            if let Some(url) = line
+                .strip_prefix("![")
+                .and_then(|rest| rest.split_once("]("))
+                .and_then(|(_, rest)| rest.strip_suffix(')'))
+            {
+                if let Some(data) = crate::media::from_data_url(url) {
+                    images.push((i, data));
+                    p.spans.clear();
+                }
+            }
+            p
+        })
+        .collect();
+    let doc = TextDocument::new(client);
+    for (i, data) in &images {
+        if let Some(image) = crate::media::embed(&doc, data, None) {
+            paragraphs[*i].attrs.image = Some(image);
+        }
+    }
+    let built = TextDocument::from_paragraphs(client, &paragraphs)?;
+    for id in paragraphs
+        .iter()
+        .filter_map(|p| p.attrs.image.as_ref().map(|i| i.id.clone()))
+    {
+        if let Some((mime, data)) = doc.media(&id) {
+            built.put_media(&id, &mime, &data)?;
+        }
+    }
+    Ok(built)
 }
 
 fn parse(text: &str) -> Vec<Paragraph> {
@@ -229,6 +273,18 @@ fn parse(text: &str) -> Vec<Paragraph> {
         }
         if trimmed.is_empty() {
             flush(&mut out, &mut pending);
+            continue;
+        }
+        // Imagem embutida numa linha só: fica crua até import() embutir o arquivo.
+        if trimmed.starts_with("![") && trimmed.contains("](data:") && trimmed.ends_with(')') {
+            flush(&mut out, &mut pending);
+            out.push(Paragraph {
+                spans: vec![Span {
+                    text: trimmed.to_string(),
+                    marks: Vec::new(),
+                }],
+                ..Paragraph::default()
+            });
             continue;
         }
         // Tabela do GitHub: linha com | seguida de | --- | --- |.

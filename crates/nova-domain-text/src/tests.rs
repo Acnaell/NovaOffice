@@ -542,6 +542,7 @@ fn alinhamento_recuo_espacamento_e_lista() {
             shading: None,
             page_break_before: false,
             cell: None,
+            image: None,
         }
     );
     assert_eq!(doc.block_attrs(1).unwrap(), ParaAttrs::default());
@@ -902,4 +903,41 @@ fn celulas_de_tabela() {
     let json = r#"{"type":"block.setAttr","block":2,"attr":"cell","value":{"table":"t-2","row":3,"col":1}}"#;
     doc.execute(serde_json::from_str(json).unwrap()).unwrap();
     assert_eq!(doc.block_attrs(2).unwrap().cell.unwrap().table, "t-2");
+}
+
+#[test]
+fn imagens() {
+    let mut doc = TextDocument::new(1);
+    doc.put_media("f00", "image/png", &[137, 80, 78, 71])
+        .unwrap();
+    assert!(
+        doc.put_media("F00", "image/png", &[1]).is_err(),
+        "id em minúsculas"
+    );
+    assert!(
+        doc.put_media("a1", "text/html", &[1]).is_err(),
+        "só imagens"
+    );
+    let image = ImageRef {
+        id: "f00".into(),
+        width: 200,
+        height: 100,
+    };
+    doc.execute(TextCommand::SetBlockAttr {
+        block: 0,
+        attr: ParaAttr::Image(Some(image.clone())),
+    })
+    .unwrap();
+    // Enter na imagem cria um parágrafo comum depois dela.
+    doc.execute(TextCommand::SplitBlock {
+        block: 0,
+        offset: 0,
+    })
+    .unwrap();
+    assert_eq!(doc.block_attrs(0).unwrap().image, Some(image));
+    assert_eq!(doc.block_attrs(1).unwrap().image, None);
+    assert_eq!(doc.media("f00").unwrap().0, "image/png");
+    // O arquivo vai junto no estado do documento.
+    let copy = TextDocument::load(2, &doc.save()).unwrap();
+    assert_eq!(copy.media("f00").unwrap().1, vec![137, 80, 78, 71]);
 }

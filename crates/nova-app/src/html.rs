@@ -71,7 +71,7 @@ fn span_html(text: &str, marks: &[Mark]) -> String {
     }
 }
 
-fn paragraph_html(p: &Paragraph, tag: &str) -> String {
+fn paragraph_html(p: &Paragraph, tag: &str, image: Option<&str>) -> String {
     let mut css = Vec::new();
     match p.attrs.align {
         Align::Left => {}
@@ -109,11 +109,8 @@ fn paragraph_html(p: &Paragraph, tag: &str) -> String {
     } else {
         format!(r#" style="{}""#, css.join(";"))
     };
-    let inner: String = p
-        .spans
-        .iter()
-        .map(|s| span_html(&s.text, &s.marks))
-        .collect();
+    let mut inner: String = image.unwrap_or_default().to_string();
+    inner.extend(p.spans.iter().map(|s| span_html(&s.text, &s.marks)));
     let inner = if inner.is_empty() {
         "<br>".to_string()
     } else {
@@ -161,6 +158,16 @@ pub fn export(doc: &TextDocument, title: &str) -> String {
             }
             cell = key;
         }
+        // Imagem embutida no próprio HTML (data URL): o arquivo abre sozinho.
+        let img = p.attrs.image.as_ref().and_then(|i| {
+            let (mime, data) = doc.media(&i.id)?;
+            Some(format!(
+                r#"<img src="{}" style="width:{}pt;height:{}pt" alt="">"#,
+                crate::media::data_url(&mime, &data),
+                i.width,
+                i.height
+            ))
+        });
         match p.attrs.list {
             Some(kind) => {
                 let tag = if kind == ListKind::Bullet { "ul" } else { "ol" };
@@ -172,7 +179,7 @@ pub fn export(doc: &TextDocument, title: &str) -> String {
                     body.push_str(&format!("<{tag}>"));
                     open.push(tag);
                 }
-                body.push_str(&paragraph_html(&p, "li"));
+                body.push_str(&paragraph_html(&p, "li", img.as_deref()));
             }
             None => {
                 while let Some(t) = open.pop() {
@@ -189,7 +196,7 @@ pub fn export(doc: &TextDocument, title: &str) -> String {
                     BlockStyle::Quote => "blockquote",
                     BlockStyle::Code => "pre",
                 };
-                body.push_str(&paragraph_html(&p, tag));
+                body.push_str(&paragraph_html(&p, tag, img.as_deref()));
             }
         }
         body.push('\n');

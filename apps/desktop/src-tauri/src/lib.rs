@@ -79,6 +79,21 @@ fn discard_recovery(app: State<'_, App>) {
     app.discard_recovery()
 }
 
+#[tauri::command]
+fn add_image_file(app: State<'_, App>, path: String) -> Result<nova_domain_text::ImageRef, String> {
+    app.add_image_file(&path)
+}
+
+#[tauri::command]
+fn add_image_data(app: State<'_, App>, data: String) -> Result<nova_domain_text::ImageRef, String> {
+    app.add_image_data(&data)
+}
+
+#[tauri::command]
+fn media(app: State<'_, App>, id: String) -> Option<String> {
+    app.media(&id)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -103,7 +118,10 @@ pub fn run() {
             autosave,
             recovery_info,
             recover,
-            discard_recovery
+            discard_recovery,
+            add_image_file,
+            add_image_data,
+            media
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar a NovaOffice");

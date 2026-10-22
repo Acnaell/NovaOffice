@@ -8,6 +8,7 @@ pub mod file;
 pub mod formats;
 pub mod html;
 pub mod markdown;
+pub mod media;
 pub mod odt;
 
 use std::time::{SystemTime, UNIX_EPOCH};

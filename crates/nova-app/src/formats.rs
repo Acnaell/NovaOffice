@@ -217,4 +217,52 @@ mod tests {
         let html = String::from_utf8(save(&doc, Format::Html, "t")).unwrap();
         assert_eq!(html.matches("<td").count(), 4);
     }
+
+    /// PNG 2×1 (vermelho e azul).
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x7B,
+        0x40, 0xE8, 0xDD, 0x00, 0x00, 0x00, 0x0F, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8,
+        0xCF, 0xC0, 0xC0, 0xF0, 0x1F, 0x08, 0x00, 0x0B, 0xF8, 0x02, 0xFE, 0x8E, 0x22, 0x9B, 0x3E,
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    #[test]
+    fn imagens_vao_e_voltam() {
+        use nova_domain_text::{Align, ParaAttr, TextCommand};
+        let mut doc = TextDocument::from_plain_text(1, "antes\n\ndepois");
+        let image = crate::media::embed(&doc, PNG, Some((240, 120))).unwrap();
+        doc.execute(TextCommand::Batch {
+            commands: vec![
+                TextCommand::SetBlockAttr {
+                    block: 1,
+                    attr: ParaAttr::Image(Some(image.clone())),
+                },
+                TextCommand::SetBlockAttr {
+                    block: 1,
+                    attr: ParaAttr::Align(Align::Center),
+                },
+            ],
+        })
+        .unwrap();
+        for format in [Format::Docx, Format::Odt, Format::Nova, Format::Markdown] {
+            let bytes = save(&doc, format, "t");
+            let back = open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
+            let p = back.paragraphs();
+            let texts: Vec<String> = p.iter().map(|p| p.text()).collect();
+            assert_eq!(texts, ["antes", "", "depois"], "{format:?}");
+            let got = p[1]
+                .attrs
+                .image
+                .as_ref()
+                .unwrap_or_else(|| panic!("{format:?}: sem imagem"));
+            assert_eq!(back.media(&got.id).unwrap().1, PNG, "{format:?}");
+            if format != Format::Markdown {
+                assert_eq!(got, &image, "{format:?}");
+                assert_eq!(p[1].attrs.align, Align::Center, "{format:?}");
+            }
+        }
+        let html = String::from_utf8(save(&doc, Format::Html, "t")).unwrap();
+        assert!(html.contains(r#"<img src="data:image/png;base64,"#));
+    }
 }

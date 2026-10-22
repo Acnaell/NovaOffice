@@ -2,7 +2,9 @@
 // nativos, mas nenhuma digitação altera o DOM: cada `beforeinput` é cancelado
 // e vira um comando para o núcleo, que devolve o documento para redesenhar.
 
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties, type JSX } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from "react";
+import { api } from "./api";
+import { cachedMediaUrl, mediaUrl, resizeImage, setImage } from "./images";
 import { fragmentHtml, fragmentOf, fragmentText, HIGHLIGHT_CSS, insertFragment, NOVA_MIME, parseHtml, plainFragment, type Fragment } from "./clipboard";
 import { posToDom, readSelection, writeSelection } from "./dom";
 import type { Match } from "./find";
@@ -26,7 +28,7 @@ import {
 } from "./model";
 import { useI18n } from "./i18n";
 import { matchShortcut, type CommandId, type Profile } from "./shortcuts";
-import type { BlockView, DocView, Mark, ParaAttrs } from "./types";
+import type { BlockView, DocView, ImageRef, Mark, ParaAttrs } from "./types";
 
 export type EditFn = (doc: DocView, sel: Selection) => Edit | null;
 
@@ -50,6 +52,8 @@ interface Props {
   onEscape: () => void;
   /** Ctrl+clique num link. */
   onOpenLink: (href: string) => void;
+  /** Imagem colada da área de transferência. */
+  onPasteImage: (file: File) => void;
 }
 
 /** Quebra de linha manual (Shift+Enter), como no Word. */
@@ -74,6 +78,17 @@ export function Editor(props: Props) {
     const root = rootRef.current;
     if (root && document.activeElement === root) writeSelection(root, latest.current.selection);
   }, [props.revision, props.showMarks]);
+
+  // Imagem com o cursor no parágrafo dela: contorno e alça de tamanho.
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    root.querySelectorAll(".embedded-image.selected").forEach((el) => el.classList.remove("selected"));
+    const block = props.view.blocks[props.selection.focus.block];
+    if (block?.attrs.image) {
+      root.querySelector(`[data-block="${props.selection.focus.block}"] .embedded-image`)?.classList.add("selected");
+    }
+  }, [props.revision, props.selection, props.view]);
 
   // Destaque das ocorrências da pesquisa, sem tocar no DOM do texto.
   useLayoutEffect(() => {
@@ -242,6 +257,13 @@ export function Editor(props: Props) {
       const data = e.clipboardData;
       if (!data) return;
       e.preventDefault();
+      // Imagem copiada (captura de tela, imagem do navegador): vira imagem no documento.
+      // Quem copia texto do Word também leva uma imagem do trecho; aí vale o texto.
+      const picture = Array.from(data.files).find((f) => f.type.startsWith("image/"));
+      if (picture && !data.getData(NOVA_MIME) && !data.getData("text/plain").trim()) {
+        latest.current.onPasteImage(picture);
+        return;
+      }
       const nova = data.getData(NOVA_MIME);
       if (nova) {
         try {
@@ -320,6 +342,37 @@ export function Editor(props: Props) {
     const block = (e: Event) => e.preventDefault();
     const copy = (e: ClipboardEvent) => onCopy(e, false);
     const cut = (e: ClipboardEvent) => onCopy(e, true);
+    // Clique na imagem põe o cursor no parágrafo dela; arrastar a alça muda o tamanho.
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      const box = target?.closest<HTMLElement>(".embedded-image");
+      if (!box) return;
+      e.preventDefault();
+      const blockEl = box.closest<HTMLElement>("[data-block]");
+      const index = Number(blockEl?.dataset.block);
+      if (!blockEl || Number.isNaN(index)) return;
+      root.focus();
+      edit(() => ({ command: null, selection: { anchor: { block: index, offset: 0 }, focus: { block: index, offset: 0 } } }));
+      if (!target?.dataset.handle) return;
+      const image = latest.current.view.blocks[index]?.attrs.image;
+      if (!image) return;
+      const startX = e.clientX;
+      const startWidth = box.getBoundingClientRect().width;
+      const ptPerPx = image.width / startWidth;
+      let next = image;
+      const move = (ev: MouseEvent) => {
+        next = resizeImage(image, (startWidth + ev.clientX - startX) * ptPerPx);
+        box.style.width = `${next.width}pt`;
+      };
+      const up = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        if (next !== image) edit((_doc, sel) => ({ command: setImage(index, next), selection: sel }));
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    };
+
     // Ctrl+clique segue o link, como no Word.
     const onClick = (e: MouseEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
@@ -355,9 +408,11 @@ export function Editor(props: Props) {
     root.addEventListener("drop", block);
     root.addEventListener("mouseup", pointerUp);
     root.addEventListener("click", onClick);
+    root.addEventListener("mousedown", onMouseDown);
     document.addEventListener("selectionchange", onSelectionChange);
     return () => {
       root.removeEventListener("beforeinput", onBeforeInput);
+      root.removeEventListener("mousedown", onMouseDown);
       root.removeEventListener("compositionstart", onCompositionStart);
       root.removeEventListener("compositionend", onCompositionEnd);
       root.removeEventListener("keydown", onKeyDown);
@@ -493,6 +548,7 @@ const Block = memo(function Block({
 }) {
   const Tag = tagFor(block.style);
   const empty = block.spans.every((s) => s.text === "");
+  const image = block.attrs.image;
   return (
     <Tag
       data-block={index}
@@ -501,8 +557,9 @@ const Block = memo(function Block({
       data-page-break={block.attrs.pageBreakBefore ? labels.pageBreak : undefined}
       style={paragraphStyle(block.attrs)}
     >
+      {image && <EmbeddedImage image={image} />}
       {empty ? (
-        <br />
+        image ? null : <br />
       ) : (
         block.spans.map((span, j) => (
           <span
@@ -521,6 +578,27 @@ const Block = memo(function Block({
     </Tag>
   );
 });
+
+/**
+ * Imagem no parágrafo. Fica fora da edição de texto (contentEditable=false);
+ * a alça no canto muda o tamanho mantendo a proporção.
+ */
+function EmbeddedImage({ image }: { image: ImageRef }) {
+  const [url, setUrl] = useState(() => cachedMediaUrl(image.id));
+  useEffect(() => {
+    let alive = true;
+    mediaUrl(image.id, api.media).then((u) => alive && u && setUrl(u));
+    return () => {
+      alive = false;
+    };
+  }, [image.id]);
+  return (
+    <span className="embedded-image" contentEditable={false} data-image={image.id} style={{ width: `${image.width}pt`, aspectRatio: `${image.width} / ${image.height}` }}>
+      {url ? <img src={url} alt="" draggable={false} /> : null}
+      <span className="image-handle" data-handle="se" />
+    </span>
+  );
+}
 
 /** A quebra de linha do modelo (U+000B) aparece como \n, que o CSS pre-wrap quebra; mesmo comprimento. */
 const lineBreaks = (text: string) => text.replace(/\u000B/g, "\n");

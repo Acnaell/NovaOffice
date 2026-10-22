@@ -47,6 +47,9 @@ fn main() {
             "remove_recent" => app.remove_recent(&s("path")).map(|_| Value::Null),
             "autosave" => app.autosave().map(|v| json!(v)),
             "recovery_info" => Ok(json!(app.recovery_info())),
+            "add_image_file" => app.add_image_file(&s("path")).map(|v| json!(v)),
+            "add_image_data" => app.add_image_data(&s("data")).map(|v| json!(v)),
+            "media" => Ok(json!(app.media(&s("id")))),
             "recover" => to(app.recover().map(|v| json!(v))),
             "discard_recovery" => {
                 app.discard_recovery();

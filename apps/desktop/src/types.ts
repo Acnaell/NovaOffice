@@ -71,6 +71,15 @@ export interface ParaAttrs {
   pageBreakBefore: boolean;
   /** Célula de tabela do parágrafo; parágrafos seguidos da mesma tabela formam a tabela. */
   cell: CellRef | null;
+  /** Imagem do parágrafo (alinhada com o texto); o arquivo vem de `api.media`. */
+  image: ImageRef | null;
+}
+
+export interface ImageRef {
+  id: string;
+  /** Tamanho em pontos. */
+  width: number;
+  height: number;
 }
 
 export interface CellRef {
@@ -89,7 +98,8 @@ export type ParaAttr =
   | { attr: "list"; value: ListKind | null }
   | { attr: "shading"; value: string | null }
   | { attr: "pageBreakBefore"; value: boolean }
-  | { attr: "cell"; value: CellRef | null };
+  | { attr: "cell"; value: CellRef | null }
+  | { attr: "image"; value: ImageRef | null };
 
 export const MAX_INDENT = 8;
 

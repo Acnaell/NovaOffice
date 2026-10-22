@@ -354,6 +354,52 @@ pub struct ParaAttrs {
     /// célula pode ter vários parágrafos.
     #[serde(default)]
     pub cell: Option<CellRef>,
+    /// Imagem do parágrafo (alinhada com o texto, sozinha no parágrafo, como
+    /// "Alinhado com o Texto" no Word). O arquivo fica nos arquivos embutidos.
+    #[serde(default)]
+    pub image: Option<ImageRef>,
+}
+
+/// Imagem num parágrafo: o arquivo embutido e o tamanho em pontos.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageRef {
+    /// Id do arquivo embutido (letras minúsculas e dígitos).
+    pub id: String,
+    pub width: u16,
+    pub height: u16,
+}
+
+/// Maior lado de uma imagem, em pontos (cerca de 70 cm).
+pub const MAX_IMAGE_PT: u16 = 2000;
+
+impl ImageRef {
+    pub fn is_valid(&self) -> bool {
+        is_media_id(&self.id)
+            && (1..=MAX_IMAGE_PT).contains(&self.width)
+            && (1..=MAX_IMAGE_PT).contains(&self.height)
+    }
+
+    fn encode(&self) -> String {
+        format!("{}:{}:{}", self.id, self.width, self.height)
+    }
+
+    fn decode(value: &str) -> Option<ImageRef> {
+        let mut parts = value.split(':');
+        let image = ImageRef {
+            id: parts.next()?.to_string(),
+            width: parts.next()?.parse().ok()?,
+            height: parts.next()?.parse().ok()?,
+        };
+        image.is_valid().then_some(image)
+    }
+}
+
+/// Id de arquivo embutido: 1 a 64 letras minúsculas ou dígitos.
+pub fn is_media_id(id: &str) -> bool {
+    (1..=64).contains(&id.len())
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
 }
 
 /// Posição de um parágrafo numa tabela.
@@ -408,6 +454,7 @@ pub enum ParaAttr {
     Shading(Option<String>),
     PageBreakBefore(bool),
     Cell(Option<CellRef>),
+    Image(Option<ImageRef>),
 }
 
 impl ParaAttr {
@@ -423,6 +470,9 @@ impl ParaAttr {
             ParaAttr::SpaceBefore(Some(pt)) | ParaAttr::SpaceAfter(Some(pt)) if *pt > 1584 => {
                 invalid(format!("espaçamento {pt} pt acima de 1584"))
             }
+            ParaAttr::Image(Some(image)) if !image.is_valid() => invalid(format!(
+                "imagem {image:?}: id de 1 a 64 letras minúsculas ou dígitos, lados de 1 a {MAX_IMAGE_PT} pt"
+            )),
             ParaAttr::Cell(Some(cell)) if !cell.is_valid() => invalid(format!(
                 "célula {cell:?}: id de 1 a 32 caracteres (letras, dígitos, - e _), linha e coluna até {MAX_TABLE_SIZE}"
             )),
@@ -449,6 +499,7 @@ impl ParaAttr {
             ParaAttr::PageBreakBefore(false) => ("pageBreakBefore", None),
             ParaAttr::PageBreakBefore(true) => ("pageBreakBefore", Some(AttrValue::Bool(true))),
             ParaAttr::Cell(v) => ("cell", v.as_ref().map(|c| AttrValue::Text(c.encode()))),
+            ParaAttr::Image(v) => ("image", v.as_ref().map(|i| AttrValue::Text(i.encode()))),
         };
         (key.to_string(), value)
     }
@@ -478,6 +529,10 @@ impl ParaAttrs {
             page_break_before: matches!(map.get("pageBreakBefore"), Some(AttrValue::Bool(true))),
             cell: match map.get("cell") {
                 Some(AttrValue::Text(v)) => CellRef::decode(v),
+                _ => None,
+            },
+            image: match map.get("image") {
+                Some(AttrValue::Text(v)) => ImageRef::decode(v),
                 _ => None,
             },
             shading: match map.get("shading") {

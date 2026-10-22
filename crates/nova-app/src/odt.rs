@@ -23,7 +23,32 @@ const INDENT_CM: f64 = 1.27;
 
 pub fn export(doc: &TextDocument) -> Vec<u8> {
     let paragraphs = doc.paragraphs();
-    let content = content_xml(&paragraphs);
+    // Imagens usadas: id → (caminho no pacote, tipo, bytes).
+    let mut pictures: HashMap<String, (String, String, Vec<u8>)> = HashMap::new();
+    for image in paragraphs.iter().filter_map(|p| p.attrs.image.as_ref()) {
+        if !pictures.contains_key(&image.id) {
+            if let Some((mime, data)) = doc.media(&image.id) {
+                let path = format!("Pictures/{}.{}", image.id, crate::media::extension(&mime));
+                pictures.insert(image.id.clone(), (path, mime, data));
+            }
+        }
+    }
+    let paths: HashMap<String, String> = pictures
+        .iter()
+        .map(|(id, (path, ..))| (id.clone(), path.clone()))
+        .collect();
+    let content = content_xml(&paragraphs, &paths);
+    let mut manifest = MANIFEST
+        .trim_end_matches("</manifest:manifest>")
+        .to_string();
+    let mut sorted: Vec<_> = pictures.values().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, mime, _) in &sorted {
+        manifest.push_str(&format!(
+            r#"<manifest:file-entry manifest:full-path="{path}" manifest:media-type="{mime}"/>"#
+        ));
+    }
+    manifest.push_str("</manifest:manifest>");
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     // O "mimetype" vem primeiro e sem compressão, como o ODF exige.
     let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
@@ -33,13 +58,18 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
     zip.write_all(b"application/vnd.oasis.opendocument.text")
         .expect("zip em memória");
     for (name, body) in [
-        ("META-INF/manifest.xml", MANIFEST.to_string()),
+        ("META-INF/manifest.xml", manifest),
         ("meta.xml", META.to_string()),
         ("styles.xml", STYLES.to_string()),
         ("content.xml", content),
     ] {
         zip.start_file(name, deflated).expect("zip em memória");
         zip.write_all(body.as_bytes()).expect("zip em memória");
+    }
+    for (path, _, data) in sorted {
+        zip.start_file(path.as_str(), stored)
+            .expect("zip em memória");
+        zip.write_all(data).expect("zip em memória");
     }
     zip.finish().expect("zip em memória").into_inner()
 }
@@ -197,7 +227,8 @@ fn para_props(a: &ParaAttrs) -> String {
     p
 }
 
-fn content_xml(paragraphs: &[Paragraph]) -> String {
+fn content_xml(paragraphs: &[Paragraph], pictures: &HashMap<String, String>) -> String {
+    let mut frames = 0;
     // Estilos automáticos: um por combinação de parágrafo e de marcas.
     let mut para_styles: Vec<(String, String)> = Vec::new(); // (chave, xml)
     let mut text_styles: Vec<String> = Vec::new();
@@ -343,6 +374,19 @@ fn content_xml(paragraphs: &[Paragraph]) -> String {
             None => (format!(r#"<text:p text:style-name="{name}">"#), "</text:p>"),
         };
         body.push_str(&open_tag);
+        if let Some(path) = p
+            .attrs
+            .image
+            .as_ref()
+            .and_then(|i| pictures.get(&i.id).map(|path| (i, path)))
+        {
+            let (image, path) = path;
+            frames += 1;
+            body.push_str(&format!(
+                r#"<draw:frame draw:name="Imagem{frames}" text:anchor-type="as-char" svg:width="{}pt" svg:height="{}pt" draw:z-index="0"><draw:image xlink:href="{path}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/></draw:frame>"#,
+                image.width, image.height
+            ));
+        }
         let mut at_start = true;
         for span in &p.spans {
             let text = odf_text(&span.text, at_start);
@@ -445,7 +489,7 @@ fn list_styles() -> String {
     out
 }
 
-const NS: &str = r#"xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0""#;
+const NS: &str = r#"xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0""#;
 
 const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.3"><manifest:file-entry manifest:full-path="/" manifest:version="1.3" manifest:media-type="application/vnd.oasis.opendocument.text"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/></manifest:manifest>"#;
 
@@ -458,8 +502,12 @@ const STYLES: &str = r##"<?xml version="1.0" encoding="UTF-8"?><office:document-
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let paragraphs = read_paragraphs(bytes)?;
-    Ok(TextDocument::from_paragraphs(client, &paragraphs)?)
+    let (paragraphs, media) = read_document(bytes)?;
+    let doc = TextDocument::from_paragraphs(client, &paragraphs)?;
+    for (id, mime, data) in media {
+        doc.put_media(&id, &mime, &data)?;
+    }
+    Ok(doc)
 }
 
 fn invalid(msg: impl Into<String>) -> AppError {
@@ -750,7 +798,29 @@ fn resolve(
     (own.marks, own.attrs, block)
 }
 
-fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
+fn read_document(bytes: &[u8]) -> Result<(Vec<Paragraph>, Vec<crate::docx::Media>), AppError> {
+    // Imagens do pacote (Pictures/…), lidas antes do texto.
+    let mut pictures: HashMap<String, Vec<u8>> = HashMap::new();
+    {
+        let mut zip = ZipArchive::new(Cursor::new(bytes))
+            .map_err(|e| invalid(format!("não é um .odt: {e}")))?;
+        for i in 0..zip.len() {
+            if let Ok(mut f) = zip.by_index(i) {
+                let name = f.name().to_string();
+                if name.starts_with("Pictures/") || name.starts_with("media/") {
+                    let mut data = Vec::new();
+                    if f.read_to_end(&mut data).is_ok() {
+                        pictures.insert(name, data);
+                    }
+                }
+            }
+        }
+    }
+    let mut media: Vec<crate::docx::Media> = Vec::new();
+    let mut para_images: Vec<nova_domain_text::ImageRef> = Vec::new();
+    // draw:frame sendo lido: profundidade, tamanho em pontos e arquivo.
+    let mut frame_depth = 0u32;
+    let mut frame: (Option<(f64, f64)>, Option<String>) = (None, None);
     let mut zip =
         ZipArchive::new(Cursor::new(bytes)).map_err(|e| invalid(format!("não é um .odt: {e}")))?;
     let mut read = |name: &str| -> Result<Option<String>, AppError> {
@@ -811,12 +881,29 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     buf.clear();
                     continue;
                 }
+                if frame_depth > 0 {
+                    if !empty {
+                        frame_depth += 1;
+                    }
+                    if e.local_name().as_ref() == b"image" && frame.1.is_none() {
+                        frame.1 = attr(e, b"href");
+                    }
+                    buf.clear();
+                    continue;
+                }
                 match e.local_name().as_ref() {
                     b"text" if e.name().as_ref() == b"office:text" => in_body = true,
                     _ if !in_body => {}
-                    b"note" | b"frame" | b"annotation" | b"tracked-changes" | b"sequence-decls"
-                        if !empty =>
-                    {
+                    b"frame" if !empty => {
+                        frame_depth = 1;
+                        let pt = |k: &[u8]| {
+                            attr(e, k)
+                                .and_then(|v| length_cm(&v))
+                                .map(|cm| cm / 2.54 * 72.0)
+                        };
+                        frame = (pt(b"width").zip(pt(b"height")), None);
+                    }
+                    b"note" | b"annotation" | b"tracked-changes" | b"sequence-decls" if !empty => {
                         skip = 1
                     }
                     b"table" if !empty && e.name().as_ref() == b"table:table" => {
@@ -961,6 +1048,33 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     buf.clear();
                     continue;
                 }
+                if frame_depth > 0 {
+                    frame_depth -= 1;
+                    if frame_depth == 0 {
+                        let data = frame
+                            .1
+                            .take()
+                            .and_then(|href| pictures.get(href.trim_start_matches("./")));
+                        if let Some(data) = data.filter(|d| crate::media::sniff_mime(d).is_some()) {
+                            let id = crate::media::media_id(data);
+                            let (width, height) = match frame.0.take() {
+                                Some((w, h)) => crate::media::fit(
+                                    w,
+                                    h,
+                                    f64::from(nova_domain_text::MAX_IMAGE_PT),
+                                ),
+                                None => crate::media::initial_size(data),
+                            };
+                            if !media.iter().any(|(m, ..)| *m == id) {
+                                let mime = crate::media::sniff_mime(data).unwrap_or("image/png");
+                                media.push((id.clone(), mime.to_string(), data.clone()));
+                            }
+                            para_images.push(nova_domain_text::ImageRef { id, width, height });
+                        }
+                    }
+                    buf.clear();
+                    continue;
+                }
                 match e.local_name().as_ref() {
                     b"text" if e.name().as_ref() == b"office:text" => in_body = false,
                     b"list" => {
@@ -978,7 +1092,27 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                         }
                     }
                     b"p" | b"h" => {
-                        if let Some(p) = para.take() {
+                        if let Some(mut p) = para.take() {
+                            // Imagens do parágrafo: cada uma num parágrafo próprio, antes do texto.
+                            let images = std::mem::take(&mut para_images);
+                            let text_too = p.spans.iter().any(|s| !s.text.trim().is_empty());
+                            let count = images.len();
+                            for (i, image) in images.into_iter().enumerate() {
+                                if i + 1 == count && !text_too {
+                                    p.spans.clear();
+                                    p.attrs.image = Some(image);
+                                    p.attrs.list = None;
+                                } else {
+                                    out.push(Paragraph {
+                                        attrs: ParaAttrs {
+                                            image: Some(image),
+                                            list: None,
+                                            ..p.attrs.clone()
+                                        },
+                                        ..Paragraph::default()
+                                    });
+                                }
+                            }
                             out.push(p);
                         }
                     }
@@ -994,7 +1128,7 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
         out.push(Paragraph::default());
     }
     crate::docx::normalize(&mut out);
-    Ok(out)
+    Ok((out, media))
 }
 
 #[cfg(test)]
