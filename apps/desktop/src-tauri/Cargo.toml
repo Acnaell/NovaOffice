@@ -16,6 +16,7 @@ tauri-build.workspace = true
 [dependencies]
 nova-app.workspace = true
 nova-domain-text.workspace = true
+nova-spell.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true

@@ -2299,6 +2299,7 @@ version = "0.1.6"
 dependencies = [
  "nova-app",
  "nova-domain-text",
+ "nova-spell",
  "serde",
  "serde_json",
  "tauri",

@@ -5,12 +5,14 @@
 
 mod app;
 mod editor;
+mod spell;
 mod store;
 
 use app::App;
 use editor::{DispatchResult, DocView};
 use nova_domain_text::TextCommand;
 use serde_json::Value;
+use spell::Spelling;
 use store::{Recent, RecoveryInfo};
 use tauri::{Manager, State};
 
@@ -94,6 +96,45 @@ fn media(app: State<'_, App>, id: String) -> Option<String> {
     app.media(&id)
 }
 
+// Corretor ortográfico. Assíncronos para rodar fora da thread da janela:
+// carregar um dicionário leva algumas centenas de milissegundos.
+
+#[tauri::command]
+async fn spell_check(
+    spelling: State<'_, Spelling>,
+    language: String,
+    texts: Vec<String>,
+) -> Result<Vec<Vec<(u32, u32)>>, String> {
+    spelling.check(&language, &texts)
+}
+
+#[tauri::command]
+async fn spell_suggest(
+    spelling: State<'_, Spelling>,
+    language: String,
+    word: String,
+) -> Result<Vec<String>, String> {
+    spelling.suggest(&language, &word)
+}
+
+#[tauri::command]
+async fn spell_add_word(
+    spelling: State<'_, Spelling>,
+    language: String,
+    word: String,
+) -> Result<(), String> {
+    spelling.add_word(&language, &word)
+}
+
+#[tauri::command]
+async fn spell_ignore_all(
+    spelling: State<'_, Spelling>,
+    language: String,
+    word: String,
+) -> Result<(), String> {
+    spelling.ignore_all(&language, &word)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -103,6 +144,12 @@ pub fn run() {
             // (%APPDATA%\org.novaoffice.desktop no Windows).
             let dir = handle.path().app_data_dir()?;
             handle.manage(App::new(dir));
+            let user_dictionary = handle
+                .path()
+                .app_config_dir()
+                .ok()
+                .map(|dir| dir.join("dicionario.json"));
+            handle.manage(Spelling::new(user_dictionary));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -121,7 +168,11 @@ pub fn run() {
             discard_recovery,
             add_image_file,
             add_image_data,
-            media
+            media,
+            spell_check,
+            spell_suggest,
+            spell_add_word,
+            spell_ignore_all
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar a NovaOffice");
