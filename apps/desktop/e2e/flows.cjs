@@ -820,7 +820,66 @@ const flows = [
     await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
     return t[0] === 'x©' ? OK() : FALHA(JSON.stringify(t));
   } },
-  { area: 'Inserir', name: 'Tabela', run: async () => AUSENTE('Próxima parte da aba Inserir.') },
+  { area: 'Inserir', name: 'Tabela: inserir pela grade, digitar e Tab entre células', run: async (h) => {
+    await h.reset(['antes', '']);
+    await h.select(1, 0);
+    await h.p.locator('.tab', { hasText: 'Inserir' }).click();
+    await h.p.locator('button[aria-label="Tabela"]').click();
+    await h.p.locator('.table-picker-grid button[aria-label="Tabela 3x2"]').click(); await h.settle(200);
+    await h.type('Nome'); await h.press('Tab'); await h.type('Idade');
+    await h.press('Tab'); await h.type('Ana'); await h.press('Tab'); await h.type('30');
+    await h.press('Tab'); await h.type('Beto');
+    const d = await h.doc();
+    const cells = d.blocks.filter((b) => b.attrs.cell).map((b) => [b.attrs.cell.row, b.attrs.cell.col, b.spans.map((s) => s.text).join('')]);
+    const tds = await h.p.locator('.nova-table td').count();
+    const contextual = await h.p.locator('.tab', { hasText: 'Layout da Tabela' }).count();
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    const ok = eq(cells.slice(0, 5), [[0, 0, 'Nome'], [0, 1, 'Idade'], [0, 2, 'Ana'], [1, 0, '30'], [1, 1, 'Beto']]) && tds === 6 && contextual === 1 && !d.blocks.at(-1).attrs.cell;
+    return ok ? OK('Grade de 10×8 como no Word; aba Layout da Tabela aparece com o cursor na tabela.') : FALHA(`${JSON.stringify(cells)} td=${tds} aba=${contextual}`);
+  } },
+  { area: 'Inserir', name: 'Tabela: Tab na última célula cria linha; inserir e excluir linhas e colunas', run: async (h) => {
+    await h.reset(['']);
+    await h.p.locator('.tab', { hasText: 'Inserir' }).click();
+    await h.p.locator('button[aria-label="Tabela"]').click();
+    await h.p.locator('.table-picker-grid button[aria-label="Tabela 2x2"]').click(); await h.settle(200);
+    for (const t of ['a', 'b', 'c', 'd']) { await h.type(t); await h.press('Tab'); }
+    const rows = async () => { const d = await h.doc(); return 1 + Math.max(...d.blocks.filter((b) => b.attrs.cell).map((b) => b.attrs.cell.row)); };
+    const cols = async () => { const d = await h.doc(); return 1 + Math.max(...d.blocks.filter((b) => b.attrs.cell).map((b) => b.attrs.cell.col)); };
+    const afterTab = await rows();
+    await h.p.locator('.tab', { hasText: 'Layout da Tabela' }).click();
+    await h.p.locator('button', { hasText: 'Inserir à Direita' }).click(); await h.settle(150);
+    const wider = await cols();
+    await h.p.locator('button', { hasText: 'Inserir Acima' }).click(); await h.settle(150);
+    const taller = await rows();
+    await h.p.locator('button[aria-label="Excluir"]').click();
+    await h.p.locator('.popover button', { hasText: 'Excluir Linhas' }).click(); await h.settle(150);
+    const shorter = await rows();
+    await h.p.locator('button[aria-label="Excluir"]').click();
+    await h.p.locator('.popover button', { hasText: 'Excluir Tabela' }).click(); await h.settle(150);
+    const d = await h.doc();
+    const gone = d.blocks.every((b) => !b.attrs.cell);
+    const ok = afterTab === 3 && wider === 3 && taller === 4 && shorter === 3 && gone;
+    return ok ? OK() : FALHA(`linhas após Tab=${afterTab} colunas=${wider} acima=${taller} excluir=${shorter} tabela some=${gone}`);
+  } },
+  { area: 'Inserir', name: 'Tabela: Backspace não junta células e .docx abre como tabela', run: async (h) => {
+    const fs = require('fs');
+    await core('new_document');
+    await core('dispatch', { command: { type: 'batch', commands: [
+      { type: 'text.insert', block: 0, offset: 0, text: 'x' },
+      { type: 'block.setAttr', block: 0, attr: 'cell', value: { table: 'tt', row: 0, col: 0 } },
+      { type: 'block.insert', index: 1, text: 'y' },
+      { type: 'block.setAttr', block: 1, attr: 'cell', value: { table: 'tt', row: 0, col: 1 } },
+      { type: 'block.insert', index: 2, text: 'fim' }] } });
+    await core('save_document', { path: '/tmp/nova-flows/tabela.docx' });
+    await h.reset();
+    await h.p.evaluate(() => { window.__dialog.open = '/tmp/nova-flows/tabela.docx'; });
+    await h.press('Control+a'); await h.settle(100);
+    await h.p.locator('.bs-big', { hasText: 'Procurar' }).click(); await h.settle(300);
+    const tds = await h.p.locator('.nova-table td').count();
+    await h.select(1, 0); await h.press('Backspace');
+    const t = await h.texts();
+    return tds === 2 && eq(t, ['x', 'y', 'fim']) && fs.existsSync('/tmp/nova-flows/tabela.docx') ? OK('Tabelas do Word e do LibreOffice validadas à parte (testes do núcleo).') : FALHA(`td=${tds} ${JSON.stringify(t)}`);
+  } },
   { area: 'Inserir', name: 'Imagem', run: async (h) => {
     await h.reset(['']);
     await h.p.evaluate(() => {

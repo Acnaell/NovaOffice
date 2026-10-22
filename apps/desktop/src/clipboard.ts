@@ -3,8 +3,9 @@
 // Colar aceita qualquer um dos três; o HTML de fora vira parágrafos e marcas.
 
 import { DEFAULT_ATTRS, linkOf, normalizeHref, pieces } from "./formatting";
-import { blockText, caret, ordered, type Edit, type Selection } from "./model";
-import type { Align, BlockStyle, BlockView, DocView, HighlightColor, Mark, ParaAttrs, TextCommand } from "./types";
+import { blockText, caret, deleteRange, ordered, type Edit, type Selection } from "./model";
+import { newTableId } from "./tables";
+import type { Align, BlockStyle, BlockView, CellRef, DocView, HighlightColor, Mark, ParaAttrs, TextCommand } from "./types";
 
 export const NOVA_MIME = "application/x-nova-fragment";
 
@@ -403,14 +404,12 @@ export function plainFragment(text: string, marks: Mark[] = []): Fragment {
  * ao parágrafo do cursor (mantém o estilo dele) e o último se junta ao resto
  * do texto, como no Word; os do meio entram com estilo e atributos próprios.
  */
-export function insertFragment(doc: DocView, sel: Selection, fragment: Fragment): Edit {
+export function insertFragment(doc: DocView, sel: Selection, original: Fragment): Edit {
   const [from, to] = ordered(sel);
   const commands: TextCommand[] = [];
-  if (from.block === to.block && from.offset !== to.offset) {
-    commands.push({ type: "text.delete", block: from.block, offset: from.offset, len: to.offset - from.offset });
-  } else if (from.block !== to.block) {
-    commands.push({ type: "text.deleteRange", from, to });
-  }
+  const removal = deleteRange(from, to, doc).command;
+  if (removal) commands.push(removal);
+  const fragment = adaptCells(original, doc.blocks[from.block]?.attrs.cell ?? null);
   if (fragment.length === 0) {
     return { command: commands.length ? wrapAll(commands) : null, selection: caret(from) };
   }
@@ -445,7 +444,26 @@ export function insertFragment(doc: DocView, sel: Selection, fragment: Fragment)
   const lastIndex = from.block + fragment.length - 1;
   const last = fragment[fragment.length - 1];
   const end = insertSpans(lastIndex, 0, last.spans);
+  // O último parágrafo veio de uma tabela copiada: entra na tabela colada também.
+  if (last.attrs.cell && !doc.blocks[from.block]?.attrs.cell) {
+    commands.push({ type: "block.setAttr", block: lastIndex, attr: "cell", value: last.attrs.cell });
+  }
   return { command: wrapAll(commands), selection: caret({ block: lastIndex, offset: end }) };
+}
+
+/**
+ * Colar dentro de uma célula põe tudo naquela célula; colar uma tabela copiada
+ * fora de tabela cria uma tabela nova (ids novos, para não se juntar à original).
+ */
+function adaptCells(fragment: Fragment, target: CellRef | null): Fragment {
+  if (target) return fragment.map((b) => ({ ...b, attrs: { ...b.attrs, cell: target } }));
+  const ids = new Map<string, string>();
+  return fragment.map((b) => {
+    const cell = b.attrs.cell;
+    if (!cell) return b;
+    if (!ids.has(cell.table)) ids.set(cell.table, newTableId());
+    return { ...b, attrs: { ...b.attrs, cell: { ...cell, table: ids.get(cell.table)! } } };
+  });
 }
 
 function pushAttrs(

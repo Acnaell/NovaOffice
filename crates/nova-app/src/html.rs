@@ -97,7 +97,7 @@ fn paragraph_html(p: &Paragraph, tag: &str) -> String {
     if p.attrs.page_break_before {
         css.push("break-before:page".to_string());
     }
-    if let Some(bg) = &p.attrs.shading {
+    if let Some(bg) = p.attrs.shading.as_ref().filter(|_| p.attrs.cell.is_none()) {
         css.push(format!("background:{bg};padding:2pt 4pt"));
         // Cor "automática" do Word: texto claro sobre fundo escuro.
         if crate::is_dark(bg) {
@@ -126,7 +126,41 @@ pub fn export(doc: &TextDocument, title: &str) -> String {
     let mut body = String::new();
     // Listas abertas, do nível 0 para dentro.
     let mut open: Vec<&str> = Vec::new();
+    // Célula aberta: (tabela, linha, coluna).
+    let mut cell: Option<(String, u16, u16)> = None;
     for p in doc.paragraphs() {
+        let key = p
+            .attrs
+            .cell
+            .as_ref()
+            .map(|c| (c.table.clone(), c.row, c.col));
+        if key != cell {
+            while let Some(t) = open.pop() {
+                body.push_str(&format!("</{t}>"));
+            }
+            match (&cell, &key) {
+                (Some((t, r, _)), Some((t2, r2, _))) if t == t2 => {
+                    body.push_str(if r == r2 { "</td>" } else { "</td></tr><tr>" })
+                }
+                (Some(_), _) => body.push_str("</td></tr></table>\n"),
+                _ => {}
+            }
+            if let Some((t, ..)) = &key {
+                if !matches!(&cell, Some((t0, ..)) if t0 == t) {
+                    body.push_str(r#"<table style="border-collapse:collapse;width:100%"><tr>"#);
+                }
+                let bg = p
+                    .attrs
+                    .shading
+                    .as_ref()
+                    .map(|c| format!(";background:{c}"))
+                    .unwrap_or_default();
+                body.push_str(&format!(
+                    r#"<td style="border:1px solid #000;padding:2pt 5pt;vertical-align:top{bg}">"#
+                ));
+            }
+            cell = key;
+        }
         match p.attrs.list {
             Some(kind) => {
                 let tag = if kind == ListKind::Bullet { "ul" } else { "ol" };
@@ -162,6 +196,9 @@ pub fn export(doc: &TextDocument, title: &str) -> String {
     }
     while let Some(t) = open.pop() {
         body.push_str(&format!("</{t}>"));
+    }
+    if cell.is_some() {
+        body.push_str("</td></tr></table>");
     }
     format!(
         "<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"generator\" content=\"NovaOffice\">\n<title>{}</title>\n<style>body{{max-width:210mm;margin:2.5cm auto;font-family:Calibri,Carlito,'Segoe UI',sans-serif;font-size:11pt;line-height:1.5}}blockquote{{border-left:3px solid #ccc;margin-left:0;padding-left:12pt;color:#4a4a46}}pre{{background:#f4f4f1;padding:4pt 8pt;font-family:Consolas,monospace;font-size:10pt}}</style>\n</head>\n<body>\n{body}</body>\n</html>\n",

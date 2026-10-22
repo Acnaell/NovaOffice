@@ -9,8 +9,8 @@
 mod format;
 
 pub use format::{
-    is_hex_color, is_link, Align, BlockStyle, ListKind, Mark, MarkKind, ParaAttr, ParaAttrs,
-    Paragraph, Span, HIGHLIGHT_COLORS, MAX_INDENT,
+    is_hex_color, is_link, Align, BlockStyle, CellRef, ListKind, Mark, MarkKind, ParaAttr,
+    ParaAttrs, Paragraph, Span, HIGHLIGHT_COLORS, MAX_INDENT, MAX_TABLE_SIZE,
 };
 
 use nova_crdt::{is_boundary, utf16_len, AttrMap, ClientId, CrdtError, Replica};
@@ -260,6 +260,7 @@ impl TextDocument {
                     .map(|c| ParaAttr::Shading(Some(c))),
                 d.page_break_before
                     .then_some(ParaAttr::PageBreakBefore(true)),
+                d.cell.clone().map(|c| ParaAttr::Cell(Some(c))),
             ];
             commands.extend(
                 changes

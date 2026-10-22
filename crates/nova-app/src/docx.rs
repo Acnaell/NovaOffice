@@ -13,6 +13,7 @@ use std::io::{Cursor, Read, Write};
 use nova_crdt::ClientId;
 use nova_domain_text::{
     Align, BlockStyle, ListKind, Mark, Paragraph, Span, TextDocument, HIGHLIGHT_COLORS, MAX_INDENT,
+    MAX_TABLE_SIZE,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -107,13 +108,136 @@ fn link_of(span: &Span) -> Option<&str> {
     })
 }
 
+/// Largura útil da página A4 com margens de 2,5 cm, em twips.
+const TEXT_WIDTH_TWIPS: u32 = 9638;
+
+/// Abre e fecha `w:tbl`, `w:tr` e `w:tc` conforme os parágrafos passam,
+/// completando células e linhas que faltem para a grade ficar retangular.
+struct TableWriter {
+    /// Colunas de cada tabela (pela maior coluna usada).
+    cols: HashMap<String, u16>,
+    open: Option<(String, u16, u16)>,
+}
+
+impl TableWriter {
+    fn new(paragraphs: &[Paragraph]) -> Self {
+        let mut cols: HashMap<String, u16> = HashMap::new();
+        for c in paragraphs.iter().filter_map(|p| p.attrs.cell.as_ref()) {
+            let n = cols.entry(c.table.clone()).or_default();
+            *n = (*n).max(c.col + 1);
+        }
+        TableWriter { cols, open: None }
+    }
+
+    fn cell_start(out: &mut String, width: u32, shading: Option<&str>) {
+        out.push_str(&format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/>"#
+        ));
+        if let Some(fill) = shading {
+            out.push_str(&format!(
+                r#"<w:shd w:val="clear" w:color="auto" w:fill="{}"/>"#,
+                fill.trim_start_matches('#')
+            ));
+        }
+        out.push_str("</w:tcPr>");
+    }
+
+    fn width(&self, table: &str) -> u32 {
+        TEXT_WIDTH_TWIPS / u32::from(*self.cols.get(table).unwrap_or(&1)).max(1)
+    }
+
+    /// Fecha a célula aberta e completa a linha com células vazias.
+    fn close_row(&mut self, out: &mut String) {
+        if let Some((table, _, col)) = &self.open {
+            out.push_str("</w:tc>");
+            let cols = *self.cols.get(table).unwrap_or(&1);
+            for _ in col + 1..cols {
+                Self::cell_start(out, self.width(table), None);
+                out.push_str("<w:p/></w:tc>");
+            }
+            out.push_str("</w:tr>");
+        }
+    }
+
+    fn before(&mut self, out: &mut String, p: &Paragraph) {
+        let cell = p.attrs.cell.as_ref();
+        let same_table = matches!((&self.open, cell), (Some((t, ..)), Some(c)) if *t == c.table);
+        if !same_table {
+            self.finish(out);
+            if let Some(c) = cell {
+                let cols = *self.cols.get(&c.table).unwrap_or(&1);
+                out.push_str(r#"<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid>"#);
+                for _ in 0..cols {
+                    out.push_str(&format!(r#"<w:gridCol w:w="{}"/>"#, self.width(&c.table)));
+                }
+                out.push_str("</w:tblGrid><w:tr>");
+                self.open_cell(out, c, 0, p);
+            }
+            return;
+        }
+        let (Some(c), Some((_, row, col))) = (cell, self.open.clone()) else {
+            return;
+        };
+        if (c.row, c.col) == (row, col) {
+            return; // outro parágrafo da mesma célula
+        }
+        if c.row != row {
+            self.close_row(out);
+            // Linhas puladas (não deveria haver) viram linhas vazias.
+            let cols = *self.cols.get(&c.table).unwrap_or(&1);
+            for _ in row + 1..c.row.max(row + 1) {
+                out.push_str("<w:tr>");
+                for _ in 0..cols {
+                    Self::cell_start(out, self.width(&c.table), None);
+                    out.push_str("<w:p/></w:tc>");
+                }
+                out.push_str("</w:tr>");
+            }
+            out.push_str("<w:tr>");
+            self.open_cell(out, c, 0, p);
+        } else {
+            out.push_str("</w:tc>");
+            self.open_cell(out, c, col + 1, p);
+        }
+    }
+
+    /// Abre a célula `c`, com células vazias antes dela a partir de `from`.
+    fn open_cell(
+        &mut self,
+        out: &mut String,
+        c: &nova_domain_text::CellRef,
+        from: u16,
+        p: &Paragraph,
+    ) {
+        for _ in from..c.col {
+            Self::cell_start(out, self.width(&c.table), None);
+            out.push_str("<w:p/></w:tc>");
+        }
+        Self::cell_start(out, self.width(&c.table), p.attrs.shading.as_deref());
+        self.open = Some((c.table.clone(), c.row, c.col));
+    }
+
+    /// Fecha a tabela aberta; devolve se havia uma.
+    fn finish(&mut self, out: &mut String) -> bool {
+        if self.open.is_none() {
+            return false;
+        }
+        self.close_row(out);
+        out.push_str("</w:tbl>");
+        self.open = None;
+        true
+    }
+}
+
 fn body_xml(paragraphs: &[Paragraph]) -> (String, Vec<Num>, Vec<String>) {
     let mut links: Vec<String> = Vec::new();
     let mut nums = vec![Num::Bullet];
     let mut out = String::from(DOC_START);
     let mut previous_list: Option<ListKind> = None;
     let mut current_number_id = 0;
+    let mut table = TableWriter::new(paragraphs);
     for p in paragraphs {
+        table.before(&mut out, p);
         out.push_str("<w:p>");
         let mut ppr = String::new();
         if let Some(id) = style_id(p.style) {
@@ -140,7 +264,8 @@ fn body_xml(paragraphs: &[Paragraph]) -> (String, Vec<Num>, Vec<String>) {
             ));
         }
         previous_list = a.list;
-        if let Some(fill) = &a.shading {
+        // Na tabela, o sombreamento é da célula (w:tcPr).
+        if let (Some(fill), None) = (&a.shading, &a.cell) {
             ppr.push_str(&format!(
                 r#"<w:shd w:val="clear" w:color="auto" w:fill="{}"/>"#,
                 fill.trim_start_matches('#')
@@ -202,6 +327,10 @@ fn body_xml(paragraphs: &[Paragraph]) -> (String, Vec<Num>, Vec<String>) {
             out.push_str("</w:hyperlink>");
         }
         out.push_str("</w:p>");
+    }
+    if table.finish(&mut out) {
+        // O Word exige um parágrafo depois da última tabela do documento.
+        out.push_str("<w:p/>");
     }
     out.push_str(DOC_END);
     (out, nums, links)
@@ -356,7 +485,7 @@ const CORE_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?
 
 /// Estilos com os nomes internos do Word ("heading 1"…), que ele traduz para
 /// "Título 1" na interface em português. Tamanhos iguais aos do Nova Text.
-const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style></w:styles>"#;
+const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:uiPriority w:val="39"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style></w:styles>"#;
 
 // ---------------------------------------------------------------- abrir
 
@@ -646,6 +775,21 @@ fn read_styles(xml: &str) -> Styles {
     }
 }
 
+/// Parágrafo dentro de uma célula: a célula e o sombreamento dela.
+fn place_in_cell(
+    p: &mut Paragraph,
+    cell: &Option<nova_domain_text::CellRef>,
+    shading: &Option<String>,
+) {
+    if let Some(c) = cell {
+        p.attrs.cell = Some(c.clone());
+        p.attrs.page_break_before = false;
+        if shading.is_some() {
+            p.attrs.shading = shading.clone();
+        }
+    }
+}
+
 /// Id da relação → endereço, para os links externos.
 fn read_link_targets(xml: &str) -> HashMap<String, String> {
     let mut out = HashMap::new();
@@ -899,6 +1043,10 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
     // Sombreamento de célula de tabela: vale para os parágrafos dela até haver tabelas.
     let mut cell_shading: Option<String> = None;
     let (mut in_tcpr, mut tc_depth) = (false, 0u32);
+    // Tabelas: só as de primeiro nível viram tabelas; as aninhadas ficam dentro da célula de fora.
+    let (mut tbl_depth, mut table_no) = (0u32, 0u32);
+    let (mut row, mut col, mut span) = (0u16, 0u16, 1u16);
+    let mut cell: Option<nova_domain_text::CellRef> = None;
     // Trechos que não entram no texto: apagados (controle de alterações), campos, desenhos.
     let mut skip_depth = 0u32;
 
@@ -1000,15 +1148,44 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     {
                         skip_depth = 1
                     }
+                    b"tbl" if !empty => {
+                        tbl_depth += 1;
+                        if tbl_depth == 1 {
+                            table_no += 1;
+                            row = u16::MAX; // a primeira w:tr vira a linha 0
+                        }
+                    }
+                    b"tr" if !empty && tbl_depth == 1 => {
+                        row = row.wrapping_add(1).min(MAX_TABLE_SIZE - 1);
+                        col = 0;
+                        span = 0;
+                    }
                     b"tc" if !empty => {
                         tc_depth += 1;
-                        cell_shading = None;
+                        if tbl_depth == 1 {
+                            col = (col + span).min(MAX_TABLE_SIZE - 1);
+                            span = 1;
+                            cell_shading = None;
+                            cell = Some(nova_domain_text::CellRef {
+                                table: format!("t{table_no}"),
+                                row,
+                                col,
+                            });
+                        }
                     }
                     b"tcPr" if !empty => in_tcpr = true,
+                    b"gridSpan" if in_tcpr && tbl_depth == 1 => {
+                        span = attr(e, b"val")
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(1)
+                            .max(1);
+                    }
                     b"shd" if in_tcpr => {
-                        let mut attrs = nova_domain_text::ParaAttrs::default();
-                        apply_para(&mut attrs, &Prop::from(e));
-                        cell_shading = attrs.shading;
+                        if tbl_depth == 1 {
+                            let mut attrs = nova_domain_text::ParaAttrs::default();
+                            apply_para(&mut attrs, &Prop::from(e));
+                            cell_shading = attrs.shading;
+                        }
                     }
                     b"p" => {
                         para = Some(Paragraph::default());
@@ -1021,13 +1198,10 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                             }
                             carry_break = false;
                         }
-                        if tc_depth > 0 {
-                            if let Some(p) = para.as_mut() {
-                                p.attrs.shading = cell_shading.clone();
-                            }
-                        }
                         if empty {
-                            out.push(para.take().unwrap_or_default());
+                            let mut p = para.take().unwrap_or_default();
+                            place_in_cell(&mut p, &cell, &cell_shading);
+                            out.push(finish(p, None, None));
                         }
                     }
                     b"pPr" if !empty => in_ppr = true,
@@ -1133,14 +1307,18 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     b"hyperlink" => link = None,
                     b"tc" => {
                         tc_depth = tc_depth.saturating_sub(1);
-                        cell_shading = None;
+                    }
+                    b"tbl" => {
+                        tbl_depth = tbl_depth.saturating_sub(1);
+                        if tbl_depth == 0 {
+                            cell = None;
+                            cell_shading = None;
+                        }
                     }
                     b"p" => {
-                        let p = finish(
-                            para.take().unwrap_or_default(),
-                            para_style.as_deref(),
-                            para_num,
-                        );
+                        let mut p = para.take().unwrap_or_default();
+                        place_in_cell(&mut p, &cell, &cell_shading);
+                        let p = finish(p, para_style.as_deref(), para_num);
                         // Parágrafo que só sobrou de uma quebra de página no fim do anterior:
                         // a quebra passa para o próximo parágrafo.
                         if from_break && p.spans.is_empty() {

@@ -204,7 +204,12 @@ fn content_xml(paragraphs: &[Paragraph]) -> String {
     let mut body = String::new();
 
     let para_style_name = |styles: &mut Vec<(String, String)>, p: &Paragraph| -> String {
-        let props = para_props(&p.attrs);
+        // Na tabela, o fundo é da célula.
+        let attrs = ParaAttrs {
+            shading: p.attrs.shading.clone().filter(|_| p.attrs.cell.is_none()),
+            ..p.attrs.clone()
+        };
+        let props = para_props(&attrs);
         let parent = parent_style(p.style);
         let key = format!("{parent}|{props}");
         let index = styles
@@ -228,7 +233,75 @@ fn content_xml(paragraphs: &[Paragraph]) -> String {
         }
     };
 
+    // Tabelas: colunas de cada uma, a célula aberta e os estilos de célula (por cor de fundo).
+    let mut cols: HashMap<String, u16> = HashMap::new();
+    for c in paragraphs.iter().filter_map(|p| p.attrs.cell.as_ref()) {
+        let n = cols.entry(c.table.clone()).or_default();
+        *n = (*n).max(c.col + 1);
+    }
+    let mut cell_styles: Vec<Option<String>> = vec![None];
+    let mut open_cell: Option<(String, u16, u16)> = None;
+    let mut tables = 0;
+    let cell_tag = |cell_styles: &mut Vec<Option<String>>, shading: Option<String>| {
+        let index = cell_styles
+            .iter()
+            .position(|s| *s == shading)
+            .unwrap_or_else(|| {
+                cell_styles.push(shading);
+                cell_styles.len() - 1
+            });
+        format!(r#"<table:table-cell table:style-name="C{index}" office:value-type="string">"#)
+    };
+    let empty_cells = |body: &mut String, n: u16| {
+        for _ in 0..n {
+            body.push_str(r#"<table:table-cell table:style-name="C0" office:value-type="string"><text:p/></table:table-cell>"#);
+        }
+    };
+
     for p in paragraphs {
+        let cell = p.attrs.cell.as_ref();
+        let key = cell.map(|c| (c.table.clone(), c.row, c.col));
+        if key != open_cell {
+            // Mudou de célula (ou entrou/saiu da tabela): listas não atravessam células.
+            close_to(&mut body, &mut open, 0);
+            previous_kind = None;
+            let same_table =
+                matches!((&open_cell, cell), (Some((t, ..)), Some(c)) if *t == c.table);
+            if let Some((table, row, col)) = open_cell.take() {
+                body.push_str("</table:table-cell>");
+                let n = cols.get(&table).copied().unwrap_or(1);
+                match cell {
+                    Some(c) if same_table && c.row == row => {
+                        empty_cells(&mut body, c.col.saturating_sub(col + 1))
+                    }
+                    _ => {
+                        empty_cells(&mut body, n.saturating_sub(col + 1));
+                        body.push_str("</table:table-row>");
+                        if !same_table {
+                            body.push_str("</table:table>");
+                        }
+                    }
+                }
+                if let Some(c) = cell.filter(|_| same_table) {
+                    if c.row != row {
+                        body.push_str("<table:table-row>");
+                        empty_cells(&mut body, c.col);
+                    }
+                }
+            }
+            if let Some(c) = cell {
+                if !same_table {
+                    tables += 1;
+                    let n = cols.get(&c.table).copied().unwrap_or(1);
+                    body.push_str(&format!(
+                        r#"<table:table table:name="Tabela{tables}" table:style-name="Tab"><table:table-column table:number-columns-repeated="{n}"/><table:table-row>"#
+                    ));
+                    empty_cells(&mut body, c.col);
+                }
+                body.push_str(&cell_tag(&mut cell_styles, p.attrs.shading.clone()));
+            }
+            open_cell = key;
+        }
         match p.attrs.list {
             Some(kind) => {
                 let level = usize::from(p.attrs.indent.min(MAX_INDENT));
@@ -307,8 +380,29 @@ fn content_xml(paragraphs: &[Paragraph]) -> String {
         body.push_str(close_tag);
     }
     close_to(&mut body, &mut open, 0);
+    if let Some((table, _, col)) = open_cell {
+        body.push_str("</table:table-cell>");
+        empty_cells(
+            &mut body,
+            cols.get(&table)
+                .copied()
+                .unwrap_or(1)
+                .saturating_sub(col + 1),
+        );
+        body.push_str("</table:table-row></table:table><text:p/>");
+    }
 
     let mut auto = String::new();
+    auto.push_str(r#"<style:style style:name="Tab" style:family="table"><style:table-properties style:width="17cm" table:align="margins"/></style:style>"#);
+    for (i, shading) in cell_styles.iter().enumerate() {
+        let bg = shading
+            .as_ref()
+            .map(|c| format!(r#" fo:background-color="{}""#, c.to_lowercase()))
+            .unwrap_or_default();
+        auto.push_str(&format!(
+            r#"<style:style style:name="C{i}" style:family="table-cell"><style:table-cell-properties fo:padding="0.097cm" fo:border="0.5pt solid #000000"{bg}/></style:style>"#
+        ));
+    }
     for (i, (key, props)) in para_styles.iter().enumerate() {
         let parent = key.split('|').next().unwrap_or("Standard");
         auto.push_str(&format!(
@@ -351,7 +445,7 @@ fn list_styles() -> String {
     out
 }
 
-const NS: &str = r#"xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:xlink="http://www.w3.org/1999/xlink""#;
+const NS: &str = r#"xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0""#;
 
 const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.3"><manifest:file-entry manifest:full-path="/" manifest:version="1.3" manifest:media-type="application/vnd.oasis.opendocument.text"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/></manifest:manifest>"#;
 
@@ -592,7 +686,8 @@ fn read_styles(
                         apply_text_props(&e, s);
                     }
                 }
-                b"paragraph-properties" => {
+                // Fundo da célula de tabela: guardado como sombreamento.
+                b"paragraph-properties" | b"table-cell-properties" => {
                     if let Some((_, s)) = current.as_mut() {
                         apply_para_props(&e, s);
                     }
@@ -688,6 +783,10 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
     // Pilha de listas: estilo de lista da lista externa e profundidade.
     let mut list_stack: Vec<Option<String>> = Vec::new();
     let mut skip = 0u32;
+    // Tabelas de primeiro nível: célula atual e o fundo dela.
+    let (mut tbl_depth, mut table_no, mut row, mut col) = (0u32, 0u32, 0u16, 0u16);
+    let mut cell: Option<nova_domain_text::CellRef> = None;
+    let mut cell_shading: Option<String> = None;
 
     let push = |para: &mut Option<Paragraph>, marks: &[Vec<Mark>], text: &str| {
         let p = para.get_or_insert_with(Paragraph::default);
@@ -719,6 +818,42 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                         if !empty =>
                     {
                         skip = 1
+                    }
+                    b"table" if !empty && e.name().as_ref() == b"table:table" => {
+                        tbl_depth += 1;
+                        if tbl_depth == 1 {
+                            table_no += 1;
+                            row = u16::MAX;
+                        }
+                    }
+                    b"table-row" if !empty && tbl_depth == 1 => {
+                        row = row
+                            .wrapping_add(1)
+                            .min(nova_domain_text::MAX_TABLE_SIZE - 1);
+                        col = u16::MAX;
+                    }
+                    b"table-cell" | b"covered-table-cell" if tbl_depth == 1 => {
+                        col = col
+                            .wrapping_add(1)
+                            .min(nova_domain_text::MAX_TABLE_SIZE - 1);
+                        cell = Some(nova_domain_text::CellRef {
+                            table: format!("t{table_no}"),
+                            row,
+                            col,
+                        });
+                        cell_shading =
+                            attr(e, b"style-name").and_then(|n| resolve(&n, &styles).1.shading);
+                        if empty && e.local_name().as_ref() == b"table-cell" {
+                            // Célula vazia sem parágrafo: um parágrafo vazio nela.
+                            out.push(Paragraph {
+                                attrs: ParaAttrs {
+                                    cell: cell.clone(),
+                                    shading: cell_shading.clone(),
+                                    ..ParaAttrs::default()
+                                },
+                                ..Paragraph::default()
+                            });
+                        }
                     }
                     b"list" => {
                         let style =
@@ -759,6 +894,12 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                             spans: Vec::new(),
                         });
                         span_marks = vec![marks];
+                        if let (Some(p), Some(c)) = (para.as_mut(), &cell) {
+                            p.attrs.cell = Some(c.clone());
+                            if cell_shading.is_some() {
+                                p.attrs.shading = cell_shading.clone();
+                            }
+                        }
                         if empty {
                             out.push(para.take().unwrap_or_default());
                         }
@@ -828,6 +969,12 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     b"span" | b"a" => {
                         if span_marks.len() > 1 {
                             span_marks.pop();
+                        }
+                    }
+                    b"table" if e.name().as_ref() == b"table:table" => {
+                        tbl_depth = tbl_depth.saturating_sub(1);
+                        if tbl_depth == 0 {
+                            cell = None;
                         }
                     }
                     b"p" | b"h" => {

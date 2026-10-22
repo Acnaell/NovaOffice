@@ -2,7 +2,7 @@
 
 Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real com o núcleo Rust real.
 
-**88 funcionam · 3 parciais · 0 com falha · 7 ainda não existem**
+**91 funcionam · 3 parciais · 0 com falha · 6 ainda não existem**
 
 | | Área | Fluxo | Observação |
 | --- | --- | --- | --- |
@@ -94,7 +94,9 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Inserir | Endereço digitado vira link (AutoFormatação) |  |
 | ✅ | Inserir | Data e Hora | 9 formatos; Alt+Shift+D insere a data. |
 | ✅ | Inserir | Símbolo |  |
-| ⬜ | Inserir | Tabela | Próxima parte da aba Inserir. |
+| ✅ | Inserir | Tabela: inserir pela grade, digitar e Tab entre células | Grade de 10×8 como no Word; aba Layout da Tabela aparece com o cursor na tabela. |
+| ✅ | Inserir | Tabela: Tab na última célula cria linha; inserir e excluir linhas e colunas |  |
+| ✅ | Inserir | Tabela: Backspace não junta células e .docx abre como tabela | Tabelas do Word e do LibreOffice validadas à parte (testes do núcleo). |
 | ⬜ | Inserir | Imagem | Próxima parte da aba Inserir; colar uma imagem é ignorado sem erro. |
 | ⬜ | Inserir | Cabeçalho, rodapé e número de página | Depende das páginas reais (aba Layout). |
 | ⬜ | Inserir | Comentários | Não há comentários. |
@@ -102,5 +104,5 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ⬜ | Exibição | Zoom (Ctrl + roda / controle de zoom) | Não há controle de zoom no app. |
 | ✅ | Exibição | Tema claro/escuro | Recurso que o Word não tem nesta forma. |
 | ⬜ | Exibição | Régua | Não há régua. |
-| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 8 ms por tecla. |
-| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 16 ms por tecla. |
+| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 13 ms por tecla. |
+| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 13 ms por tecla. |
