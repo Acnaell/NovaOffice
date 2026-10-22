@@ -8,6 +8,12 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- Corretor ortográfico no Nova Text, com os dicionários do LibreOffice (português do Brasil, inglês
+  e espanhol): sublinhado vermelho enquanto digita, sugestões no clique direito, Ignorar Tudo e
+  Adicionar ao Dicionário. O idioma de revisão fica na barra de status.
+
 ## [0.1.6] - 2026-10-22
 
 ### Adicionado
