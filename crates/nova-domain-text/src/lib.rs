@@ -8,7 +8,10 @@
 
 mod format;
 
-pub use format::{BlockStyle, Mark, MarkKind, Span};
+pub use format::{
+    Align, BlockStyle, ListKind, Mark, MarkKind, ParaAttr, ParaAttrs, Span, HIGHLIGHT_COLORS,
+    MAX_INDENT,
+};
 
 use nova_crdt::{is_boundary, utf16_len, AttrMap, ClientId, CrdtError, Replica};
 use serde::{Deserialize, Serialize};
@@ -71,6 +74,13 @@ pub enum TextCommand {
     RemoveBlock { block: u32 },
     #[serde(rename = "block.setStyle")]
     SetBlockStyle { block: u32, style: BlockStyle },
+    /// Muda um atributo de parágrafo: `{"type":"block.setAttr","block":0,"attr":"align","value":"center"}`.
+    #[serde(rename = "block.setAttr")]
+    SetBlockAttr {
+        block: u32,
+        #[serde(flatten)]
+        attr: ParaAttr,
+    },
     #[serde(rename = "history.undo")]
     Undo,
     #[serde(rename = "history.redo")]
@@ -132,6 +142,11 @@ pub enum TextEvent {
         block: u32,
         style: BlockStyle,
     },
+    BlockAttrSet {
+        block: u32,
+        #[serde(flatten)]
+        attr: ParaAttr,
+    },
     /// O documento voltou a um estado anterior; a interface deve redesenhar tudo.
     Undone,
     Redone,
@@ -151,6 +166,8 @@ pub enum DomainError {
     EmptyDocument,
     #[error("marca inválida: {0}")]
     InvalidMark(String),
+    #[error("atributo de parágrafo inválido: {0}")]
+    InvalidAttr(String),
     #[error("intervalo inválido: o início vem depois do fim")]
     InvalidRange,
     #[error("batch não pode conter batch, history.undo ou history.redo")]
@@ -293,6 +310,17 @@ impl TextDocument {
                 }
             }
             TextCommand::SplitBlock { block, offset } => {
+                // Enter num item de lista vazio sai da lista (ou volta um nível), como no Word.
+                let attrs = self.block_attrs(block)?;
+                if attrs.list.is_some() && self.replica.block_text(block)?.is_empty() {
+                    let attr = if attrs.indent > 0 {
+                        ParaAttr::Indent(attrs.indent - 1)
+                    } else {
+                        ParaAttr::List(None)
+                    };
+                    self.replica.set_block_attrs(block, &[attr.to_change()])?;
+                    return Ok(vec![TextEvent::BlockAttrSet { block, attr }]);
+                }
                 let style = self.block_style(block)?;
                 let at_end = offset == utf16_len(&self.replica.block_text(block)?);
                 // Enter no fim de um título continua com parágrafo normal.
@@ -326,6 +354,11 @@ impl TextDocument {
             TextCommand::SetBlockStyle { block, style } => {
                 self.replica.set_block_style(block, style.as_str())?;
                 TextEvent::BlockStyled { block, style }
+            }
+            TextCommand::SetBlockAttr { block, attr } => {
+                attr.validate()?;
+                self.replica.set_block_attrs(block, &[attr.to_change()])?;
+                TextEvent::BlockAttrSet { block, attr }
             }
             TextCommand::Undo => {
                 if !self.replica.undo() {
@@ -393,6 +426,10 @@ impl TextDocument {
 
     pub fn block_style(&self, block: u32) -> Result<BlockStyle, DomainError> {
         Ok(BlockStyle::parse(&self.replica.block_style(block)?))
+    }
+
+    pub fn block_attrs(&self, block: u32) -> Result<ParaAttrs, DomainError> {
+        Ok(ParaAttrs::from_attr_map(&self.replica.block_attrs(block)?))
     }
 
     pub fn block_spans(&self, block: u32) -> Result<Vec<Span>, DomainError> {

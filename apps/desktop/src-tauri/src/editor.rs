@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use nova_app::{file, markdown, new_client_id, Session};
-use nova_domain_text::{BlockStyle, Span, TextCommand, TextDocument, TextEvent};
+use nova_domain_text::{BlockStyle, ParaAttrs, Span, TextCommand, TextDocument, TextEvent};
 use serde::Serialize;
 
 /// O que a interface precisa para desenhar o documento.
@@ -22,6 +22,7 @@ pub struct DocView {
 #[derive(Debug, Serialize)]
 pub struct BlockView {
     pub style: BlockStyle,
+    pub attrs: ParaAttrs,
     pub spans: Vec<Span>,
 }
 
@@ -104,6 +105,7 @@ impl Editor {
         let blocks = (0..doc.block_count())
             .map(|i| BlockView {
                 style: doc.block_style(i).expect("índice dentro do documento"),
+                attrs: doc.block_attrs(i).expect("índice dentro do documento"),
                 spans: doc.block_spans(i).expect("índice dentro do documento"),
             })
             .collect();
@@ -226,6 +228,8 @@ mod tests {
     fn visao_serializa_para_a_interface() {
         let json = serde_json::to_value(Editor::new().view()).unwrap();
         assert_eq!(json["blocks"][0]["style"], "paragraph");
+        assert_eq!(json["blocks"][0]["attrs"]["align"], "left");
+        assert_eq!(json["blocks"][0]["attrs"]["list"], serde_json::Value::Null);
         assert_eq!(json["canUndo"], false);
         assert_eq!(json["title"], "Sem título");
     }
