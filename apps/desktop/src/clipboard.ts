@@ -109,6 +109,7 @@ export function fragmentHtml(fragment: Fragment): string {
     const css: string[] = [];
     if (block.attrs.align !== "left") css.push(`text-align:${block.attrs.align}`);
     if (block.attrs.indent && !block.attrs.list) css.push(`margin-left:${block.attrs.indent * 36}pt`);
+    if (block.attrs.shading) css.push(`background:${block.attrs.shading}`);
     const style = css.length ? ` style="${css.join(";")}"` : "";
     const listTag = block.attrs.list === "bullet" ? "ul" : block.attrs.list === "number" ? "ol" : null;
     if (openList && openList !== listTag) {

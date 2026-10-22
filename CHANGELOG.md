@@ -8,6 +8,17 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- Sombreamento de parágrafo (Página Inicial → Parágrafo), lido e gravado em .docx, .odt e .html. Como
+  no Word, o texto em cor automática fica branco sobre fundo escuro.
+
+### Corrigido
+
+- Arquivos .docx abrem com a formatação que vem dos estilos do Word: fonte e tamanho padrão do
+  documento (inclusive as fontes do tema), estilos de parágrafo como "Normal (Web)", estilos de
+  caractere como "Forte" e espaçamento automático. Células de tabela sombreadas mantêm a cor de fundo.
+
 ## [0.1.1] - 2026-10-22
 
 ### Adicionado

@@ -6,7 +6,7 @@ import { memo, useEffect, useLayoutEffect, useRef, type CSSProperties, type JSX 
 import { fragmentHtml, fragmentOf, fragmentText, HIGHLIGHT_CSS, insertFragment, NOVA_MIME, parseHtml, plainFragment, type Fragment } from "./clipboard";
 import { posToDom, readSelection, writeSelection } from "./dom";
 import type { Match } from "./find";
-import { autoList, changeIndent, listMarkers } from "./formatting";
+import { autoList, changeIndent, isDark, listMarkers } from "./formatting";
 import {
   blockText,
   deleteBackward,
@@ -439,6 +439,12 @@ function paragraphStyle(attrs: ParaAttrs | undefined): CSSProperties | undefined
   if (attrs.lineSpacing !== null) style.lineHeight = String((attrs.lineSpacing / 100) * 1.15);
   if (attrs.spaceBefore !== null) style.marginTop = `${attrs.spaceBefore}pt`;
   if (attrs.spaceAfter !== null) style.marginBottom = `${attrs.spaceAfter}pt`;
+  if (attrs.shading) {
+    style.background = attrs.shading;
+    style.paddingInline = "4pt";
+    // Cor "automática": o texto sem cor própria fica claro sobre fundo escuro.
+    if (isDark(attrs.shading)) style.color = "#fff";
+  }
   return style;
 }
 

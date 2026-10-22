@@ -9,8 +9,8 @@
 mod format;
 
 pub use format::{
-    Align, BlockStyle, ListKind, Mark, MarkKind, ParaAttr, ParaAttrs, Paragraph, Span,
-    HIGHLIGHT_COLORS, MAX_INDENT,
+    is_hex_color, Align, BlockStyle, ListKind, Mark, MarkKind, ParaAttr, ParaAttrs, Paragraph,
+    Span, HIGHLIGHT_COLORS, MAX_INDENT,
 };
 
 use nova_crdt::{is_boundary, utf16_len, AttrMap, ClientId, CrdtError, Replica};
@@ -254,6 +254,10 @@ impl TextDocument {
                 d.space_after
                     .map(|v| ParaAttr::SpaceAfter(Some(v.min(1584)))),
                 d.list.map(|k| ParaAttr::List(Some(k))),
+                d.shading
+                    .clone()
+                    .filter(|c| is_hex_color(c))
+                    .map(|c| ParaAttr::Shading(Some(c))),
             ];
             commands.extend(
                 changes

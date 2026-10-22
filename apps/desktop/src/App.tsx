@@ -76,6 +76,7 @@ export default function App() {
   const [painter, setPainter] = useState<{ marks: Mark[]; sticky: boolean } | null>(null);
   const [lastFontColor, setLastFontColor] = useState("#C00000");
   const [lastHighlight, setLastHighlight] = useState<HighlightColor>("yellow");
+  const [lastShading, setLastShading] = useState("#D9E2F3");
   const [find, setFind] = useState<FindState | null>(null);
   // Tela Arquivo; na inicialização, com um documento vazio, é a tela inicial do NovaOffice.
   const [backstage, setBackstage] = useState<BackstagePage | null>(null);
@@ -797,6 +798,11 @@ export default function App() {
         showMarks={showMarks}
         painter={painter ? (painter.sticky ? "sticky" : "once") : "off"}
         fontColor={lastFontColor}
+        shading={lastShading}
+        onShading={(color) => {
+          if (color) setLastShading(color);
+          onParaAttr({ attr: "shading", value: color });
+        }}
         highlight={lastHighlight}
         theme={theme}
         profile={profile}

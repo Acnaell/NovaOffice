@@ -345,7 +345,16 @@ export const THEME_GRID = THEME_BASE.map((base, i) => {
   return [base, ...variants];
 });
 
-export function FontColorMenu({ onPick, close }: { onPick: (color: string | null) => void; close: () => void }) {
+export function FontColorMenu({
+  onPick,
+  close,
+  autoLabel = "color.auto",
+}: {
+  onPick: (color: string | null) => void;
+  close: () => void;
+  /** Rótulo da primeira opção (Automático; "Sem Cor" no sombreamento). */
+  autoLabel?: MessageKey;
+}) {
   const { t } = useI18n();
   const input = useRef<HTMLInputElement>(null);
   const choose = (c: string | null) => {
@@ -355,8 +364,8 @@ export function FontColorMenu({ onPick, close }: { onPick: (color: string | null
   return (
     <div className="color-menu" role="menu">
       <button className="menu-item" onClick={() => choose(null)}>
-        <span className="swatch" style={{ background: "#000" }} />
-        {t("color.auto")}
+        <span className={autoLabel === "color.auto" ? "swatch" : "swatch none"} style={autoLabel === "color.auto" ? { background: "#000" } : undefined} />
+        {t(autoLabel)}
       </button>
       <div className="menu-heading">{t("color.theme")}</div>
       <div className="swatch-grid theme">

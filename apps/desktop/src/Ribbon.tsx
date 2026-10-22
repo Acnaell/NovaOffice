@@ -67,6 +67,8 @@ export interface RibbonProps {
   showMarks: boolean;
   painter: "off" | "once" | "sticky";
   fontColor: string;
+  /** Último sombreamento usado (o botão aplica este). */
+  shading: string;
   highlight: HighlightColor;
   theme: ThemeMode;
   profile: Profile;
@@ -78,6 +80,7 @@ export interface RibbonProps {
   onFont: (font: string) => void;
   onSize: (pt: number | null) => void;
   onFontColor: (color: string | null) => void;
+  onShading: (color: string | null) => void;
   onHighlight: (color: HighlightColor | null) => void;
   onCase: (mode: CaseMode) => void;
   onLineSpacing: (percent: number | null) => void;
@@ -261,6 +264,12 @@ export function Ribbon(props: RibbonProps) {
             {alignButton("center", "para.alignCenter", icons.alignCenter)}
             {alignButton("right", "para.alignRight", icons.alignRight)}
             {alignButton("justify", "para.justify", icons.justify)}
+            <SplitButton
+              label={t("color.shading")}
+              icon={<ColorBarIcon icon={icons.shading} color={props.shading} />}
+              onMain={() => props.onShading(props.shading)}
+              render={(close) => <FontColorMenu close={close} onPick={props.onShading} autoLabel="color.none" />}
+            />
             <MenuButton label={t("cmd.para.spacing")} render={(close) => (
               <>
                 {SPACINGS.map((s) => (

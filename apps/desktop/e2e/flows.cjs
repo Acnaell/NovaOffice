@@ -512,6 +512,16 @@ const flows = [
     const t = await h.texts();
     return AUSENTE(`Fica para a fase Layout (páginas reais); Ctrl+Enter ${t.length === 2 ? 'cria um parágrafo comum' : 'resulta em ' + JSON.stringify(t)}.`);
   } },
+  { area: 'Parágrafo', name: 'Sombreamento do parágrafo', run: async (h) => {
+    await h.reset(['fundo escuro', 'normal']);
+    await h.select(0, 2);
+    await h.p.locator('button[aria-label="Sombreamento: opções"]').click();
+    await h.p.locator('.popover .swatch[title="#C00000"]').click(); await h.settle(150);
+    const d = await h.doc();
+    const css = await h.p.evaluate(() => { const el = document.querySelector('[data-block="0"]'); const s = getComputedStyle(el); return [s.backgroundColor, s.color]; });
+    const ok = d.blocks[0].attrs.shading === '#C00000' && d.blocks[1].attrs.shading === null && css[1] === 'rgb(255, 255, 255)';
+    return ok ? OK('Texto automático fica branco sobre fundo escuro, como no Word.') : FALHA(`${JSON.stringify(d.blocks.map((b) => b.attrs.shading))} ${css}`);
+  } },
   { area: 'Parágrafo', name: 'Mostrar Tudo ¶ (Ctrl+Shift+8)', run: async (h) => {
     await h.reset(['a b\tc']); await h.select(0, 1); await h.press('Control+Shift+Digit8');
     const shown = await h.p.locator('[data-block="0"]').innerText();
