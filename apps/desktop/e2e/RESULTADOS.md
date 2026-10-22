@@ -2,7 +2,7 @@
 
 Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real com o núcleo Rust real.
 
-**91 funcionam · 3 parciais · 0 com falha · 6 ainda não existem**
+**94 funcionam · 3 parciais · 0 com falha · 5 ainda não existem**
 
 | | Área | Fluxo | Observação |
 | --- | --- | --- | --- |
@@ -97,12 +97,14 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Inserir | Tabela: inserir pela grade, digitar e Tab entre células | Grade de 10×8 como no Word; aba Layout da Tabela aparece com o cursor na tabela. |
 | ✅ | Inserir | Tabela: Tab na última célula cria linha; inserir e excluir linhas e colunas |  |
 | ✅ | Inserir | Tabela: Backspace não junta células e .docx abre como tabela | Tabelas do Word e do LibreOffice validadas à parte (testes do núcleo). |
-| ⬜ | Inserir | Imagem | Próxima parte da aba Inserir; colar uma imagem é ignorado sem erro. |
+| ✅ | Inserir | Imagem do computador (Inserir → Imagens), tamanho e alinhamento | 64×32 px entra com 48×24 pt (96 ppp, como o Word); aba Formato da Imagem com tamanho e alinhamento. |
+| ✅ | Inserir | Colar imagem (captura de tela) e mudar o tamanho com o mouse | A alça no canto mantém a proporção; Backspace apaga a imagem. |
+| ✅ | Inserir | Imagem salva em .docx e reaberta | Imagens do Word e do LibreOffice validadas à parte (testes do núcleo). |
 | ⬜ | Inserir | Cabeçalho, rodapé e número de página | Depende das páginas reais (aba Layout). |
 | ⬜ | Inserir | Comentários | Não há comentários. |
 | 🟡 | Exibição | Página com tamanho A4 e margens; várias páginas | Uma única "folha" contínua de 4108 px de altura: sem paginação, tamanho de papel ou margens configuráveis. |
 | ⬜ | Exibição | Zoom (Ctrl + roda / controle de zoom) | Não há controle de zoom no app. |
 | ✅ | Exibição | Tema claro/escuro | Recurso que o Word não tem nesta forma. |
 | ⬜ | Exibição | Régua | Não há régua. |
-| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 13 ms por tecla. |
-| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 13 ms por tecla. |
+| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 7 ms por tecla. |
+| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 17 ms por tecla. |
