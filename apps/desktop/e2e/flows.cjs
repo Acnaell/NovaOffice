@@ -7,6 +7,28 @@ const PARCIAL = (obs) => ({ status: 'parcial', obs });
 const FALHA = (obs) => ({ status: 'falha', obs });
 const AUSENTE = (obs) => ({ status: 'ausente', obs });
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+/** Textos sublinhados pelo corretor, depois de ele ter tempo de responder. */
+const underlined = async (h, wait = 700) => {
+  await h.settle(wait);
+  return h.p.evaluate(() => {
+    const hl = CSS.highlights.get('nova-spell');
+    return hl ? [...hl].map((r) => r.toString()) : [];
+  });
+};
+
+/** Clique direito no meio de uma palavra sublinhada; devolve as sugestões do menu. */
+const spellMenu = async (h, word) => {
+  const at = await h.p.evaluate((w) => {
+    const r = [...CSS.highlights.get('nova-spell')].find((x) => x.toString() === w);
+    const b = r.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  }, word);
+  await h.p.mouse.click(at.x, at.y, { button: 'right' });
+  await h.p.waitForSelector('.spell-menu .menu-item');
+  await h.p.waitForFunction(() => !document.querySelector('.spell-menu')?.textContent.includes('Procurando'));
+  return h.p.locator('.spell-menu .spell-suggestion').allInnerTexts();
+};
+
 const marksOf = (spans) => spans.map((s) => [s.text, s.marks.map((m) => m.mark).sort().join('+')]);
 
 /** Atalho do Word que não existe no Nova: confere que não estraga o documento. */
@@ -557,10 +579,62 @@ const flows = [
     const c = await h.texts();
     return eq(a, ['1 dois um', 'um']) && eq(b, ['1 dois 1', '1']) && eq(c, ['1 dois um', 'um']) ? OK(`"${notice}"; Ctrl+Z desfaz o Substituir Tudo de uma vez.`) : FALHA(`${JSON.stringify(a)} ${JSON.stringify(b)} ${JSON.stringify(c)} ${notice}`);
   } },
-  { area: 'Ferramentas', name: 'Verificação ortográfica', run: async (h) => {
+  { area: 'Ortografia', name: 'Sublinhar palavras erradas enquanto digita', run: async (h) => {
     await h.reset(['']);
-    const spell = await h.p.locator('.page').getAttribute('spellcheck');
-    return spell === 'true' ? PARCIAL('Usa o corretor do sistema/WebView (sublinhado vermelho); o idioma não acompanha o documento e não há verificação gramatical. Precisa ser confirmado no app instalado (WebView2/WebKit).') : AUSENTE('spellcheck desligado.');
+    await h.type('A excessão confirma a regra, mas o guarda-chuva da ONU está em https://exemplo.com.');
+    const u = await underlined(h);
+    const native = await h.p.locator('.page').getAttribute('spellcheck');
+    if (native !== 'false') return FALHA('O corretor do WebView continua ligado (sublinhado duplo).');
+    return eq(u, ['excessão']) ? OK('Dicionários do LibreOffice (nova-spell); ignora siglas, URLs e números, como o Word.') : FALHA(`Sublinhadas: ${JSON.stringify(u)}`);
+  } },
+  { area: 'Ortografia', name: 'A palavra em digitação só é marcada ao sair dela', run: async (h) => {
+    await h.reset(['']);
+    await h.type('pobrema');
+    const typing = await underlined(h);
+    await h.type(' ');
+    const after = await underlined(h);
+    return eq(typing, []) && eq(after, ['pobrema']) ? OK() : FALHA(`Digitando: ${JSON.stringify(typing)}; depois do espaço: ${JSON.stringify(after)}`);
+  } },
+  { area: 'Ortografia', name: 'Sugestões no clique direito', run: async (h) => {
+    await h.reset(['A excessão confirma a regra']);
+    await underlined(h);
+    const suggestions = await spellMenu(h, 'excessão');
+    if (suggestions[0] !== 'exceção') return FALHA(`Sugestões: ${JSON.stringify(suggestions)}`);
+    await h.p.locator('.spell-menu .spell-suggestion', { hasText: 'exceção' }).click();
+    await h.settle();
+    const fixed = await h.texts();
+    const u = await underlined(h);
+    await h.press('Control+z');
+    const undone = await h.texts();
+    return eq(fixed, ['A exceção confirma a regra']) && eq(u, []) && eq(undone, ['A excessão confirma a regra'])
+      ? OK(`${suggestions.length} sugestões, a melhor primeiro; Ctrl+Z desfaz a troca.`)
+      : FALHA(`${JSON.stringify(fixed)} ${JSON.stringify(u)} ${JSON.stringify(undone)}`);
+  } },
+  { area: 'Ortografia', name: 'Ignorar Tudo e Adicionar ao Dicionário', run: async (h) => {
+    await h.reset(['Zorblax e Quixtrel, de novo Zorblax']);
+    const before = await underlined(h);
+    await spellMenu(h, 'Quixtrel');
+    await h.p.locator('.spell-menu .menu-item', { hasText: 'Ignorar Tudo' }).click();
+    const ignored = await underlined(h);
+    await spellMenu(h, 'Zorblax');
+    await h.p.locator('.spell-menu .menu-item', { hasText: 'Adicionar ao Dicionário' }).click();
+    const added = await underlined(h);
+    return eq(before, ['Zorblax', 'Quixtrel', 'Zorblax']) && eq(ignored, ['Zorblax', 'Zorblax']) && eq(added, [])
+      ? OK('Todas as ocorrências deixam de ser marcadas; o dicionário do usuário vale para todos os idiomas.')
+      : FALHA(`${JSON.stringify(before)} → ${JSON.stringify(ignored)} → ${JSON.stringify(added)}`);
+  } },
+  { area: 'Ortografia', name: 'Idioma de revisão na barra de status', run: async (h) => {
+    await h.reset(['the house é bonita']);
+    const proofing = h.p.locator('.statusbar .proofing');
+    const pt = await underlined(h);
+    await proofing.selectOption('en-US');
+    const en = await underlined(h);
+    await proofing.selectOption('off');
+    const off = await underlined(h);
+    await proofing.selectOption('pt-BR');
+    return pt.includes('house') && !pt.includes('bonita') && en.includes('bonita') && !en.includes('house') && eq(off, [])
+      ? OK('Português (VERO), inglês (SCOWL), espanhol (RLA-ES) ou desligado; a escolha fica salva.')
+      : FALHA(`pt ${JSON.stringify(pt)} en ${JSON.stringify(en)} off ${JSON.stringify(off)}`);
   } },
   { area: 'Ferramentas', name: 'Contagem de palavras', run: async (h) => {
     await h.reset(['uma duas', 'três']);
