@@ -11,8 +11,8 @@ mod spell;
 mod store;
 
 use app::App;
-use spell::Spelling;
 use serde_json::{json, Value};
+use spell::Spelling;
 
 fn main() {
     let addr = std::env::var("NOVA_BRIDGE").unwrap_or_else(|_| "127.0.0.1:1430".into());
@@ -22,6 +22,10 @@ fn main() {
     let mut app = App::new(dir.clone());
     // Dicionário do usuário só em memória: os testes não gravam no disco.
     let spelling = Spelling::new(None);
+    // A ponte atende um pedido por vez: carregar o dicionário na primeira
+    // verificação seguraria as teclas do primeiro fluxo. No app, o Tauri roda o
+    // corretor fora da fila dos comandos de edição.
+    let _ = spelling.check("pt-BR", &[]);
     let server = tiny_http::Server::http(&addr).expect("porta da ponte");
     for mut req in server.incoming_requests() {
         let cmd = req.url().trim_start_matches('/').to_string();
@@ -64,8 +68,12 @@ fn main() {
                 .map_err(|e| e.to_string())
                 .and_then(|texts| spelling.check(&s("language"), &texts))
                 .map(|v| json!(v)),
-            "spell_suggest" => spelling.suggest(&s("language"), &s("word")).map(|v| json!(v)),
-            "spell_add_word" => spelling.add_word(&s("language"), &s("word")).map(|_| Value::Null),
+            "spell_suggest" => spelling
+                .suggest(&s("language"), &s("word"))
+                .map(|v| json!(v)),
+            "spell_add_word" => spelling
+                .add_word(&s("language"), &s("word"))
+                .map(|_| Value::Null),
             "spell_ignore_all" => spelling
                 .ignore_all(&s("language"), &s("word"))
                 .map(|_| Value::Null),
