@@ -28,7 +28,7 @@ export function fragmentOf(doc: DocView, sel: Selection): Fragment {
 }
 
 export const fragmentText = (fragment: Fragment): string =>
-  fragment.map((b) => b.spans.map((s) => s.text).join("")).join("\n");
+  fragment.map((b) => b.spans.map((s) => s.text).join("").replace(/\u000B/g, "\n")).join("\n");
 
 // ---------- HTML de saída ----------
 
@@ -65,7 +65,7 @@ const TAG: Record<BlockStyle, string> = {
 };
 
 function spanHtml(text: string, marks: Mark[]): string {
-  let html = escapeHtml(text);
+  let html = escapeHtml(text).replace(/\u000B/g, "<br>");
   const css: string[] = [];
   for (const m of marks) {
     switch (m.mark) {
@@ -128,7 +128,20 @@ export function fragmentHtml(fragment: Fragment): string {
     }
   }
   if (openList) out.push(`</${openList}>`);
-  return `<meta charset="utf-8">${out.join("")}`;
+  // O fragmento do Nova vai junto num comentário: colar no Nova (por qualquer
+  // caminho, inclusive o botão Colar) recupera tudo sem perdas.
+  return `<meta charset="utf-8"><!--nova-fragment:${encodeURIComponent(JSON.stringify(fragment))}-->${out.join("")}`;
+}
+
+/** Fragmento do Nova embutido no HTML copiado por ele, se houver. */
+export function embeddedFragment(html: string): Fragment | null {
+  const m = html.match(/<!--nova-fragment:([^\s>]*?)-->/);
+  if (!m) return null;
+  try {
+    return JSON.parse(decodeURIComponent(m[1])) as Fragment;
+  } catch {
+    return null;
+  }
 }
 
 // ---------- HTML de entrada ----------
@@ -251,6 +264,8 @@ function styleOf(tag: string): BlockStyle {
 
 /** Converte HTML colado (Word, navegador, Google Docs, e-mail) em parágrafos com marcas. */
 export function parseHtml(html: string): Fragment {
+  const embedded = embeddedFragment(html);
+  if (embedded) return embedded;
   const dom = new DOMParser().parseFromString(html, "text/html");
   dom.querySelectorAll("script, style, meta, title, head, template, noscript").forEach((n) => n.remove());
   const out: Fragment = [];
@@ -301,7 +316,8 @@ export function parseHtml(html: string): Fragment {
     if (!(node instanceof HTMLElement)) return;
     const tag = node.tagName;
     if (tag === "BR") {
-      startBlock(ctx.style, ctx.attrs);
+      // <br> é quebra de linha dentro do parágrafo, como Shift+Enter no Word.
+      addText("\u000B", { ...ctx, pre: true });
       return;
     }
     if (tag === "IMG") return;

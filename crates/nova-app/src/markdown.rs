@@ -93,6 +93,11 @@ fn inline(span: &Span) -> String {
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
+        // Quebra de linha manual (Shift+Enter): quebra forçada do CommonMark.
+        if ch == '\u{b}' {
+            out.push_str("\\\n");
+            continue;
+        }
         if "\\`*_~[]<>#".contains(ch) {
             out.push('\\');
         }
@@ -166,6 +171,19 @@ mod tests {
             export(&doc),
             "Compras\n\n- pão\n- leite\n    - integral\n\nPassos\n\n1. abrir\n2. fechar"
         );
+    }
+
+    #[test]
+    fn quebra_de_linha_manual_vira_quebra_forcada() {
+        let mut doc = TextDocument::new(1);
+        doc.execute(TextCommand::InsertText {
+            block: 0,
+            offset: 0,
+            text: "Rua A, 10\u{b}São Paulo".into(),
+            marks: None,
+        })
+        .unwrap();
+        assert_eq!(export(&doc), "Rua A, 10\\\nSão Paulo");
     }
 
     #[test]

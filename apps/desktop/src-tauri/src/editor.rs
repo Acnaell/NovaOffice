@@ -26,10 +26,105 @@ pub struct BlockView {
     pub spans: Vec<Span>,
 }
 
+/// Resposta de um comando: só os parágrafos que mudaram, para a interface não
+/// precisar receber nem redesenhar o documento inteiro a cada tecla.
 #[derive(Debug, Serialize)]
 pub struct DispatchResult {
     pub events: Vec<TextEvent>,
-    pub view: DocView,
+    pub patch: ViewPatch,
+}
+
+/// Troca os parágrafos `start..start + delete_count` da visão anterior por
+/// `blocks` (como `Array.splice`). `block_count` confere o resultado.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewPatch {
+    pub start: u32,
+    pub delete_count: u32,
+    pub blocks: Vec<BlockView>,
+    pub block_count: u32,
+    pub can_undo: bool,
+    pub can_redo: bool,
+    pub path: Option<String>,
+    pub title: String,
+    pub dirty: bool,
+}
+
+/// Faixa de parágrafos alterada, no documento atual: `[start, end)`. Cresce a
+/// cada evento e acompanha os deslocamentos de inserções e remoções.
+#[derive(Default)]
+struct Dirty(Option<(u32, u32)>);
+
+impl Dirty {
+    fn touch(&mut self, from: u32, to: u32) {
+        self.0 = Some(match self.0 {
+            Some((a, b)) => (a.min(from), b.max(to)),
+            None => (from, to),
+        });
+    }
+
+    fn changed(&mut self, block: u32) {
+        self.touch(block, block + 1);
+    }
+
+    fn inserted(&mut self, index: u32) {
+        if let Some((a, b)) = &mut self.0 {
+            if *a >= index {
+                *a += 1;
+            }
+            if *b >= index {
+                *b += 1;
+            }
+        }
+        self.touch(index, index + 1);
+    }
+
+    fn removed(&mut self, index: u32) {
+        if let Some((a, b)) = &mut self.0 {
+            if *a > index {
+                *a -= 1;
+            }
+            if *b > index {
+                *b -= 1;
+            }
+        }
+        // O ponto da remoção precisa ficar dentro da faixa trocada.
+        self.touch(index, index);
+    }
+}
+
+/// Faixa alterada a partir dos eventos, ou `None` se é preciso redesenhar tudo
+/// (desfazer e refazer podem mudar qualquer parte do documento).
+fn dirty_range(events: &[TextEvent]) -> Option<(u32, u32)> {
+    let mut dirty = Dirty::default();
+    for event in events {
+        match event {
+            TextEvent::TextInserted { block, .. }
+            | TextEvent::TextDeleted { block, .. }
+            | TextEvent::MarkApplied { block, .. }
+            | TextEvent::MarkRemoved { block, .. }
+            | TextEvent::BlockStyled { block, .. }
+            | TextEvent::BlockAttrSet { block, .. } => dirty.changed(*block),
+            TextEvent::BlockSplit { block, .. } => {
+                dirty.changed(*block);
+                dirty.inserted(block + 1);
+            }
+            TextEvent::BlocksMerged { block, .. } => {
+                dirty.removed(block + 1);
+                dirty.changed(*block);
+            }
+            TextEvent::BlockInserted { index } => dirty.inserted(*index),
+            TextEvent::BlockRemoved { index, .. } => dirty.removed(*index),
+            TextEvent::RangeDeleted { from, to } => {
+                for _ in from.block..to.block {
+                    dirty.removed(from.block + 1);
+                }
+                dirty.changed(from.block);
+            }
+            TextEvent::Undone | TextEvent::Redone => return None,
+        }
+    }
+    Some(dirty.0.unwrap_or((0, 0)))
 }
 
 pub struct Editor {
@@ -69,14 +164,61 @@ impl Editor {
     }
 
     pub fn dispatch(&mut self, command: TextCommand) -> Result<DispatchResult, String> {
+        let before = self.session.document().block_count();
         let events = self.session.dispatch(command).map_err(|e| e.to_string())?;
         if !events.is_empty() {
             self.dirty = true;
         }
+        let after = self.session.document().block_count();
+        let (start, end, old_end) = match dirty_range(&events) {
+            // O que vem depois da faixa não mudou; só andou `after - before` posições.
+            Some((start, end)) => (start, end, end + before - after),
+            None => (0, after, before),
+        };
         Ok(DispatchResult {
             events,
-            view: self.view(),
+            patch: self.patch(start, end, old_end - start),
         })
+    }
+
+    fn patch(&self, start: u32, end: u32, delete_count: u32) -> ViewPatch {
+        let view = self.meta();
+        ViewPatch {
+            start,
+            delete_count,
+            blocks: (start..end).map(|i| self.block_view(i)).collect(),
+            block_count: self.session.document().block_count(),
+            can_undo: view.can_undo,
+            can_redo: view.can_redo,
+            path: view.path,
+            title: view.title,
+            dirty: view.dirty,
+        }
+    }
+
+    fn block_view(&self, i: u32) -> BlockView {
+        let doc = self.session.document();
+        BlockView {
+            style: doc.block_style(i).expect("índice dentro do documento"),
+            attrs: doc.block_attrs(i).expect("índice dentro do documento"),
+            spans: doc.block_spans(i).expect("índice dentro do documento"),
+        }
+    }
+
+    /// Visão sem os parágrafos (só os metadados).
+    fn meta(&self) -> DocView {
+        let doc = self.session.document();
+        DocView {
+            blocks: Vec::new(),
+            can_undo: doc.can_undo(),
+            can_redo: doc.can_redo(),
+            path: self.path.as_ref().map(|p| p.display().to_string()),
+            title: self.path.as_ref().and_then(|p| p.file_stem()).map_or_else(
+                || "Sem título".to_string(),
+                |s| s.to_string_lossy().into_owned(),
+            ),
+            dirty: self.dirty,
+        }
     }
 
     /// Salva no arquivo atual ou em `target`; o nome sempre termina em `.nova`.
@@ -101,24 +243,11 @@ impl Editor {
     }
 
     pub fn view(&self) -> DocView {
-        let doc = self.session.document();
-        let blocks = (0..doc.block_count())
-            .map(|i| BlockView {
-                style: doc.block_style(i).expect("índice dentro do documento"),
-                attrs: doc.block_attrs(i).expect("índice dentro do documento"),
-                spans: doc.block_spans(i).expect("índice dentro do documento"),
-            })
-            .collect();
         DocView {
-            blocks,
-            can_undo: doc.can_undo(),
-            can_redo: doc.can_redo(),
-            path: self.path.as_ref().map(|p| p.display().to_string()),
-            title: self.path.as_ref().and_then(|p| p.file_stem()).map_or_else(
-                || "Sem título".to_string(),
-                |s| s.to_string_lossy().into_owned(),
-            ),
-            dirty: self.dirty,
+            blocks: (0..self.session.document().block_count())
+                .map(|i| self.block_view(i))
+                .collect(),
+            ..self.meta()
         }
     }
 }
@@ -168,7 +297,7 @@ mod tests {
 
         let result = editor.dispatch(insert("Olá")).unwrap();
         assert_eq!(result.events.len(), 1);
-        assert!(result.view.dirty && result.view.can_undo);
+        assert!(result.patch.dirty && result.patch.can_undo);
 
         assert!(
             editor.save(None).is_err(),
@@ -222,6 +351,106 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("pelo menos um bloco"));
         assert!(!editor.view().dirty);
+    }
+
+    /// Aplica o remendo na visão anterior, como a interface faz.
+    fn apply(mut blocks: Vec<String>, patch: &ViewPatch) -> Vec<String> {
+        let start = patch.start as usize;
+        let new: Vec<String> = patch
+            .blocks
+            .iter()
+            .map(|b| b.spans.iter().map(|s| s.text.as_str()).collect())
+            .collect();
+        blocks.splice(start..start + patch.delete_count as usize, new);
+        assert_eq!(blocks.len(), patch.block_count as usize);
+        blocks
+    }
+
+    fn texts(editor: &Editor) -> Vec<String> {
+        editor
+            .view()
+            .blocks
+            .iter()
+            .map(|b| b.spans.iter().map(|s| s.text.as_str()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn remendo_traz_so_o_que_mudou() {
+        use nova_domain_text::Pos;
+        let mut editor = Editor::new();
+        let lines: Vec<TextCommand> = (1..10)
+            .map(|i| TextCommand::InsertBlock {
+                index: i,
+                text: format!("p{i}"),
+                style: BlockStyle::Paragraph,
+            })
+            .collect();
+        editor
+            .dispatch(TextCommand::Batch { commands: lines })
+            .unwrap();
+
+        let cases = vec![
+            TextCommand::InsertText {
+                block: 5,
+                offset: 0,
+                text: "x".into(),
+                marks: None,
+            },
+            TextCommand::SplitBlock {
+                block: 3,
+                offset: 1,
+            },
+            TextCommand::MergeWithNext { block: 7 },
+            TextCommand::DeleteRange {
+                from: Pos {
+                    block: 2,
+                    offset: 1,
+                },
+                to: Pos {
+                    block: 6,
+                    offset: 1,
+                },
+            },
+            TextCommand::Batch {
+                commands: vec![
+                    TextCommand::SplitBlock {
+                        block: 1,
+                        offset: 0,
+                    },
+                    TextCommand::InsertBlock {
+                        index: 0,
+                        text: "topo".into(),
+                        style: BlockStyle::Paragraph,
+                    },
+                    TextCommand::RemoveBlock { block: 4 },
+                    TextCommand::InsertText {
+                        block: 3,
+                        offset: 0,
+                        text: "y".into(),
+                        marks: None,
+                    },
+                ],
+            },
+            TextCommand::Undo,
+            TextCommand::RemoveBlock { block: 0 },
+        ];
+        for command in cases {
+            let before = texts(&editor);
+            let result = editor.dispatch(command.clone()).unwrap();
+            assert_eq!(apply(before, &result.patch), texts(&editor), "{command:?}");
+        }
+
+        // Digitar num documento grande manda um parágrafo só.
+        let result = editor.dispatch(insert("z")).unwrap();
+        assert_eq!(
+            (
+                result.patch.start,
+                result.patch.delete_count,
+                result.patch.blocks.len()
+            ),
+            (0, 1, 1)
+        );
     }
 
     #[test]

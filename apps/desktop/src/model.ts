@@ -252,16 +252,52 @@ export function wordCount(doc: DocView): number {
   return doc.blocks.reduce((n, b) => n + (blockText(b).match(/\S+/g)?.length ?? 0), 0);
 }
 
+// Fronteiras de caractere como o usuário as vê (grafemas): um emoji de família
+// (👨‍👩‍👧, vários pontos de código unidos por ZWJ), uma bandeira (🇧🇷, dois
+// indicadores regionais) ou uma letra com acento combinado contam como um só.
+const segmenter = typeof Intl !== "undefined" && "Segmenter" in Intl ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+
 const isHigh = (c: number) => c >= 0xd800 && c <= 0xdbff;
 const isLow = (c: number) => c >= 0xdc00 && c <= 0xdfff;
 
-/** 2 se o caractere antes de `offset` é um par substituto (emoji), senão 1. */
-function charLenBefore(text: string, offset: number): number {
+/** Tamanho (UTF-16) do caractere visível que termina em `offset`. */
+export function charLenBefore(text: string, offset: number): number {
+  if (segmenter) {
+    let last = 0;
+    for (const { index } of segmenter.segment(text.slice(0, offset))) last = index;
+    return offset - last || 1;
+  }
   return offset >= 2 && isLow(text.charCodeAt(offset - 1)) && isHigh(text.charCodeAt(offset - 2)) ? 2 : 1;
 }
 
-function charLenAfter(text: string, offset: number): number {
+/** Tamanho (UTF-16) do caractere visível que começa em `offset`. */
+export function charLenAfter(text: string, offset: number): number {
+  if (segmenter) {
+    const first = segmenter.segment(text.slice(offset))[Symbol.iterator]().next();
+    return first.done ? 1 : first.value.segment.length;
+  }
   return offset + 1 < text.length && isHigh(text.charCodeAt(offset)) && isLow(text.charCodeAt(offset + 1)) ? 2 : 1;
+}
+
+/**
+ * Onde as duas visões começam a diferir: depois de desfazer ou refazer, o
+ * cursor vai para lá, como no Word.
+ */
+export function firstDifference(before: DocView, after: DocView): Pos | null {
+  const n = Math.min(before.blocks.length, after.blocks.length);
+  for (let block = 0; block < n; block++) {
+    const a = blockText(before.blocks[block]);
+    const b = blockText(after.blocks[block]);
+    if (a === b && JSON.stringify(before.blocks[block]) === JSON.stringify(after.blocks[block])) continue;
+    let offset = 0;
+    while (offset < a.length && offset < b.length && a[offset] === b[offset]) offset++;
+    return { block, offset: Math.min(offset, b.length) };
+  }
+  if (before.blocks.length !== after.blocks.length) {
+    const block = Math.min(n, after.blocks.length - 1);
+    return { block, offset: block < n ? blockText(after.blocks[block]).length : 0 };
+  }
+  return null;
 }
 
 function wrap(commands: TextCommand[]): TextCommand | null {

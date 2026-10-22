@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  charLenAfter,
+  charLenBefore,
+  firstDifference,
   caret,
   clampSelection,
   deleteBackward,
@@ -194,5 +197,26 @@ describe("utilitários", () => {
 
   it("conta palavras", () => {
     expect(wordCount(doc(p(["um dois"]), p([""]), p([" tres "])))).toBe(3);
+  });
+});
+
+describe("caracteres visíveis", () => {
+  it("emoji de família, bandeira e acento combinado contam como um", () => {
+    const text = "a👨‍👩‍👧🇧🇷e\u0301";
+    expect(charLenBefore(text, text.length)).toBe(2); // e + acento
+    expect(charLenBefore(text, text.length - 2)).toBe(4); // 🇧🇷
+    expect(charLenBefore(text, 1 + "👨‍👩‍👧".length)).toBe("👨‍👩‍👧".length);
+    expect(charLenAfter(text, 1)).toBe("👨‍👩‍👧".length);
+    expect(charLenAfter(text, 0)).toBe(1);
+  });
+});
+
+describe("desfazer leva o cursor", () => {
+  it("para onde o texto mudou", () => {
+    const before = doc(p(["início extra"]), p(["fim"]));
+    const after = doc(p(["início"]), p(["fim"]));
+    expect(firstDifference(before, after)).toEqual({ block: 0, offset: 6 });
+    expect(firstDifference(after, after)).toBeNull();
+    expect(firstDifference(doc(p(["a"]), p(["b"])), doc(p(["a"])))).toEqual({ block: 0, offset: 1 });
   });
 });

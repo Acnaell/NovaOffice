@@ -114,7 +114,29 @@ export type TextCommand =
   | { type: "history.redo" }
   | { type: "batch"; commands: TextCommand[] };
 
+/** Parágrafos `start..start + deleteCount` trocados por `blocks` (src-tauri: `ViewPatch`). */
+export interface ViewPatch {
+  start: number;
+  deleteCount: number;
+  blocks: BlockView[];
+  blockCount: number;
+  canUndo: boolean;
+  canRedo: boolean;
+  path: string | null;
+  title: string;
+  dirty: boolean;
+}
+
 export interface DispatchResult {
   events: unknown[];
-  view: DocView;
+  patch: ViewPatch;
+}
+
+/** Aplica o remendo; os parágrafos que não mudaram continuam sendo os mesmos objetos. */
+export function applyPatch(view: DocView, patch: ViewPatch): DocView | null {
+  const blocks = view.blocks.slice();
+  blocks.splice(patch.start, patch.deleteCount, ...patch.blocks);
+  if (blocks.length !== patch.blockCount) return null;
+  const { canUndo, canRedo, path, title, dirty } = patch;
+  return { blocks, canUndo, canRedo, path, title, dirty };
 }

@@ -28,11 +28,10 @@ describe("copiar", () => {
   });
 
   it("HTML que o Word e o navegador entendem", () => {
-    expect(fragmentHtml(fragmentOf(d, sel(0, 0, 1, 12)))).toBe(
-      '<meta charset="utf-8"><h1>Título</h1><ul><li>um <b>dois</b> três</li></ul>',
-    );
+    const html = fragmentHtml(fragmentOf(d, sel(0, 0, 1, 12)));
+    expect(html.replace(/<!--.*?-->/, "")).toBe('<meta charset="utf-8"><h1>Título</h1><ul><li>um <b>dois</b> três</li></ul>');
     const colored = doc(p([["x", [{ mark: "color", value: "#C00000" }, { mark: "highlight", value: "yellow" }, { mark: "vertAlign", value: "superscript" }]]], { align: "center" }));
-    expect(fragmentHtml(fragmentOf(colored, sel(0, 0, 0, 1)))).toBe(
+    expect(fragmentHtml(fragmentOf(colored, sel(0, 0, 0, 1))).replace(/<!--.*?-->/, "")).toBe(
       '<meta charset="utf-8"><p style="text-align:center"><span style="color:#C00000;background:#ffff00"><sup>x</sup></span></p>',
     );
   });
@@ -62,8 +61,7 @@ describe("colar HTML de fora", () => {
       ["paragraph", "bullet", 0, [["a", ""]]],
       ["paragraph", "number", 1, [["b", ""]]],
       ["paragraph", "bullet", 0, [["c", ""]]],
-      ["paragraph", "", 0, [["linha 1", ""]]],
-      ["paragraph", "", 0, [["linha 2", ""]]],
+      ["paragraph", "", 0, [["linha 1\u000Blinha 2", ""]]],
       ["paragraph", "", 0, [["x\ty", ""]]],
     ]);
   });
@@ -76,10 +74,13 @@ describe("colar HTML de fora", () => {
     ]);
   });
 
-  it("ida e volta: copiar do Nova e colar no Nova preserva tudo", () => {
-    const d = doc(p([["Título"]], {}, "heading1"), p([["a "], ["b", [bold]]], { list: "number", indent: 1 }));
-    const back = parseHtml(fragmentHtml(fragmentOf(d, sel(0, 0, 1, 3))));
-    expect(simple(back)).toEqual(simple(d.blocks));
+  it("ida e volta: copiar do Nova e colar no Nova preserva tudo, até espaço no fim", () => {
+    const d = doc(p([["Título"]], {}, "heading1"), p([["a "], ["b ", [bold]]], { list: "number", indent: 1 }));
+    const html = fragmentHtml(fragmentOf(d, sel(0, 0, 1, 4)));
+    expect(simple(parseHtml(html))).toEqual(simple(d.blocks));
+    // Sem o comentário (HTML limpo, como o Word vê), o recuo e a lista também voltam.
+    const clean = parseHtml(html.replace(/<!--.*?-->/, ""));
+    expect(clean[1].attrs).toMatchObject({ list: "number", indent: 1 });
   });
 });
 
