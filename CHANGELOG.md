@@ -35,6 +35,12 @@ Primeira versão pública da NovaOffice: o app desktop com o editor Nova Text e 
 - Desfazer e refazer por usuário dentro da sessão.
 - Comando `text.deleteRange`, que apaga seleções que atravessam parágrafos.
 - Comando `batch`, que aplica vários comandos como um único passo de desfazer.
+- Faixa de opções no Nova Text: barra de título com a marca e acesso rápido (salvar, desfazer,
+  refazer), abas Arquivo, Página inicial e Exibir, grupos rotulados e galeria de estilos; pode ser recolhida.
+- Ícones da interface no traço da marca e ícone do app redesenhado a partir do símbolo NovaOffice.
+- Tema claro, escuro ou do sistema (aba Exibir), com a paleta da marca; a escolha fica salva.
+- Interface em português e inglês, com troca de idioma na aba Exibir.
+- Tabela única de atalhos de teclado (`src/shortcuts.ts`), usada pelo teclado e pelas dicas dos botões.
 - Página Inicial no modelo do Word: Área de Transferência (colar mantendo a formatação ou só o texto,
   recortar, copiar, Pincel de Formatação), Fonte (fonte, tamanho, A+/A-, maiúsculas e minúsculas,
   limpar formatação, subscrito, sobrescrito, realce, cor), Parágrafo (marcadores, numeração por nível,
