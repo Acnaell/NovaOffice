@@ -703,3 +703,50 @@ fn atributos_de_paragrafo_sincronizam() {
     assert_eq!(a.block_attrs(0).unwrap(), expected);
     assert_eq!(b.block_attrs(0).unwrap(), expected);
 }
+
+#[test]
+fn montar_a_partir_de_paragrafos_e_ler_de_volta() {
+    let paragraphs = vec![
+        Paragraph {
+            style: BlockStyle::Heading1,
+            attrs: ParaAttrs {
+                align: Align::Center,
+                ..ParaAttrs::default()
+            },
+            spans: vec![Span {
+                text: "Título".into(),
+                marks: vec![],
+            }],
+        },
+        Paragraph {
+            style: BlockStyle::Paragraph,
+            attrs: ParaAttrs {
+                list: Some(ListKind::Number),
+                indent: 1,
+                line_spacing: Some(150),
+                ..ParaAttrs::default()
+            },
+            spans: vec![
+                Span {
+                    text: "um ".into(),
+                    marks: vec![],
+                },
+                Span {
+                    text: "dois\ntrês".into(),
+                    marks: vec![Mark::Bold],
+                },
+            ],
+        },
+        Paragraph::default(),
+    ];
+    let doc = TextDocument::from_paragraphs(1, &paragraphs).unwrap();
+    assert!(!doc.can_undo(), "a importação não entra no desfazer");
+    let back = doc.paragraphs();
+    assert_eq!(back.len(), 3);
+    assert_eq!(back[0].style, BlockStyle::Heading1);
+    assert_eq!(back[0].attrs.align, Align::Center);
+    assert_eq!(back[1].attrs, paragraphs[1].attrs);
+    assert_eq!(back[1].spans[1].text, "dois\u{b}três");
+    assert_eq!(back[1].spans[1].marks, vec![Mark::Bold]);
+    assert_eq!(back[2].text(), "");
+}

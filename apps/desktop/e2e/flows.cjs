@@ -589,56 +589,176 @@ const flows = [
   } },
 
   // ───────────── Arquivo
-  { area: 'Arquivo', name: 'Salvar, fechar e reabrir (.nova) preserva texto e formatação', run: async (h) => {
+  { area: 'Arquivo', name: 'Salvar (.docx padrão), fechar e reabrir preserva texto e formatação', run: async (h) => {
     await h.reset(['Título do doc', 'corpo com negrito']);
     await core('dispatch', { command: { type: 'batch', commands: [
       { type: 'block.setStyle', block: 0, style: 'heading1' },
       { type: 'text.applyMark', block: 1, offset: 10, len: 7, mark: { mark: 'bold' } }] } });
-    await h.p.reload(); await h.p.waitForSelector('.page'); await h.p.focus('.page');
-    await h.p.evaluate(() => { window.__dialog.save = '/tmp/nova-flows/ciclo.nova'; });
-    await h.press('Control+b');
-    const saved = await h.doc();
-    await core('new_document');
-    await h.p.evaluate(() => { window.__dialog.open = '/tmp/nova-flows/ciclo.nova'; });
-    await h.press('Control+a'); await h.settle(300);
+    await h.reload();
+    await h.p.evaluate(() => { window.__calls = []; window.__dialog.save = '/tmp/nova-flows/ciclo.docx'; });
+    await h.press('Control+b'); await h.settle(200);
+    const asked = await h.lastDialog('save');
+    if (!asked?.defaultPath?.endsWith('.docx') || asked.filters[0].extensions[0] !== 'docx') return FALHA(`Janela Salvar: ${JSON.stringify(asked)}`);
+    await h.reset();
+    await h.p.evaluate(() => { window.__dialog.open = '/tmp/nova-flows/ciclo.docx'; });
+    await h.press('Control+a'); await h.settle(150);
+    await h.p.locator('.bs-big', { hasText: 'Procurar' }).click(); await h.settle(300);
     const back = await h.doc();
     const title = await h.p.evaluate(() => window.__title);
-    const ok = back.blocks[0].style === 'heading1' && JSON.stringify(back.blocks[1].spans).includes('bold') && !back.dirty;
-    return ok ? OK(`Título da janela: "${title}"`) : FALHA(`Salvo: ${saved.path}; reaberto: ${JSON.stringify(back.blocks)}`);
+    const ok = back.blocks[0].style === 'heading1' && JSON.stringify(back.blocks[1].spans).includes('bold') && !back.dirty && back.format === 'docx';
+    return ok ? OK(`Sugere "${asked.defaultPath}" com "${asked.filters[0].name}" primeiro; título da janela: "${title}"`) : FALHA(`Reaberto: ${JSON.stringify(back)}`);
+  } },
+  { area: 'Arquivo', name: 'Salvar como em cada formato (tela Arquivo)', run: async (h) => {
+    const fs = require('fs');
+    const got = [];
+    for (const [ext, label] of [['odt', 'Texto OpenDocument'], ['nova', 'Documento NovaOffice'], ['md', 'Markdown'], ['txt', 'Texto sem formatação'], ['html', 'Página da Web'], ['docx', 'Documento do Word']]) {
+      await h.reset(['Relatório', 'com texto']);
+      const path = `/tmp/nova-flows/como.${ext}`;
+      try { fs.unlinkSync(path); } catch {}
+      await h.p.evaluate((p) => { window.__dialog.save = p; }, path);
+      await h.p.locator('.tab-file').click();
+      await h.p.locator('.bs-nav', { hasText: 'Salvar como' }).click();
+      await h.p.locator('.bs-formats button', { hasText: label }).first().click(); await h.settle(250);
+      const d = await h.doc();
+      got.push(`${ext}:${fs.existsSync(path) && d.format === ext && !d.dirty ? 'ok' : 'falhou'}`);
+    }
+    const reopen = await core('open_document', { path: '/tmp/nova-flows/como.odt' });
+    const fine = got.every((g) => g.endsWith(':ok')) && reopen.blocks.length === 2;
+    return fine ? OK(got.join(' · ')) : FALHA(got.join(' · '));
   } },
   { area: 'Arquivo', name: 'Ctrl+B num documento novo pede onde salvar', run: async (h) => {
-    await h.reset(['x']); await h.p.evaluate(() => { window.__calls = []; window.__dialog.save = '/tmp/nova-flows/novo.nova'; });
+    await h.reset(['x']); await h.p.evaluate(() => { window.__calls = []; window.__dialog.save = '/tmp/nova-flows/novo.docx'; });
     await h.press('Control+b'); await h.settle(200);
     const calls = await h.p.evaluate(() => window.__calls.map((c) => c.cmd));
     const d = await h.doc();
     return calls.includes('plugin:dialog|save') && !d.dirty ? OK() : FALHA(JSON.stringify(calls));
   } },
-  { area: 'Arquivo', name: 'Novo documento com alterações pergunta antes de descartar', run: async (h) => {
-    await h.reset(); await h.type('não salvo'); await h.p.evaluate(() => { window.__calls = []; window.__dialog.ask = false; });
-    await h.press('Control+o'); await h.settle(200);
-    const calls = await h.p.evaluate(() => window.__calls.map((c) => c.cmd));
-    const t = await h.texts();
-    await h.p.evaluate(() => { window.__dialog.ask = true; });
-    return calls.some((c) => /dialog\|(ask|message)/.test(c)) && eq(t, ['não salvo']) ? OK() : FALHA(`${JSON.stringify(calls)} → ${JSON.stringify(t)}`);
+  { area: 'Arquivo', name: 'Novo documento com alterações pergunta Salvar / Não Salvar / Cancelar', run: async (h) => {
+    await h.reset(); await h.type('não salvo');
+    await h.press('Control+o'); await h.settle(150);
+    if (!(await h.modalVisible())) return FALHA('Não perguntou.');
+    await h.p.locator('.modal button', { hasText: 'Cancelar' }).click(); await h.settle(150);
+    const kept = await h.texts();
+    await h.press('Control+o'); await h.settle(150);
+    await h.p.locator('.modal button', { hasText: 'Não Salvar' }).click(); await h.settle(200);
+    const after = await h.texts();
+    return eq(kept, ['não salvo']) && eq(after, ['']) ? OK() : FALHA(`${JSON.stringify(kept)} → ${JSON.stringify(after)}`);
   } },
-  { area: 'Arquivo', name: 'Fechar a janela com alterações não salvas', run: async () => AUSENTE('Fechar a janela não pergunta (limitação já conhecida); o trabalho se perde.') },
+  { area: 'Arquivo', name: 'Fechar a janela com alterações não salvas', run: async (h) => {
+    await h.reset(); await h.type('importante');
+    await h.p.evaluate(() => { window.__destroyed = false; window.__dialog.save = '/tmp/nova-flows/fechar.docx'; });
+    try { require('fs').unlinkSync('/tmp/nova-flows/fechar.docx'); } catch {}
+    await h.p.evaluate(() => window.__requestClose()); await h.settle(200);
+    if (!(await h.modalVisible())) return FALHA('Fechou sem perguntar.');
+    await h.p.locator('.modal button', { hasText: 'Cancelar' }).click(); await h.settle(150);
+    const stayed = !(await h.p.evaluate(() => window.__destroyed));
+    await h.p.evaluate(() => window.__requestClose()); await h.settle(200);
+    await h.p.locator('.modal button', { hasText: /^Salvar$/ }).click(); await h.settle(300);
+    const closed = await h.p.evaluate(() => window.__destroyed);
+    const saved = require('fs').existsSync('/tmp/nova-flows/fechar.docx');
+    return stayed && closed && saved ? OK('Cancelar mantém a janela; Salvar grava e fecha.') : FALHA(`ficou=${stayed} fechou=${closed} salvou=${saved}`);
+  } },
   { area: 'Arquivo', name: 'Abrir arquivo .docx do Word', run: async (h) => {
+    await core('new_document');
+    await core('dispatch', { command: { type: 'batch', commands: [
+      { type: 'text.insert', block: 0, offset: 0, text: 'Lista' },
+      { type: 'block.insert', index: 1, text: 'item um' },
+      { type: 'block.setAttr', block: 1, attr: 'list', value: 'number' },
+      { type: 'block.setAttr', block: 0, attr: 'align', value: 'center' }] } });
+    await core('save_document', { path: '/tmp/nova-flows/word.docx' });
     await h.reset();
-    return AUSENTE('Só abre .nova, .txt e .md. Importar/exportar .docx está no roadmap (plugins de formato).');
+    await h.p.evaluate(() => { window.__dialog.open = '/tmp/nova-flows/word.docx'; });
+    await h.press('Control+a'); await h.settle(100);
+    await h.p.locator('.bs-big', { hasText: 'Procurar' }).click(); await h.settle(300);
+    const d = await h.doc();
+    const filters = (await h.lastDialog('open'))?.filters ?? [];
+    const ok = d.blocks[0].attrs.align === 'center' && d.blocks[1].attrs.list === 'number' && /Todos os documentos/.test(filters[0]?.name);
+    return ok ? OK(`Filtro: "${filters[0].name}". Arquivos do Word e do LibreOffice validados à parte (testes do núcleo).`) : FALHA(JSON.stringify(d.blocks));
   } },
   { area: 'Arquivo', name: 'Abrir .txt / .md', run: async (h) => {
     require('fs').writeFileSync('/tmp/nova-flows/notas.md', '# Título\n\nTexto com **negrito**\n- item');
     await h.reset(); await h.p.evaluate(() => { window.__dialog.open = '/tmp/nova-flows/notas.md'; });
-    await h.press('Control+a'); await h.settle(300);
+    await h.press('Control+a'); await h.settle(100);
+    await h.p.locator('.bs-big', { hasText: 'Procurar' }).click(); await h.settle(300);
     const d = await h.doc();
-    const t = d.blocks.map((b) => b.spans.map((s) => s.text).join(''));
-    const parsed = d.blocks[0].style === 'heading1';
-    return parsed ? OK() : PARCIAL(`Markdown é aberto como texto puro (sem converter # e **): ${JSON.stringify(t)}`);
+    const ok = d.blocks[0].style === 'heading1' && JSON.stringify(d.blocks[1].spans).includes('bold') && d.blocks[2].attrs.list === 'bullet';
+    return ok ? OK('Markdown vira títulos, negrito e listas.') : FALHA(JSON.stringify(d.blocks));
   } },
-  { area: 'Arquivo', name: 'Exportar para PDF', run: async () => AUSENTE('Só exporta Markdown.') },
-  { area: 'Arquivo', name: 'Imprimir (Ctrl+P)', run: absentShortcut('Control+p', 'Imprimir') },
-  { area: 'Arquivo', name: 'Salvamento automático / recuperação', run: async () => AUSENTE('Não há salvamento automático nem recuperação após travamento.') },
-  { area: 'Arquivo', name: 'Documentos recentes', run: async () => AUSENTE('Não há lista de recentes.') },
+  { area: 'Arquivo', name: 'Documentos recentes', run: async (h) => {
+    await core('open_document', { path: '/tmp/nova-flows/notas.md' });
+    await h.reset();
+    await h.p.locator('.tab-file').click();
+    await h.p.locator('.bs-nav', { hasText: 'Abrir' }).click(); await h.settle(150);
+    const names = await h.p.locator('.bs-file strong').allInnerTexts();
+    if (!names.includes('notas.md')) return FALHA(`Recentes: ${JSON.stringify(names)}`);
+    await h.p.locator('.bs-file', { hasText: 'notas.md' }).click(); await h.settle(300);
+    const d = await h.doc();
+    return d.path?.endsWith('notas.md') ? OK(`${names.length} na lista; um clique reabre.`) : FALHA(JSON.stringify(d.path));
+  } },
+  { area: 'Arquivo', name: 'Exportar uma cópia (.html) sem mudar o arquivo atual', run: async (h) => {
+    await h.reset(['Exportar isto']);
+    await h.p.evaluate(() => { window.__dialog.save = '/tmp/nova-flows/copia.html'; });
+    await h.p.locator('.tab-file').click();
+    await h.p.locator('.bs-nav', { hasText: 'Exportar' }).click();
+    await h.p.locator('.bs-formats button', { hasText: 'Página da Web' }).click(); await h.settle(250);
+    const html = require('fs').readFileSync('/tmp/nova-flows/copia.html', 'utf8');
+    const d = await h.doc();
+    return html.includes('Exportar isto') && d.path === null ? OK() : FALHA(`path=${d.path}`);
+  } },
+  { area: 'Arquivo', name: 'Exportar para PDF', run: async (h) => {
+    await h.reset(['x']);
+    await h.p.evaluate(() => { window.__printed = 0; });
+    await h.p.locator('.tab-file').click();
+    await h.p.locator('.bs-nav', { hasText: 'Exportar' }).click();
+    await h.p.locator('.bs-big', { hasText: 'Criar PDF' }).click(); await h.settle(200);
+    const printed = await h.p.evaluate(() => window.__printed);
+    return printed ? PARCIAL('Pela janela de impressão do sistema ("Salvar como PDF"); ainda sem exportação direta para .pdf.') : FALHA('Não abriu a impressão.');
+  } },
+  { area: 'Arquivo', name: 'Imprimir (Ctrl+P)', run: async (h) => {
+    await h.reset(['x']);
+    await h.p.evaluate(() => { window.__printed = 0; });
+    await h.press('Control+p'); await h.settle(150);
+    await h.p.locator('.bs-big', { hasText: 'Imprimir' }).click(); await h.settle(200);
+    const printed = await h.p.evaluate(() => window.__printed);
+    const hidden = await h.p.evaluate(() => {
+      const rule = [...document.styleSheets].flatMap((s) => [...s.cssRules]).find((r) => r.media && r.media.mediaText === 'print');
+      return !!rule;
+    });
+    return printed && hidden ? OK('Tela Imprimir → janela de impressão do sistema; só a página sai no papel.') : FALHA(`printed=${printed} css=${hidden}`);
+  } },
+  { area: 'Arquivo', name: 'Salvamento automático / recuperação', run: async (h) => {
+    await h.reset(); await h.type('texto que quase se perdeu');
+    const saved = await core('autosave');
+    await core('restart'); // o app fecha sem salvar
+    await h.p.reload(); await h.p.waitForSelector('.backstage'); await h.settle(150);
+    const banner = await h.p.locator('.bs-recovery').count();
+    if (!saved || !banner) return FALHA(`autosave=${saved} aviso=${banner}`);
+    await h.p.locator('.bs-recovery button', { hasText: 'Recuperar' }).click(); await h.settle(300);
+    const d = await h.doc();
+    return eq(await h.texts(), ['texto que quase se perdeu']) && d.dirty ? OK('Cópia a cada minuto; ao abrir de novo, a tela inicial oferece Recuperar.') : FALHA(JSON.stringify(await h.texts()));
+  } },
+
+  // ───────────── NovaOffice
+  { area: 'NovaOffice', name: 'Tela inicial ao abrir o programa', run: async (h) => {
+    await core('new_document');
+    await h.p.reload(); await h.p.waitForSelector('.backstage'); await h.settle(100);
+    const apps = await h.p.locator('.bs-app').count();
+    const title = await h.p.evaluate(() => window.__title);
+    await h.p.locator('.bs-tile').first().click(); await h.settle(150);
+    const gone = !(await h.p.locator('.backstage').count());
+    return apps === 6 && gone ? OK(`6 aplicativos, Novo e Recentes; título "${title}".`) : FALHA(`apps=${apps} fechou=${gone}`);
+  } },
+  { area: 'NovaOffice', name: 'Menu de aplicativos (grade ao lado do logo)', run: async (h) => {
+    await h.reset(['x']);
+    await h.p.locator('.launcher-button').click(); await h.settle(100);
+    const names = await h.p.locator('.launcher-name').allInnerTexts();
+    const current = await h.p.locator('.launcher-app[aria-current="true"] .launcher-name').innerText();
+    const soon = await h.p.locator('.launcher-app:disabled').count();
+    await h.press('Escape');
+    const closed = !(await h.p.locator('.launcher').count());
+    const ok = names.length === 6 && current === 'Nova Text' && soon === 5 && closed;
+    return ok ? OK(`${names.join(', ')}; os outros 5 aparecem como "Em breve"; Esc fecha.`) : FALHA(`${names} atual=${current} breve=${soon} fechou=${closed}`);
+  } },
 
   // ───────────── Exibição
   { area: 'Exibição', name: 'Página com tamanho A4 e margens; várias páginas', run: async (h) => {

@@ -8,6 +8,27 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- Formatos de arquivo: abrir e salvar Documento do Word (.docx, o padrão), Texto OpenDocument (.odt),
+  Documento NovaOffice (.nova), Markdown (.md, com títulos, negrito, itálico e listas) e texto sem
+  formatação (.txt); exportar como Página da Web (.html).
+- Tela Arquivo como a do Word: Início, Novo, Abrir (com Recentes e Procurar), Salvar, Salvar como (com
+  o tipo de arquivo), Imprimir, Exportar (PDF e outros formatos) e Fechar.
+- Tela inicial do NovaOffice ao abrir o programa, com os aplicativos da suíte, documento em branco e recentes.
+- Menu de aplicativos (botão de grade ao lado do logo) com Nova Text, Sheets, Slides, Draw, Base e
+  Math; os que ainda não existem aparecem como "Em breve".
+- "Deseja salvar as alterações?" com Salvar, Não Salvar e Cancelar ao criar, abrir ou fechar documento
+  e ao fechar a janela.
+- Recuperação automática: cópia do documento não salvo a cada minuto, oferecida na próxima abertura.
+- Imprimir (Ctrl+P) e PDF pela janela de impressão do sistema; só a página é impressa.
+- Lista de documentos recentes.
+- O nome da janela mostra o formato do arquivo (por exemplo, `Carta.docx — Nova Text`).
+
+### Removido
+
+- Botão "Exportar para Markdown" da aba Arquivo (agora em Exportar e em Salvar como).
+
 ## [0.1.0] - 2026-10-22
 
 Primeira versão pública da NovaOffice: o app desktop com o editor Nova Text e o CLI `nova`.

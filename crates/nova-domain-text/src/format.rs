@@ -390,3 +390,18 @@ impl ParaAttrs {
         }
     }
 }
+
+/// Um parágrafo completo: estilo, atributos e trechos formatados. É a forma
+/// usada para importar e exportar formatos de arquivo (.docx, .odt, Markdown).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Paragraph {
+    pub style: BlockStyle,
+    pub attrs: ParaAttrs,
+    pub spans: Vec<Span>,
+}
+
+impl Paragraph {
+    pub fn text(&self) -> String {
+        self.spans.iter().map(|s| s.text.as_str()).collect()
+    }
+}

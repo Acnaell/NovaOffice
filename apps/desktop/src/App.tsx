@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ask, open, save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
+import { Backstage, LOSSY, SAVE_FORMATS, type BackstagePage } from "./Backstage";
 import { insertFragment, NOVA_MIME, parseHtml, plainFragment, type Fragment } from "./clipboard";
 import { writeSelection } from "./dom";
 import { Editor, type EditFn } from "./Editor";
@@ -24,7 +25,7 @@ import {
   toggleList,
   type CaseMode,
 } from "./formatting";
-import { useI18n } from "./i18n";
+import { useI18n, type MessageKey } from "./i18n";
 import {
   blockText,
   caret,
@@ -42,9 +43,10 @@ import {
   type Selection,
 } from "./model";
 import { Ribbon, type RibbonCommand } from "./Ribbon";
+import { SaveChangesDialog, type SaveChoice } from "./SaveDialog";
 import { matchShortcut, profileFor } from "./shortcuts";
 import { useTheme } from "./theme";
-import { applyPatch, type BlockStyle, type DocView, type HighlightColor, type Mark, type MarkKind, type ParaAttr, type TextCommand, type ToggleMark } from "./types";
+import { applyPatch, type BlockStyle, type DocView, type FileFormat, type Recent, type RecoveryInfo, type HighlightColor, type Mark, type MarkKind, type ParaAttr, type TextCommand, type ToggleMark } from "./types";
 
 interface State {
   view: DocView;
@@ -61,6 +63,11 @@ const sameSelection = (a: Selection, b: Selection) =>
 /** Espaço que "Adicionar espaço antes/depois" põe, como no Word (12 pt). */
 const PARAGRAPH_SPACE = 12;
 
+/** Intervalo da recuperação automática (o Word usa 10 min; aqui é mais curto). */
+const AUTOSAVE_MS = 60_000;
+
+const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false, format: null };
+
 export default function App() {
   const [state, setState] = useState<State | null>(null);
   const [pendingMarks, setPendingMarks] = useState<Mark[] | null>(null);
@@ -70,6 +77,12 @@ export default function App() {
   const [lastFontColor, setLastFontColor] = useState("#C00000");
   const [lastHighlight, setLastHighlight] = useState<HighlightColor>("yellow");
   const [find, setFind] = useState<FindState | null>(null);
+  // Tela Arquivo; na inicialização, com um documento vazio, é a tela inicial do NovaOffice.
+  const [backstage, setBackstage] = useState<BackstagePage | null>(null);
+  const [startup, setStartup] = useState(false);
+  const [recents, setRecents] = useState<Recent[]>([]);
+  const [recovery, setRecovery] = useState<RecoveryInfo | null>(null);
+  const [saveAsk, setSaveAsk] = useState<{ title: string; resolve: (choice: SaveChoice) => void } | null>(null);
   const { t, locale } = useI18n();
   const profile = profileFor(locale);
   const [theme, setTheme] = useTheme();
@@ -145,16 +158,31 @@ export default function App() {
     [commit, setPending],
   );
 
+  const refreshRecents = useCallback(() => {
+    api.recentDocuments().then(setRecents, () => {});
+  }, []);
+
   useEffect(() => {
-    api.snapshot().then(loadView, showError);
-  }, [loadView, showError]);
+    api.snapshot().then((view) => {
+      // Aberto já com um documento (arquivo passado ao programa, por exemplo): vai direto a ele.
+      const pristine = !view.path && !view.dirty && view.blocks.length <= 1 && !view.blocks[0]?.spans.some((s) => s.text);
+      if (pristine) {
+        setStartup(true);
+        setBackstage("home");
+      }
+      loadView(view);
+    }, showError);
+    api.recoveryInfo().then(setRecovery, () => {});
+    refreshRecents();
+  }, [loadView, showError, refreshRecents]);
 
   // Título da janela: nome do arquivo e um ponto quando há alterações não salvas.
   useEffect(() => {
     if (!state) return;
-    const title = `${state.view.dirty ? "● " : ""}${state.view.title} — NovaOffice`;
+    const name = state.view.format ? `${state.view.title}.${state.view.format}` : state.view.title;
+    const title = startup ? "NovaOffice" : `${state.view.dirty ? "● " : ""}${name} — Nova Text`;
     getCurrentWindow().setTitle(title).catch(() => {});
-  }, [state?.view.title, state?.view.dirty]);
+  }, [state?.view.title, state?.view.dirty, state?.view.format, startup]);
 
   const onSelect = useCallback(
     (selection: Selection) => {
@@ -341,7 +369,7 @@ export default function App() {
 
   // ---------- Localizar ----------
 
-  const matches = useMatches(state?.view ?? { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false }, find);
+  const matches = useMatches(state?.view ?? EMPTY_VIEW, find);
 
   const openFind = useCallback((mode: "find" | "replace") => {
     const current = stateRef.current;
@@ -416,70 +444,183 @@ export default function App() {
     [showError],
   );
 
-  const filters = () => [{ name: t("filter.nova"), extensions: ["nova"] }];
+  const formatName = (f: FileFormat) => tRef.current(`fmt.${f}` as MessageKey);
 
-  const confirmDiscard = async () =>
-    !stateRef.current?.view.dirty ||
-    (await ask(t("dialog.discard"), {
-      title: "NovaOffice",
-      kind: "warning",
-    }));
+  /** Filtros da janela Salvar: o formato escolhido primeiro (o padrão é o do Word). */
+  const saveFilters = (first: FileFormat) =>
+    [first, ...SAVE_FORMATS.filter((f) => f !== first)].map((f) => ({ name: `${formatName(f)} (*.${f})`, extensions: [f] }));
+
+  const openFilters = () => {
+    const readable = SAVE_FORMATS.filter((f) => f !== "html");
+    return [
+      { name: `${tRef.current("fmt.all")} (${readable.map((f) => `*.${f}`).join(";")})`, extensions: readable },
+      ...readable.map((f) => ({ name: `${formatName(f)} (*.${f})`, extensions: [f] })),
+      { name: tRef.current("fmt.any"), extensions: ["*"] },
+    ];
+  };
+
+  const closeBackstage = useCallback(() => {
+    setBackstage(null);
+    setStartup(false);
+    setTimeout(focusEditor, 0);
+  }, [focusEditor]);
+
+  /** Salva no arquivo atual ou pergunta onde (Salvar como). Devolve se salvou. */
+  const doSave = async (as: boolean, format?: FileFormat): Promise<boolean> => {
+    const current = stateRef.current;
+    if (!current) return false;
+    let path: string | null = null;
+    if (as || !current.view.path) {
+      const chosen = format ?? current.view.format ?? "docx";
+      path = await save({ filters: saveFilters(chosen), defaultPath: `${current.view.title}.${chosen}` });
+      if (!path) return false;
+    }
+    const view = await api.saveDocument(path);
+    const latest = stateRef.current ?? current;
+    commit({ ...latest, view, revision: latest.revision + 1 });
+    setStatus(
+      view.format && LOSSY.includes(view.format)
+        ? tRef.current("status.lossy", { format: formatName(view.format) })
+        : tRef.current("status.savedTo", { path: view.path ?? "" }),
+    );
+    refreshRecents();
+    return true;
+  };
+
+  /** "Deseja salvar as alterações?" antes de trocar ou fechar o documento. Devolve se pode seguir. */
+  const confirmLeave = async (keepRecovery = false): Promise<boolean> => {
+    const current = stateRef.current;
+    if (!current?.view.dirty) return true;
+    const choice = await new Promise<SaveChoice>((resolve) => setSaveAsk({ title: current.view.title, resolve }));
+    setSaveAsk(null);
+    if (choice === "cancel") return false;
+    if (choice === "discard") {
+      if (!keepRecovery) await api.discardRecovery().catch(() => {});
+      return true;
+    }
+    return doSave(false);
+  };
 
   const newDocument = () =>
     afterQueue(async () => {
-      if (await confirmDiscard()) loadView(await api.newDocument());
+      if (!(await confirmLeave())) return;
+      loadView(await api.newDocument());
+      // O núcleo descarta a cópia de recuperação ao trocar de documento.
+      setRecovery(null);
+      closeBackstage();
     });
 
-  const openDocument = () =>
+  const openPath = (path: string) =>
     afterQueue(async () => {
-      if (!(await confirmDiscard())) return;
-      const path = await open({
-        multiple: false,
-        directory: false,
-        filters: [...filters(), { name: t("filter.text"), extensions: ["txt", "md"] }],
-      });
-      if (path) loadView(await api.openDocument(path));
-    });
-
-  const saveDocument = (as: boolean) =>
-    afterQueue(async () => {
-      const current = stateRef.current;
-      if (!current) return;
-      let path: string | null = null;
-      if (as || !current.view.path) {
-        path = await save({ filters: filters(), defaultPath: `${current.view.title}.nova` });
-        if (!path) return;
+      if (!(await confirmLeave())) return;
+      try {
+        loadView(await api.openDocument(path));
+        setRecovery(null);
+        closeBackstage();
+      } finally {
+        refreshRecents();
       }
-      const view = await api.saveDocument(path);
-      commit({ ...current, view, revision: current.revision + 1 });
-      setStatus(t("status.savedTo", { path: view.path ?? "" }));
     });
 
-  const exportMarkdown = () =>
+  const browse = () =>
+    afterQueue(async () => {
+      const path = await open({ multiple: false, directory: false, filters: openFilters() });
+      if (path) openPath(path);
+    });
+
+  const saveDocument = (as: boolean, format?: FileFormat) =>
+    afterQueue(async () => {
+      if (await doSave(as, format)) closeBackstage();
+    });
+
+  const exportAs = (format: FileFormat) =>
     afterQueue(async () => {
       const current = stateRef.current;
       if (!current) return;
-      const path = await save({
-        filters: [{ name: "Markdown", extensions: ["md"] }],
-        defaultPath: `${current.view.title}.md`,
-      });
+      const path = await save({ filters: saveFilters(format), defaultPath: `${current.view.title}.${format}` });
       if (!path) return;
-      await api.exportMarkdown(path);
-      setStatus(t("status.exportedTo", { path }));
+      await api.exportDocument(path);
+      setStatus(tRef.current("status.exportedTo", { path }));
+      closeBackstage();
     });
+
+  /** Imprimir e PDF usam a janela de impressão do sistema; o CSS de impressão mostra só a página. */
+  const printDocument = () => {
+    setBackstage(null);
+    setStartup(false);
+    setTimeout(() => window.print(), 50);
+  };
+
+  /** Fechar: o documento sai e volta a tela inicial, como no Word sem documentos abertos. */
+  const closeDocument = () =>
+    afterQueue(async () => {
+      if (!(await confirmLeave())) return;
+      loadView(await api.newDocument());
+      setRecovery(null);
+      setStartup(true);
+      setBackstage("home");
+    });
+
+  const recoverDocument = () =>
+    afterQueue(async () => {
+      if (!(await confirmLeave(true))) return;
+      loadView(await api.recover());
+      setRecovery(null);
+      closeBackstage();
+    });
+
+  const discardRecovery = () =>
+    afterQueue(async () => {
+      await api.discardRecovery();
+      setRecovery(null);
+    });
+
+  // Recuperação automática: guarda uma cópia do documento não salvo a cada minuto.
+  // Enquanto há uma cópia antiga esperando decisão, não grava por cima dela.
+  const recoveryRef = useRef(recovery);
+  recoveryRef.current = recovery;
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (recoveryRef.current) return;
+      queue.current = queue.current.then(() => api.autosave().then(() => {}, () => {}));
+    }, AUTOSAVE_MS);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Fechar a janela pergunta se salva as alterações, como no Word.
+  const leaveRef = useRef(confirmLeave);
+  leaveRef.current = confirmLeave;
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let closing = false;
+    const unlisten = win.onCloseRequested(async (event) => {
+      event.preventDefault();
+      if (closing) return;
+      closing = true;
+      await queue.current;
+      if (await leaveRef.current().catch(() => false)) {
+        if (!stateRef.current?.view.dirty) await api.discardRecovery().catch(() => {});
+        await win.destroy();
+      }
+      closing = false;
+    });
+    return () => {
+      unlisten.then((f) => f()).catch(() => {});
+    };
+  }, []);
 
   const onCommand = (command: RibbonCommand) => {
     switch (command) {
       case "file.new":
         return newDocument();
       case "file.open":
-        return openDocument();
+        return setBackstage("open");
       case "file.save":
         return saveDocument(false);
       case "file.saveAs":
-        return saveDocument(true);
-      case "file.exportMarkdown":
-        return exportMarkdown();
+        return setBackstage("saveAs");
+      case "file.print":
+        return setBackstage("print");
       case "edit.undo":
         return undo();
       case "edit.redo":
@@ -569,6 +710,8 @@ export default function App() {
   };
 
   // Atalhos de arquivo e de painéis valem na janela toda; os de edição o editor trata antes.
+  const saveAskRef = useRef(saveAsk);
+  saveAskRef.current = saveAsk;
   const commandRef = useRef(onCommand);
   commandRef.current = onCommand;
   useEffect(() => {
@@ -578,7 +721,7 @@ export default function App() {
       const inField = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
       const history = (command === "edit.undo" || command === "edit.redo") && !inField;
       const global = command.startsWith("file.") || command === "edit.find" || command === "edit.replace" || history;
-      if (!global || e.defaultPrevented) return;
+      if (!global || e.defaultPrevented || saveAskRef.current) return;
       e.preventDefault();
       commandRef.current(command);
     };
@@ -608,8 +751,32 @@ export default function App() {
 
   return (
     <div className={`app${painter ? " painting" : ""}`}>
+      {backstage && (
+        <Backstage
+          page={backstage}
+          view={view}
+          recents={recents}
+          recovery={recovery}
+          startup={startup}
+          onPage={setBackstage}
+          onBack={closeBackstage}
+          onNew={newDocument}
+          onOpenRecent={openPath}
+          onRemoveRecent={(path) => api.removeRecent(path).then(refreshRecents, showError)}
+          onBrowse={browse}
+          onSave={() => saveDocument(false)}
+          onSaveAs={(format) => saveDocument(true, format)}
+          onPrint={printDocument}
+          onExport={exportAs}
+          onClose={closeDocument}
+          onRecover={recoverDocument}
+          onDiscardRecovery={discardRecovery}
+        />
+      )}
+      {saveAsk && <SaveChangesDialog title={saveAsk.title} onChoose={saveAsk.resolve} />}
       <Ribbon
         title={view.title}
+        format={view.format}
         dirty={view.dirty}
         canUndo={view.canUndo}
         canRedo={view.canRedo}
@@ -634,6 +801,10 @@ export default function App() {
         theme={theme}
         profile={profile}
         onCommand={onCommand}
+        onBackstage={(page) => {
+          refreshRecents();
+          setBackstage(page);
+        }}
         onStyle={onStyle}
         onTheme={setTheme}
         onFont={(font) => {

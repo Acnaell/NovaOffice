@@ -66,7 +66,7 @@ curl -fsSL https://raw.githubusercontent.com/Acnaell/novaoffice/main/scripts/ins
 | `apps/desktop` | App desktop: Tauri 2 (`src-tauri`) com o núcleo em processo e editor React/TypeScript |
 | `crates/nova-crdt` | Encapsula o Yrs: parágrafos como mapas (estilo + texto formatado), offsets UTF-16, desfazer local, sincronização por state vector |
 | `crates/nova-domain-text` | Agregado `TextDocument`: comandos, eventos de domínio, marcas de caractere, estilos de parágrafo, validação |
-| `crates/nova-app` | `Session` (despacho de comandos em Rust ou JSON, assinantes de eventos), formato `.nova` (versão 2) e exportação Markdown |
+| `crates/nova-app` | `Session` (despacho de comandos em Rust ou JSON, assinantes de eventos), formato `.nova` (versão 2), leitura e gravação de .docx, .odt, Markdown, texto e HTML |
 | `apps/cli` | Binário `nova` para criar, importar, editar, exportar (texto ou Markdown) e fundir documentos |
 
 A arquitetura completa está no documento "LibreOffice: Análise Arquitetural e Proposta NovaOffice"
@@ -174,9 +174,11 @@ Exemplos e a lista completa de comandos estão em [docs/CLI.md](docs/CLI.md).
 - [ ] Eventos para mudanças remotas
 - [ ] `nova-layout`: shaping (HarfBuzz) e paginação
 - [x] `apps/desktop`: Tauri + React com editor de texto ligado ao núcleo
-- [ ] Perguntar sobre alterações não salvas ao fechar a janela; colar com formatação
+- [x] Perguntar sobre alterações não salvas ao fechar a janela; colar com formatação
+- [x] Tela Arquivo do Word, recentes, recuperação automática e menu de aplicativos
 - [ ] Planilha: `nova-domain-sheet` e `nova-calc`
-- [ ] Plugins de formato: ODT e DOCX primeiro
+- [x] Formatos .docx (padrão), .odt, .md, .txt e .html (veja [ADR 0005](docs/adr/0005-arquivo-e-formatos.md))
+- [ ] Exportação direta para PDF, tabelas e imagens nos formatos
 - [x] CI no GitHub Actions (fmt, clippy, testes em Windows, macOS e Linux)
 - [x] Distribuição pelo GitHub Releases (veja [docs/RELEASING.md](docs/RELEASING.md))
 

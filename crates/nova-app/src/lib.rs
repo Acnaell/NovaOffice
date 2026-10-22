@@ -3,8 +3,12 @@
 //! UI, plugins, agentes de IA e o CLI mandam os mesmos comandos para uma
 //! `Session`, que os executa no agregado e publica os eventos resultantes.
 
+pub mod docx;
 pub mod file;
+pub mod formats;
+pub mod html;
 pub mod markdown;
+pub mod odt;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,6 +37,8 @@ pub enum AppError {
     NotANovaFile,
     #[error("versão de arquivo {0} não suportada")]
     UnsupportedVersion(u8),
+    #[error("arquivo inválido: {0}")]
+    InvalidFile(String),
 }
 
 type Listener = Box<dyn FnMut(&TextEvent) + Send>;

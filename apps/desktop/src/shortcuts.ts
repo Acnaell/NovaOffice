@@ -8,6 +8,7 @@ export type CommandId =
   | "file.open"
   | "file.save"
   | "file.saveAs"
+  | "file.print"
   | "edit.undo"
   | "edit.redo"
   | "edit.cut"
@@ -57,6 +58,7 @@ type Bindings = Partial<Record<CommandId, string[]>>;
 
 /** Atalhos que são iguais no Word em qualquer idioma. */
 const COMMON: Bindings = {
+  "file.print": ["Ctrl+P", "Ctrl+Shift+F12"],
   "edit.undo": ["Ctrl+Z"],
   "format.italic": ["Ctrl+I"],
   "format.strike": ["Alt+Shift+5"],

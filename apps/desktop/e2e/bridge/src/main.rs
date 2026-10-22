@@ -1,37 +1,68 @@
-//! Ponte de teste: o núcleo real (editor.rs do app) atrás de HTTP, no lugar do IPC do Tauri.
+//! Ponte de teste: os comandos do app (src-tauri/src/app.rs) atrás de HTTP, no
+//! lugar do IPC do Tauri. Cada requisição é `POST /<comando>` com os mesmos
+//! argumentos JSON que a interface manda ao Tauri.
+#[path = "../../../src-tauri/src/app.rs"]
+mod app;
 #[path = "../../../src-tauri/src/editor.rs"]
 mod editor;
-use editor::Editor;
+#[path = "../../../src-tauri/src/store.rs"]
+mod store;
+
+use app::App;
 use serde_json::{json, Value};
-use std::path::PathBuf;
 
 fn main() {
-    let server = tiny_http::Server::http(std::env::var("NOVA_BRIDGE").as_deref().unwrap_or("127.0.0.1:1430")).unwrap();
-    let mut ed = Editor::new();
+    let addr = std::env::var("NOVA_BRIDGE").unwrap_or_else(|_| "127.0.0.1:1430".into());
+    // Recentes e recuperação numa pasta temporária, limpa a cada execução.
+    let dir = std::env::temp_dir().join("nova-e2e-store");
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut app = App::new(dir.clone());
+    let server = tiny_http::Server::http(&addr).expect("porta da ponte");
     for mut req in server.incoming_requests() {
         let cmd = req.url().trim_start_matches('/').to_string();
         let mut body = String::new();
         let _ = req.as_reader().read_to_string(&mut body);
         let args: Value = serde_json::from_str(&body).unwrap_or(json!({}));
-        let res: Result<Value, String> = (|| -> Result<Value, String> {
-            Ok(match cmd.as_str() {
-                "snapshot" => serde_json::to_value(ed.view()).unwrap(),
-                "dispatch" => {
-                    let c = serde_json::from_value(args["command"].clone()).map_err(|e| e.to_string())?;
-                    serde_json::to_value(ed.dispatch(c)?).unwrap()
-                }
-                "new_document" => { ed = Editor::new(); serde_json::to_value(ed.view()).unwrap() }
-                "open_document" => { ed = Editor::open(&PathBuf::from(args["path"].as_str().unwrap_or("")))?; serde_json::to_value(ed.view()).unwrap() }
-                "save_document" => { ed.save(args["path"].as_str().map(PathBuf::from))?; serde_json::to_value(ed.view()).unwrap() }
-                "export_markdown" => { ed.export_markdown(&PathBuf::from(args["path"].as_str().unwrap_or("")))?; Value::Null }
-                _ => Value::Null,
-            })
-        })();
-        let (code, out) = match res { Ok(v) => (200, json!({"ok": v})), Err(e) => (200, json!({"err": e})) };
-        let resp = tiny_http::Response::from_string(out.to_string()).with_status_code(code)
-            .with_header("Access-Control-Allow-Origin: *".parse::<tiny_http::Header>().unwrap())
-            .with_header("Access-Control-Allow-Headers: *".parse::<tiny_http::Header>().unwrap())
-            .with_header("Content-Type: application/json".parse::<tiny_http::Header>().unwrap());
+        let s = |k: &str| args[k].as_str().unwrap_or("").to_string();
+        let to = |v: Result<Value, String>| v;
+        let res: Result<Value, String> = match cmd.as_str() {
+            "snapshot" => Ok(json!(app.snapshot())),
+            // Só nos testes: simula o app fechando sem salvar (travamento) e abrindo de novo.
+            "restart" => {
+                app = App::new(dir.clone());
+                Ok(Value::Null)
+            }
+            "dispatch" => serde_json::from_value(args["command"].clone())
+                .map_err(|e| e.to_string())
+                .and_then(|c| app.dispatch(c))
+                .map(|r| json!(r)),
+            "new_document" => Ok(json!(app.new_document())),
+            "open_document" => app.open_document(&s("path")).map(|v| json!(v)),
+            "save_document" => app
+                .save_document(args["path"].as_str().map(String::from))
+                .map(|v| json!(v)),
+            "export_document" => app.export_document(&s("path")).map(|_| Value::Null),
+            "formats" => Ok(app.formats()),
+            "recent_documents" => Ok(json!(app.recent())),
+            "remove_recent" => app.remove_recent(&s("path")).map(|_| Value::Null),
+            "autosave" => app.autosave().map(|v| json!(v)),
+            "recovery_info" => Ok(json!(app.recovery_info())),
+            "recover" => to(app.recover().map(|v| json!(v))),
+            "discard_recovery" => {
+                app.discard_recovery();
+                Ok(Value::Null)
+            }
+            _ => Ok(Value::Null),
+        };
+        let out = match res {
+            Ok(v) => json!({ "ok": v }),
+            Err(e) => json!({ "err": e }),
+        };
+        let header = |h: &str| h.parse::<tiny_http::Header>().expect("cabeçalho");
+        let resp = tiny_http::Response::from_string(out.to_string())
+            .with_header(header("Access-Control-Allow-Origin: *"))
+            .with_header(header("Access-Control-Allow-Headers: *"))
+            .with_header(header("Content-Type: application/json"));
         let _ = req.respond(resp);
     }
 }

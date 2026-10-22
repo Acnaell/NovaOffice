@@ -1,13 +1,22 @@
 // Chamadas ao núcleo Rust (comandos Tauri definidos em src-tauri/src/lib.rs).
 
 import { invoke } from "@tauri-apps/api/core";
-import type { DispatchResult, DocView, TextCommand } from "./types";
+import type { DispatchResult, DocView, FormatInfo, Recent, RecoveryInfo, TextCommand } from "./types";
 
 export const api = {
   snapshot: () => invoke<DocView>("snapshot"),
   dispatch: (command: TextCommand) => invoke<DispatchResult>("dispatch", { command }),
   newDocument: () => invoke<DocView>("new_document"),
   openDocument: (path: string) => invoke<DocView>("open_document", { path }),
+  /** Sem `path`, salva no arquivo atual; com `path`, Salvar como (o formato vem da extensão). */
   saveDocument: (path: string | null) => invoke<DocView>("save_document", { path }),
-  exportMarkdown: (path: string) => invoke<void>("export_markdown", { path }),
+  /** Grava uma cópia em outro formato sem mudar o arquivo atual. */
+  exportDocument: (path: string) => invoke<void>("export_document", { path }),
+  formats: () => invoke<FormatInfo[]>("formats"),
+  recentDocuments: () => invoke<Recent[]>("recent_documents"),
+  removeRecent: (path: string) => invoke<void>("remove_recent", { path }),
+  autosave: () => invoke<boolean>("autosave"),
+  recoveryInfo: () => invoke<RecoveryInfo | null>("recovery_info"),
+  recover: () => invoke<DocView>("recover"),
+  discardRecovery: () => invoke<void>("discard_recovery"),
 };

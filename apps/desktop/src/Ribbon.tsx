@@ -3,6 +3,7 @@
 // comandos chegam por `onCommand`, com os mesmos ids da tabela de atalhos.
 
 import { useState, type ReactNode } from "react";
+import { AppLauncher } from "./AppLauncher";
 import { HIGHLIGHT_CSS } from "./clipboard";
 import {
   ColorBarIcon,
@@ -20,9 +21,9 @@ import { LOCALES, useI18n, type Locale, type MessageKey } from "./i18n";
 import { BrandMark, icons } from "./icons";
 import { withShortcut, type CommandId, type Profile } from "./shortcuts";
 import { THEME_MODES, type ThemeMode } from "./theme";
-import type { Align, BlockStyle, HighlightColor, ListKind } from "./types";
+import type { Align, BlockStyle, FileFormat, HighlightColor, ListKind } from "./types";
 
-export type RibbonCommand = CommandId | "file.exportMarkdown";
+export type RibbonCommand = CommandId;
 
 export const BLOCK_STYLES: BlockStyle[] = [
   "paragraph",
@@ -41,14 +42,17 @@ const styleCommand = (style: BlockStyle): CommandId => `style.${style}`;
 /** Os estilos visíveis na galeria; o resto fica no seletor ao lado. */
 const GALLERY: BlockStyle[] = ["paragraph", "heading1", "heading2", "heading3", "quote", "code"];
 
-type Tab = "file" | "home" | "view";
-const TABS: Tab[] = ["file", "home", "view"];
+/** "Arquivo" não é uma aba de comandos: abre a tela Arquivo, como no Word. */
+type Tab = "home" | "view";
+const TABS: ("file" | Tab)[] = ["file", "home", "view"];
 
 /** Marcas que aparecem pressionadas na faixa de opções. */
 export type ActiveMarks = Record<"bold" | "italic" | "underline" | "strike" | "subscript" | "superscript", boolean>;
 
 export interface RibbonProps {
   title: string;
+  /** Formato do arquivo aberto, mostrado ao lado do nome. */
+  format: FileFormat | null;
   dirty: boolean;
   canUndo: boolean;
   canRedo: boolean;
@@ -67,6 +71,8 @@ export interface RibbonProps {
   theme: ThemeMode;
   profile: Profile;
   onCommand: (command: RibbonCommand) => void;
+  /** Abre a tela Arquivo (aba Arquivo) ou a tela inicial do NovaOffice. */
+  onBackstage: (page: "home" | "open") => void;
   onStyle: (style: BlockStyle) => void;
   onTheme: (mode: ThemeMode) => void;
   onFont: (font: string) => void;
@@ -116,13 +122,6 @@ export function Ribbon(props: RibbonProps) {
       aria-label={label(command)}
     >
       {icon}
-    </button>
-  );
-
-  const big = (command: RibbonCommand, icon: ReactNode, text: string, title = text) => (
-    <button className="big-button" onMouseDown={keepFocus} onClick={() => props.onCommand(command)} title={title}>
-      {icon}
-      <span>{text}</span>
     </button>
   );
 
@@ -330,19 +329,6 @@ export function Ribbon(props: RibbonProps) {
   );
 
   const panels: Record<Tab, ReactNode> = {
-    file: (
-      <>
-        <Group label={t("group.document")}>
-          {big("file.new", icons.new, t("cmd.file.new"), tip("file.new"))}
-          {big("file.open", icons.open, t("cmd.file.open"), tip("file.open"))}
-          {big("file.save", icons.save, t("cmd.file.save"), tip("file.save"))}
-          {big("file.saveAs", icons.saveAs, t("cmd.file.saveAs"), tip("file.saveAs"))}
-        </Group>
-        <Group label={t("group.export")}>
-          {big("file.exportMarkdown", icons.export, t("cmd.file.exportMarkdown"), t("cmd.file.exportMarkdown.title"))}
-        </Group>
-      </>
-    ),
     home,
     view: (
       <>
@@ -381,6 +367,7 @@ export function Ribbon(props: RibbonProps) {
   return (
     <header className="chrome">
       <div className="titlebar">
+        <AppLauncher current="text" onHome={() => props.onBackstage("home")} />
         <div className="brand">
           <BrandMark app="text" size={22} />
           <span className="brand-name">Nova Text</span>
@@ -393,6 +380,7 @@ export function Ribbon(props: RibbonProps) {
         <div className="doc-title">
           {props.dirty && <span className="dirty-dot" aria-hidden="true" />}
           {props.title}
+          {props.format && <span className="doc-format">.{props.format}</span>}
         </div>
       </div>
       <div className="ribbon">
@@ -402,11 +390,13 @@ export function Ribbon(props: RibbonProps) {
               key={id}
               role="tab"
               id={`tab-${id}`}
-              aria-selected={tab === id}
-              aria-controls="ribbon-panel"
+              aria-selected={id === "file" ? false : tab === id}
+              aria-controls={id === "file" ? undefined : "ribbon-panel"}
+              aria-haspopup={id === "file" ? "dialog" : undefined}
               className={id === "file" ? "tab tab-file" : "tab"}
               onMouseDown={keepFocus}
               onClick={() => {
+                if (id === "file") return props.onBackstage("home");
                 setTab(id);
                 setCollapsed(false);
               }}
