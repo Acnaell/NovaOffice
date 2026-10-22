@@ -2,11 +2,11 @@
 
 Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real com o núcleo Rust real.
 
-**90 funcionam · 3 parciais · 1 com falha · 6 ainda não existem**
+**91 funcionam · 3 parciais · 0 com falha · 6 ainda não existem**
 
 | | Área | Fluxo | Observação |
 | --- | --- | --- | --- |
-| ❌ | Digitação | Digitar texto com acentos e cedilha | Resultado: ["Ação, coração, pão, você, über, ñ"] |
+| ✅ | Digitação | Digitar texto com acentos e cedilha |  |
 | ✅ | Digitação | Acento por tecla morta / IME (composição) | Composição gera o caractere final uma única vez. |
 | ✅ | Digitação | Acento composto no meio de uma palavra existente (tecla morta) |  |
 | ✅ | Digitação | Acento composto sobre uma seleção |  |
@@ -104,5 +104,5 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ⬜ | Exibição | Zoom (Ctrl + roda / controle de zoom) | Não há controle de zoom no app. |
 | ✅ | Exibição | Tema claro/escuro | Recurso que o Word não tem nesta forma. |
 | ⬜ | Exibição | Régua | Não há régua. |
-| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 18 ms por tecla. |
-| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 16 ms por tecla. |
+| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 13 ms por tecla. |
+| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 13 ms por tecla. |
