@@ -56,6 +56,8 @@ import { fileToBase64, insertImage, resizeImage, setImage, TEXT_WIDTH_PT } from 
 import { defaultProofing, matchAt, matchText, parseProofing, SPELL_LANGUAGES, useSpelling, type Proofing } from "./spell";
 import { ReviewTab, useReviewShortcuts } from "./ReviewTab";
 import { SpellingPane } from "./SpellingPane";
+import { AutoCorrectDialog } from "./AutoCorrectDialog";
+import { autoCorrect, loadAutoCorrect, storeAutoCorrect, type AutoCorrectOptions } from "./autocorrect";
 import type { Pos } from "./types";
 import { SpellMenu } from "./SpellMenu";
 import { load, store } from "./storage";
@@ -127,6 +129,13 @@ export default function App() {
   /** Formatação guardada por Ctrl+Shift+C, para Ctrl+Shift+V. */
   const formatClipboard = useRef<Mark[] | null>(null);
   const queue = useRef<Promise<void>>(Promise.resolve());
+  /** Chamado depois de cada edição aplicada (a AutoCorreção olha a tecla digitada). */
+  const afterEdit = useRef<(command: TextCommand, view: DocView) => void>(() => {});
+  /** Fim do texto digitado em sequência, e a correção a caminho (que não interrompe a sequência). */
+  const typedEnd = useRef<Pos | null>(null);
+  const correctionRef = useRef<TextCommand | null>(null);
+  /** Correções na fila: as que vêm depois andam junto quando uma anterior muda o tamanho do texto. */
+  const pendingFixes = useRef<{ block: number; start: number; end: number }[]>([]);
 
   const commit = useCallback((next: State) => {
     stateRef.current = next;
@@ -163,6 +172,7 @@ export default function App() {
           }
           if (edit.command) setPending(null);
           commit({ view, revision: current.revision + 1, selection: clampSelection(view, selection) });
+          if (edit.command) afterEdit.current(edit.command, view);
           setStatus("");
         } catch (error) {
           showError(error);
@@ -605,6 +615,52 @@ export default function App() {
     setSpellPane((p) => ({ start: ordered(current.selection)[0], token: (p?.token ?? 0) + 1 }));
   };
 
+  // ---------- AutoCorreção ----------
+
+  const [autoCorrectOptions, setAutoCorrectOptions] = useState<AutoCorrectOptions>(loadAutoCorrect);
+  const [autoCorrectOpen, setAutoCorrectOpen] = useState(false);
+
+  // Uma tecla digitada chega como um text.insert de um caractere (sozinho ou
+  // depois de apagar a seleção). A correção vai num comando próprio: Ctrl+Z
+  // logo depois desfaz só ela, como no Word.
+  afterEdit.current = (command, after) => {
+    if (command === correctionRef.current) return;
+    const typed = command.type === "batch" ? command.commands[command.commands.length - 1] : command;
+    const previous = typedEnd.current;
+    typedEnd.current = null;
+    if (typed?.type !== "text.insert" || [...typed.text].length !== 1 || !after.blocks[typed.block]) return;
+    const block = typed.block;
+    const end = typed.offset + typed.text.length;
+    typedEnd.current = { block, offset: end };
+    const wordTyped = previous?.block === block && previous.offset === typed.offset;
+    const fix = autoCorrect(blockText(after.blocks[block]), end, typed.text, autoCorrectOptions, wordTyped);
+    if (!fix) return;
+    const at = { block, start: fix.start, end: fix.end };
+    pendingFixes.current.push(at);
+    run((doc, sel) => {
+      pendingFixes.current = pendingFixes.current.filter((f) => f !== at);
+      if (!doc.blocks[block] || blockText(doc.blocks[block]).slice(at.start, at.end) !== fix.from) return null;
+      const delta = fix.text.length - (at.end - at.start);
+      const shift = (p: Pos) => (p.block === block && p.offset >= at.end ? { block, offset: p.offset + delta } : p);
+      if (typedEnd.current) typedEnd.current = shift(typedEnd.current);
+      for (const f of pendingFixes.current) {
+        if (f.block === block && f.start >= at.end) {
+          f.start += delta;
+          f.end += delta;
+        }
+      }
+      correctionRef.current = replaceMatch(doc, at, fix.text);
+      return { command: correctionRef.current, selection: { anchor: shift(sel.anchor), focus: shift(sel.focus) } };
+    });
+  };
+
+  const saveAutoCorrect = (options: AutoCorrectOptions) => {
+    setAutoCorrectOptions(options);
+    storeAutoCorrect(options);
+    setAutoCorrectOpen(false);
+    focusEditor();
+  };
+
   const closeSpellPane = () => {
     setSpellPane(null);
     focusEditor();
@@ -937,6 +993,8 @@ export default function App() {
         return setShowMarks((s) => !s);
       case "review.spelling":
         return openSpellPane();
+      case "review.autocorrect":
+        return setAutoCorrectOpen(true);
       default:
         return onStyle(command.slice("style.".length) as BlockStyle);
     }
@@ -1144,6 +1202,16 @@ export default function App() {
             }}
           />
         </div>
+        {autoCorrectOpen && (
+          <AutoCorrectDialog
+            options={autoCorrectOptions}
+            onSave={saveAutoCorrect}
+            onClose={() => {
+              setAutoCorrectOpen(false);
+              focusEditor();
+            }}
+          />
+        )}
         {spellPane && (
           <SpellingPane
             view={view}
