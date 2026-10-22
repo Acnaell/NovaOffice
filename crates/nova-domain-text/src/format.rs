@@ -33,6 +33,23 @@ pub enum Mark {
     VertAlign {
         value: String,
     },
+    /// Hiperlink: endereço da Web, e-mail (`mailto:`) ou telefone (`tel:`).
+    Link {
+        href: String,
+    },
+}
+
+/// Esquemas aceitos em links; `javascript:` e afins ficam de fora.
+const LINK_SCHEMES: &[&str] = &[
+    "http://", "https://", "mailto:", "tel:", "ftp://", "file://",
+];
+
+/// O endereço é um link aceito?
+pub fn is_link(href: &str) -> bool {
+    let lower = href.trim().to_ascii_lowercase();
+    !href.trim().is_empty()
+        && href.len() <= 2048
+        && LINK_SCHEMES.iter().any(|s| lower.starts_with(s))
 }
 
 /// Cores de realce aceitas, as mesmas do Word.
@@ -66,6 +83,7 @@ pub enum MarkKind {
     Color,
     Highlight,
     VertAlign,
+    Link,
 }
 
 impl MarkKind {
@@ -81,6 +99,7 @@ impl MarkKind {
             MarkKind::Color => "color",
             MarkKind::Highlight => "highlight",
             MarkKind::VertAlign => "vertAlign",
+            MarkKind::Link => "link",
         }
     }
 }
@@ -97,6 +116,7 @@ impl Mark {
             Mark::Color { .. } => MarkKind::Color,
             Mark::Highlight { .. } => MarkKind::Highlight,
             Mark::VertAlign { .. } => MarkKind::VertAlign,
+            Mark::Link { .. } => MarkKind::Link,
         }
     }
 
@@ -107,6 +127,7 @@ impl Mark {
             | Mark::Color { value }
             | Mark::Highlight { value }
             | Mark::VertAlign { value } => AttrValue::Text(value.clone()),
+            Mark::Link { href } => AttrValue::Text(href.clone()),
             Mark::FontSize { half_points } => AttrValue::Number(f64::from(*half_points)),
         }
     }
@@ -132,6 +153,9 @@ impl Mark {
                     "vertAlign {value:?}: use superscript ou subscript"
                 )))
             }
+            Mark::Link { href } if !is_link(href) => Err(DomainError::InvalidMark(format!(
+                "link {href:?}: use http(s)://, mailto:, tel:, ftp:// ou file://"
+            ))),
             _ => Ok(()),
         }
     }
@@ -153,6 +177,7 @@ impl Mark {
             ("color", AttrValue::Text(v)) => Some(Mark::Color { value: v.clone() }),
             ("highlight", AttrValue::Text(v)) => Some(Mark::Highlight { value: v.clone() }),
             ("vertAlign", AttrValue::Text(v)) => Some(Mark::VertAlign { value: v.clone() }),
+            ("link", AttrValue::Text(v)) if is_link(v) => Some(Mark::Link { href: v.clone() }),
             _ => None,
         }
     }
@@ -321,6 +346,9 @@ pub struct ParaAttrs {
     /// Sombreamento (cor de fundo) do parágrafo, `#RRGGBB`, como `w:shd` do Word.
     #[serde(default)]
     pub shading: Option<String>,
+    /// Começa numa página nova (Inserir → Quebra de Página, Ctrl+Enter).
+    #[serde(default)]
+    pub page_break_before: bool,
 }
 
 /// Um atributo de parágrafo a mudar. No JSON: `"attr": "align", "value": "center"`;
@@ -335,6 +363,7 @@ pub enum ParaAttr {
     SpaceAfter(Option<u16>),
     List(Option<ListKind>),
     Shading(Option<String>),
+    PageBreakBefore(bool),
 }
 
 impl ParaAttr {
@@ -370,6 +399,8 @@ impl ParaAttr {
             ParaAttr::SpaceAfter(v) => ("spaceAfter", v.map(num)),
             ParaAttr::List(v) => ("list", v.map(|k| AttrValue::Text(k.as_str().into()))),
             ParaAttr::Shading(v) => ("shading", v.clone().map(AttrValue::Text)),
+            ParaAttr::PageBreakBefore(false) => ("pageBreakBefore", None),
+            ParaAttr::PageBreakBefore(true) => ("pageBreakBefore", Some(AttrValue::Bool(true))),
         };
         (key.to_string(), value)
     }
@@ -396,6 +427,7 @@ impl ParaAttrs {
                 Some(AttrValue::Text(v)) if v == "number" => Some(ListKind::Number),
                 _ => None,
             },
+            page_break_before: matches!(map.get("pageBreakBefore"), Some(AttrValue::Bool(true))),
             shading: match map.get("shading") {
                 Some(AttrValue::Text(v)) if is_hex_color(v) => Some(v.clone()),
                 _ => None,

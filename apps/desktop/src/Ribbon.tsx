@@ -5,6 +5,7 @@
 import { useState, type ReactNode } from "react";
 import { AppLauncher } from "./AppLauncher";
 import { HIGHLIGHT_CSS } from "./clipboard";
+import { SymbolMenu } from "./Insert";
 import {
   ColorBarIcon,
   FontColorMenu,
@@ -23,7 +24,8 @@ import { withShortcut, type CommandId, type Profile } from "./shortcuts";
 import { THEME_MODES, type ThemeMode } from "./theme";
 import type { Align, BlockStyle, FileFormat, HighlightColor, ListKind } from "./types";
 
-export type RibbonCommand = CommandId;
+/** Comandos da faixa: os com atalho e os que só existem como botão. */
+export type RibbonCommand = CommandId | "insert.dateTime";
 
 export const BLOCK_STYLES: BlockStyle[] = [
   "paragraph",
@@ -43,8 +45,8 @@ const styleCommand = (style: BlockStyle): CommandId => `style.${style}`;
 const GALLERY: BlockStyle[] = ["paragraph", "heading1", "heading2", "heading3", "quote", "code"];
 
 /** "Arquivo" não é uma aba de comandos: abre a tela Arquivo, como no Word. */
-type Tab = "home" | "view";
-const TABS: ("file" | Tab)[] = ["file", "home", "view"];
+type Tab = "home" | "insert" | "view";
+const TABS: ("file" | Tab)[] = ["file", "home", "insert", "view"];
 
 /** Marcas que aparecem pressionadas na faixa de opções. */
 export type ActiveMarks = Record<"bold" | "italic" | "underline" | "strike" | "subscript" | "superscript", boolean>;
@@ -87,6 +89,8 @@ export interface RibbonProps {
   onParaSpace: (side: "before" | "after", add: boolean) => void;
   onPaste: (mode: "keep" | "text") => void;
   onPainter: (sticky: boolean) => void;
+  /** Insere texto no cursor (Símbolo). */
+  onInsertText: (text: string) => void;
 }
 
 /** Entrelinhas oferecidas no menu, em % (como no Word: 1,0 1,15 1,5 2,0 2,5 3,0). */
@@ -125,6 +129,14 @@ export function Ribbon(props: RibbonProps) {
       aria-label={label(command)}
     >
       {icon}
+    </button>
+  );
+
+  /** Botão grande com ícone e nome embaixo. */
+  const big = (command: RibbonCommand, icon: ReactNode, text: string, title = text) => (
+    <button className="big-button" onMouseDown={keepFocus} onClick={() => props.onCommand(command)} title={title}>
+      {icon}
+      <span>{text}</span>
     </button>
   );
 
@@ -337,8 +349,29 @@ export function Ribbon(props: RibbonProps) {
     </>
   );
 
+  const insert = (
+    <>
+      <Group label={t("group.pages")}>
+        {big("insert.pageBreak", icons.pageBreak, t("cmd.insert.pageBreak"), tip("insert.pageBreak"))}
+      </Group>
+      <Group label={t("group.links")}>
+        {big("insert.link", icons.link, t("cmd.insert.link"), tip("insert.link"))}
+      </Group>
+      <Group label={t("group.text")}>
+        {big("insert.dateTime", icons.calendar, t("insert.dateTime"))}
+      </Group>
+      <Group label={t("group.symbols")}>
+        <MenuButton label={t("insert.symbol")} className="big-button" menuClass="symbols" render={(close) => <SymbolMenu close={close} onPick={props.onInsertText} />}>
+          {icons.omega}
+          <span>{t("insert.symbol")}</span>
+        </MenuButton>
+      </Group>
+    </>
+  );
+
   const panels: Record<Tab, ReactNode> = {
     home,
+    insert,
     view: (
       <>
         <Group label={t("group.theme")}>

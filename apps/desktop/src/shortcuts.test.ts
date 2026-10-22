@@ -27,6 +27,8 @@ describe("atalhos", () => {
     expect(pt(ctrl("g"))).toBe("para.alignRight");
     expect(pt(ctrl("j"))).toBe("para.justify");
     expect(pt(ctrl("r"))).toBe("edit.redo");
+    expect(pt(ctrl("k"))).toBe("insert.link");
+    expect(pt(key({ key: "Enter", code: "Enter", ctrlKey: true }))).toBe("insert.pageBreak");
   });
 
   it("Word em inglês: Ctrl+B negrito, Ctrl+U sublinhado, Ctrl+S salvar", () => {

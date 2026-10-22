@@ -9,8 +9,8 @@
 mod format;
 
 pub use format::{
-    is_hex_color, Align, BlockStyle, ListKind, Mark, MarkKind, ParaAttr, ParaAttrs, Paragraph,
-    Span, HIGHLIGHT_COLORS, MAX_INDENT,
+    is_hex_color, is_link, Align, BlockStyle, ListKind, Mark, MarkKind, ParaAttr, ParaAttrs,
+    Paragraph, Span, HIGHLIGHT_COLORS, MAX_INDENT,
 };
 
 use nova_crdt::{is_boundary, utf16_len, AttrMap, ClientId, CrdtError, Replica};
@@ -258,6 +258,8 @@ impl TextDocument {
                     .clone()
                     .filter(|c| is_hex_color(c))
                     .map(|c| ParaAttr::Shading(Some(c))),
+                d.page_break_before
+                    .then_some(ParaAttr::PageBreakBefore(true)),
             ];
             commands.extend(
                 changes
@@ -329,9 +331,22 @@ impl TextDocument {
                 marks,
             } => {
                 validate_inline(&text)?;
+                // Digitar logo depois de um link não estende o link (Word); dentro dele, sim.
+                let ends_link = marks.is_none()
+                    && offset > 0
+                    && self.link_at(block, offset - 1)?.is_some()
+                    && self.link_at(block, offset - 1)? != self.link_at(block, offset)?;
                 let attrs = marks.map(|marks| marks_to_attrs(&marks)).transpose()?;
                 self.replica
                     .insert_text(block, offset, &text, attrs.as_ref())?;
+                if ends_link {
+                    self.replica.format_text(
+                        block,
+                        offset,
+                        utf16_len(&text),
+                        &[(MarkKind::Link.key().to_string(), None)],
+                    )?;
+                }
                 TextEvent::TextInserted {
                     block,
                     offset,
@@ -409,6 +424,13 @@ impl TextDocument {
                 };
                 self.replica
                     .split_block(block, offset, new_style.as_str())?;
+                // A quebra de página fica só no parágrafo original.
+                if attrs.page_break_before {
+                    self.replica.set_block_attrs(
+                        block + 1,
+                        &[ParaAttr::PageBreakBefore(false).to_change()],
+                    )?;
+                }
                 TextEvent::BlockSplit { block, offset }
             }
             TextCommand::MergeWithNext { block } => {
@@ -508,6 +530,22 @@ impl TextDocument {
 
     pub fn block_attrs(&self, block: u32) -> Result<ParaAttrs, DomainError> {
         Ok(ParaAttrs::from_attr_map(&self.replica.block_attrs(block)?))
+    }
+
+    /// Link do caractere na posição (UTF-16), se houver.
+    fn link_at(&self, block: u32, at: u32) -> Result<Option<String>, DomainError> {
+        let mut start = 0;
+        for span in self.block_spans(block)? {
+            let end = start + utf16_len(&span.text);
+            if at >= start && at < end {
+                return Ok(span.marks.into_iter().find_map(|m| match m {
+                    Mark::Link { href } => Some(href),
+                    _ => None,
+                }));
+            }
+            start = end;
+        }
+        Ok(None)
     }
 
     pub fn block_spans(&self, block: u32) -> Result<Vec<Span>, DomainError> {

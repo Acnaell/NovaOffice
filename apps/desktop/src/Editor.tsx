@@ -2,11 +2,11 @@
 // nativos, mas nenhuma digitação altera o DOM: cada `beforeinput` é cancelado
 // e vira um comando para o núcleo, que devolve o documento para redesenhar.
 
-import { memo, useEffect, useLayoutEffect, useRef, type CSSProperties, type JSX } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties, type JSX } from "react";
 import { fragmentHtml, fragmentOf, fragmentText, HIGHLIGHT_CSS, insertFragment, NOVA_MIME, parseHtml, plainFragment, type Fragment } from "./clipboard";
 import { posToDom, readSelection, writeSelection } from "./dom";
 import type { Match } from "./find";
-import { autoList, changeIndent, isDark, listMarkers } from "./formatting";
+import { autoLink, autoList, changeIndent, isDark, linkOf, listMarkers } from "./formatting";
 import {
   blockText,
   deleteBackward,
@@ -47,6 +47,8 @@ interface Props {
   /** Botão do mouse solto no texto (o Pincel de Formatação aplica aqui). */
   onPointerUp: () => void;
   onEscape: () => void;
+  /** Ctrl+clique num link. */
+  onOpenLink: (href: string) => void;
 }
 
 /** Quebra de linha manual (Shift+Enter), como no Word. */
@@ -57,6 +59,8 @@ const INDENT_STEP = "1.27cm";
 
 export function Editor(props: Props) {
   const { t } = useI18n();
+  // Objeto estável: os parágrafos memorizados só redesenham quando mudam.
+  const labels = useMemo(() => ({ pageBreak: t("insert.pageBreakMark"), followLink: t("insert.followLink") }), [t]);
   const rootRef = useRef<HTMLDivElement>(null);
   // Os listeners nativos são registrados uma vez; leem as props mais recentes daqui.
   const latest = useRef(props);
@@ -101,12 +105,23 @@ export function Editor(props: Props) {
     writeSelection(root, latest.current.selection);
 
     const edit = (fn: EditFn) => latest.current.onEdit(fn);
+    /** AutoFormatação: um endereço logo antes do cursor vira link ao digitar espaço ou Enter. */
+    const withAutoLink = (fn: EditFn): EditFn => (doc, sel) => {
+      const link = autoLink(doc, sel);
+      const result = fn(doc, sel);
+      if (!link || !result) return result;
+      const rest = result.command ? (result.command.type === "batch" ? result.command.commands : [result.command]) : [];
+      return { ...result, command: { type: "batch", commands: [link, ...rest] } };
+    };
+
     const typed = (text: string): EditFn => (doc, sel) =>
       // AutoFormatação: "- " ou "1. " no início do parágrafo vira lista.
       (() => {
         const list = autoList(doc, sel, text);
         return list ? { command: list, selection: { anchor: { block: sel.focus.block, offset: 0 }, focus: { block: sel.focus.block, offset: 0 } } } : null;
-      })() ?? insertText(doc, sel, text, latest.current.pendingMarks ?? undefined);
+      })() ??
+      (/^\s$/.test(text) ? withAutoLink((d, s) => insertText(d, s, text, latest.current.pendingMarks ?? undefined))(doc, sel) : null) ??
+      insertText(doc, sel, text, latest.current.pendingMarks ?? undefined);
 
     const paste = (fragment: Fragment) => edit((doc, sel) => insertFragment(doc, sel, fragment));
 
@@ -130,7 +145,7 @@ export function Editor(props: Props) {
           break;
         }
         case "insertParagraph":
-          edit(splitBlock);
+          edit(withAutoLink(splitBlock));
           break;
         case "insertLineBreak":
           // Shift+Enter: quebra de linha dentro do parágrafo (o mesmo caractere do Word, U+000B).
@@ -299,6 +314,14 @@ export function Editor(props: Props) {
     const block = (e: Event) => e.preventDefault();
     const copy = (e: ClipboardEvent) => onCopy(e, false);
     const cut = (e: ClipboardEvent) => onCopy(e, true);
+    // Ctrl+clique segue o link, como no Word.
+    const onClick = (e: MouseEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-href]");
+      if (!el?.dataset.href) return;
+      e.preventDefault();
+      latest.current.onOpenLink(el.dataset.href);
+    };
     const pointerUp = (e: MouseEvent) => {
       // Clique triplo: o navegador estende a seleção até o começo do parágrafo
       // seguinte; o Word seleciona só o parágrafo clicado.
@@ -325,6 +348,7 @@ export function Editor(props: Props) {
     root.addEventListener("dragstart", block);
     root.addEventListener("drop", block);
     root.addEventListener("mouseup", pointerUp);
+    root.addEventListener("click", onClick);
     document.addEventListener("selectionchange", onSelectionChange);
     return () => {
       root.removeEventListener("beforeinput", onBeforeInput);
@@ -357,6 +381,7 @@ export function Editor(props: Props) {
         showMarks={props.showMarks}
         caretBlock={props.selection.focus.block}
         revision={props.revision}
+        labels={labels}
       />
     </div>
   );
@@ -379,7 +404,24 @@ function blockId(block: BlockView): number {
   return id;
 }
 
-function Blocks({ blocks, showMarks, caretBlock, revision }: { blocks: BlockView[]; showMarks: boolean; caretBlock: number; revision: number }) {
+interface Labels {
+  pageBreak: string;
+  followLink: string;
+}
+
+function Blocks({
+  blocks,
+  showMarks,
+  caretBlock,
+  revision,
+  labels,
+}: {
+  blocks: BlockView[];
+  showMarks: boolean;
+  caretBlock: number;
+  revision: number;
+  labels: Labels;
+}) {
   const markers = listMarkers(blocks);
   return (
     <>
@@ -392,27 +434,47 @@ function Blocks({ blocks, showMarks, caretBlock, revision }: { blocks: BlockView
           block={block}
           marker={markers[i]}
           showMarks={showMarks}
+          labels={labels}
         />
       ))}
     </>
   );
 }
 
-const Block = memo(function Block({ index, block, marker, showMarks }: { index: number; block: BlockView; marker: string | null; showMarks: boolean }) {
+const Block = memo(function Block({
+  index,
+  block,
+  marker,
+  showMarks,
+  labels,
+}: {
+  index: number;
+  block: BlockView;
+  marker: string | null;
+  showMarks: boolean;
+  labels: Labels;
+}) {
   const Tag = tagFor(block.style);
   const empty = block.spans.every((s) => s.text === "");
   return (
     <Tag
       data-block={index}
       data-marker={marker ?? undefined}
-      className={`block block-${block.style}${marker ? ` list list-${block.attrs.list}` : ""}`}
+      className={`block block-${block.style}${marker ? ` list list-${block.attrs.list}` : ""}${block.attrs.pageBreakBefore ? " page-break" : ""}`}
+      data-page-break={block.attrs.pageBreakBefore ? labels.pageBreak : undefined}
       style={paragraphStyle(block.attrs)}
     >
       {empty ? (
         <br />
       ) : (
         block.spans.map((span, j) => (
-          <span key={j} style={spanStyle(span.marks)}>
+          <span
+            key={j}
+            style={spanStyle(span.marks)}
+            className={linkOf(span.marks) ? "link" : undefined}
+            data-href={linkOf(span.marks) ?? undefined}
+            title={linkOf(span.marks) ? `${linkOf(span.marks)}\n${labels.followLink}` : undefined}
+          >
             {showMarks ? visibleMarks(span.text) : lineBreaks(span.text)}
           </span>
         ))

@@ -33,6 +33,10 @@
         if (cmd.endsWith("destroy")) window.__destroyed = true;
         return null;
       }
+      if (cmd === "plugin:opener|open_url") {
+        window.__opened = args.url;
+        return null;
+      }
       if (cmd.startsWith("plugin:")) return null;
       const r = await fetch("http://127.0.0.1:1430/" + cmd, { method: "POST", body: JSON.stringify(args) });
       const j = await r.json();

@@ -325,6 +325,31 @@ export const icons = {
       <path d="M16.5 11.5s1.5 1.8 1.5 2.8a1.5 1.5 0 0 1-3 0c0-1 1.5-2.8 1.5-2.8z" />
     </Icon>
   ),
+  pageBreak: (
+    <Icon>
+      <path d="M5 2.5h10v5H5z" />
+      <path d="M5 12.5h10v5H5z" />
+      <path d="M2.5 10h2M7 10h2M11 10h2M15.5 10h2" />
+    </Icon>
+  ),
+  link: (
+    <Icon>
+      <path d="M8.5 11.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2L10 5.8" />
+      <path d="M11.5 8.5a3 3 0 0 0-4.2 0l-2.6 2.6a3 3 0 0 0 4.2 4.2l1.1-1.1" />
+    </Icon>
+  ),
+  calendar: (
+    <Icon>
+      <rect x="3" y="4" width="14" height="13" rx="1.5" />
+      <path d="M3 8h14M7 2.5v3M13 2.5v3" />
+      <path d="M6.5 11h1.5M9.25 11h1.5M12 11h1.5M6.5 14h1.5M9.25 14h1.5" />
+    </Icon>
+  ),
+  omega: (
+    <Icon>
+      <path d="M4 16.5h4v-2.2A5.5 5.5 0 1 1 12 14.3v2.2h4" />
+    </Icon>
+  ),
   grid: (
     <Icon>
       <rect x="3" y="3" width="3.5" height="3.5" />

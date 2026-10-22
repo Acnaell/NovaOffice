@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "./api";
 import { Backstage, LOSSY, SAVE_FORMATS, type BackstagePage } from "./Backstage";
 import { insertFragment, NOVA_MIME, parseHtml, plainFragment, type Fragment } from "./clipboard";
@@ -13,7 +14,11 @@ import {
   changeIndent,
   commonAttr,
   commonMark,
+  dateTimeFormats,
   DEFAULT_FONT,
+  insertPageBreak,
+  linkOf,
+  linkRangeAt,
   effectiveSize,
   formatTarget,
   growFont,
@@ -34,6 +39,7 @@ import {
   firstDifference,
   isCollapsed,
   markActive,
+  insertText,
   marksAt,
   ordered,
   setStyle,
@@ -44,6 +50,7 @@ import {
 } from "./model";
 import { Ribbon, type RibbonCommand } from "./Ribbon";
 import { SaveChangesDialog, type SaveChoice } from "./SaveDialog";
+import { DateTimeDialog, LinkDialog, type LinkRequest } from "./Insert";
 import { matchShortcut, profileFor } from "./shortcuts";
 import { useTheme } from "./theme";
 import { applyPatch, type BlockStyle, type DocView, type FileFormat, type Recent, type RecoveryInfo, type HighlightColor, type Mark, type MarkKind, type ParaAttr, type TextCommand, type ToggleMark } from "./types";
@@ -77,6 +84,8 @@ export default function App() {
   const [lastFontColor, setLastFontColor] = useState("#C00000");
   const [lastHighlight, setLastHighlight] = useState<HighlightColor>("yellow");
   const [lastShading, setLastShading] = useState("#D9E2F3");
+  const [linkRequest, setLinkRequest] = useState<LinkRequest | null>(null);
+  const [dateDialog, setDateDialog] = useState(false);
   const [find, setFind] = useState<FindState | null>(null);
   // Tela Arquivo; na inicialização, com um documento vazio, é a tela inicial do NovaOffice.
   const [backstage, setBackstage] = useState<BackstagePage | null>(null);
@@ -327,6 +336,67 @@ export default function App() {
       }
     },
     [focusEditor, pasteFragment],
+  );
+
+  // ---------- Inserir ----------
+
+  const insertTextAtCaret = useCallback(
+    (text: string) => {
+      focusEditor();
+      run((doc, sel) => insertText(doc, sel, text));
+    },
+    [run, focusEditor],
+  );
+
+  /** Ctrl+K: com o cursor num link, seleciona o link inteiro para editar. */
+  const openLinkDialog = useCallback(() => {
+    const current = stateRef.current;
+    if (!current) return;
+    const { view, selection } = current;
+    if (isCollapsed(selection)) {
+      const range = linkRangeAt(view, selection.focus);
+      if (range) {
+        const block = selection.focus.block;
+        const sel = { anchor: { block, offset: range.from }, focus: { block, offset: range.to } };
+        commit({ ...current, selection: sel });
+        setLinkRequest({ text: blockText(view.blocks[block]).slice(range.from, range.to), href: range.href, hasSelection: true });
+        return;
+      }
+      setLinkRequest({ text: "", href: null, hasSelection: false });
+      return;
+    }
+    const [from, to] = ordered(selection);
+    const text = from.block === to.block ? blockText(view.blocks[from.block]).slice(from.offset, to.offset) : "";
+    setLinkRequest({ text, href: linkOf(marksAt(view, { ...from, offset: from.offset + 1 })), hasSelection: true });
+  }, [commit]);
+
+  const closeLinkDialog = useCallback(() => {
+    setLinkRequest(null);
+    setTimeout(focusEditor, 0);
+  }, [focusEditor]);
+
+  const applyLink = (text: string, href: string) => {
+    const request = linkRequest;
+    closeLinkDialog();
+    if (!request) return;
+    const mark: Mark = { mark: "link", href };
+    run((doc, sel) => {
+      if (request.hasSelection && !isCollapsed(sel)) return { command: setMark(doc, sel, mark), selection: caret(ordered(sel)[1]) };
+      const marks = [...marksAt(doc, ordered(sel)[0]).filter((m) => m.mark !== "link"), mark];
+      return insertText(doc, sel, text, marks);
+    });
+  };
+
+  const removeLink = () => {
+    closeLinkDialog();
+    run((doc, sel) => ({ command: removeMarks(doc, sel, ["link"]), selection: caret(ordered(sel)[1]) }));
+  };
+
+  const openLink = useCallback(
+    (href: string) => {
+      openUrl(href).catch(showError);
+    },
+    [showError],
   );
 
   // ---------- Pincel de Formatação ----------
@@ -622,6 +692,19 @@ export default function App() {
         return setBackstage("saveAs");
       case "file.print":
         return setBackstage("print");
+      case "insert.pageBreak":
+        focusEditor();
+        return run(insertPageBreak);
+      case "insert.link":
+        return openLinkDialog();
+      case "insert.dateTime":
+        return setDateDialog(true);
+      case "insert.date":
+        return insertTextAtCaret(dateTimeFormats(new Date(), locale)[0]);
+      case "insert.time": {
+        const now = new Date();
+        return insertTextAtCaret(new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(now));
+      }
       case "edit.undo":
         return undo();
       case "edit.redo":
@@ -775,6 +858,19 @@ export default function App() {
         />
       )}
       {saveAsk && <SaveChangesDialog title={saveAsk.title} onChoose={saveAsk.resolve} />}
+      {linkRequest && <LinkDialog request={linkRequest} onApply={applyLink} onRemove={removeLink} onClose={closeLinkDialog} />}
+      {dateDialog && (
+        <DateTimeDialog
+          onClose={() => {
+            setDateDialog(false);
+            setTimeout(focusEditor, 0);
+          }}
+          onInsert={(text) => {
+            setDateDialog(false);
+            insertTextAtCaret(text);
+          }}
+        />
+      )}
       <Ribbon
         title={view.title}
         format={view.format}
@@ -836,6 +932,7 @@ export default function App() {
         }
         onPaste={pasteFromRibbon}
         onPainter={onPainter}
+        onInsertText={insertTextAtCaret}
       />
       <main className={`workspace${find ? " with-panel" : ""}`}>
         {find && (
@@ -865,6 +962,7 @@ export default function App() {
             onSelect={onSelect}
             onCommand={onCommand}
             onPointerUp={onPointerUp}
+            onOpenLink={openLink}
             onEscape={() => {
               if (painter) setPainter(null);
               else if (find) setFind(null);

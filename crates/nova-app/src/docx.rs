@@ -28,13 +28,13 @@ const INDENT_TWIPS: u32 = 720;
 
 pub fn export(doc: &TextDocument) -> Vec<u8> {
     let paragraphs = doc.paragraphs();
-    let (body, nums) = body_xml(&paragraphs);
+    let (body, nums, links) = body_xml(&paragraphs);
     let files: [(&str, String); 8] = [
         ("[Content_Types].xml", CONTENT_TYPES.to_string()),
         ("_rels/.rels", ROOT_RELS.to_string()),
         ("docProps/app.xml", APP_XML.to_string()),
         ("docProps/core.xml", CORE_XML.to_string()),
-        ("word/_rels/document.xml.rels", DOCUMENT_RELS.to_string()),
+        ("word/_rels/document.xml.rels", document_rels(&links)),
         ("word/document.xml", body),
         ("word/styles.xml", STYLES_XML.to_string()),
         ("word/numbering.xml", numbering_xml(&nums)),
@@ -86,7 +86,29 @@ enum Num {
     Number,
 }
 
-fn body_xml(paragraphs: &[Paragraph]) -> (String, Vec<Num>) {
+/// Relações do documento: estilos, numeração e um alvo externo por link (rId10, rId11…).
+fn document_rels(links: &[String]) -> String {
+    let mut out = String::from(DOCUMENT_RELS.trim_end_matches("</Relationships>"));
+    for (i, href) in links.iter().enumerate() {
+        out.push_str(&format!(
+            r#"<Relationship Id="rId{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="{}" TargetMode="External"/>"#,
+            i + 10,
+            esc(href)
+        ));
+    }
+    out.push_str("</Relationships>");
+    out
+}
+
+fn link_of(span: &Span) -> Option<&str> {
+    span.marks.iter().find_map(|m| match m {
+        Mark::Link { href } => Some(href.as_str()),
+        _ => None,
+    })
+}
+
+fn body_xml(paragraphs: &[Paragraph]) -> (String, Vec<Num>, Vec<String>) {
+    let mut links: Vec<String> = Vec::new();
     let mut nums = vec![Num::Bullet];
     let mut out = String::from(DOC_START);
     let mut previous_list: Option<ListKind> = None;
@@ -98,6 +120,9 @@ fn body_xml(paragraphs: &[Paragraph]) -> (String, Vec<Num>) {
             ppr.push_str(&format!(r#"<w:pStyle w:val="{id}"/>"#));
         }
         let a = &p.attrs;
+        if a.page_break_before {
+            ppr.push_str("<w:pageBreakBefore/>");
+        }
         if let Some(kind) = a.list {
             let num_id = match kind {
                 ListKind::Bullet => 1,
@@ -154,19 +179,41 @@ fn body_xml(paragraphs: &[Paragraph]) -> (String, Vec<Num>) {
             out.push_str(&ppr);
             out.push_str("</w:pPr>");
         }
+        // Trechos vizinhos com o mesmo link ficam num só w:hyperlink.
+        let mut open_link: Option<&str> = None;
         for span in &p.spans {
+            let link = link_of(span);
+            if link != open_link {
+                if open_link.is_some() {
+                    out.push_str("</w:hyperlink>");
+                }
+                if let Some(href) = link {
+                    let index = links.iter().position(|l| l == href).unwrap_or_else(|| {
+                        links.push(href.to_string());
+                        links.len() - 1
+                    });
+                    out.push_str(&format!(r#"<w:hyperlink r:id="rId{}">"#, index + 10));
+                }
+                open_link = link;
+            }
             run_xml(&mut out, span);
+        }
+        if open_link.is_some() {
+            out.push_str("</w:hyperlink>");
         }
         out.push_str("</w:p>");
     }
     out.push_str(DOC_END);
-    (out, nums)
+    (out, nums, links)
 }
 
 /// Um `w:r`, com as propriedades na ordem que o esquema do Word exige.
 fn run_xml(out: &mut String, span: &Span) {
     let mut rpr = String::new();
     let find = |kind: &str| span.marks.iter().find(|m| mark_key(m) == kind);
+    if find("link").is_some() {
+        rpr.push_str(r#"<w:rStyle w:val="Hyperlink"/>"#);
+    }
     if let Some(Mark::FontFamily { value }) = find("fontFamily") {
         let v = esc(value);
         rpr.push_str(&format!(
@@ -309,7 +356,7 @@ const CORE_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?
 
 /// Estilos com os nomes internos do Word ("heading 1"…), que ele traduz para
 /// "Título 1" na interface em português. Tamanhos iguais aos do Nova Text.
-const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style></w:styles>"#;
+const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style></w:styles>"#;
 
 // ---------------------------------------------------------------- abrir
 
@@ -599,6 +646,30 @@ fn read_styles(xml: &str) -> Styles {
     }
 }
 
+/// Id da relação → endereço, para os links externos.
+fn read_link_targets(xml: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e))
+                if e.local_name().as_ref() == b"Relationship" =>
+            {
+                if attr(&e, b"Type").is_some_and(|t| t.ends_with("/hyperlink")) {
+                    if let (Some(id), Some(target)) = (attr(&e, b"Id"), attr(&e, b"Target")) {
+                        out.insert(id, target);
+                    }
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    out
+}
+
 /// numId → (nível → é marcador?).
 fn read_numbering(xml: &str) -> HashMap<u32, Vec<bool>> {
     let mut abstracts: HashMap<u32, Vec<bool>> = HashMap::new();
@@ -775,6 +846,7 @@ fn apply_para(attrs: &mut nova_domain_text::ParaAttrs, p: &Prop) {
                 attrs.line_spacing = (percent != 100).then_some(percent);
             }
         }
+        b"pageBreakBefore" => attrs.page_break_before = p.on(),
         b"shd" => {
             attrs.shading = p
                 .get(b"fill")
@@ -808,6 +880,11 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
     let numbering = part(&mut zip, "word/numbering.xml")?
         .map(|x| read_numbering(&x))
         .unwrap_or_default();
+    let targets = part(&mut zip, "word/_rels/document.xml.rels")?
+        .map(|x| read_link_targets(&x))
+        .unwrap_or_default();
+    // Link aberto (w:hyperlink): vale para os trechos dentro dele.
+    let mut link: Option<String> = None;
 
     let mut reader = Reader::from_str(&document);
     let mut buf = Vec::new();
@@ -850,6 +927,41 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
             }
         }
     };
+
+    // Estilo, lista e limpeza das marcas que já são o padrão do Nova.
+    let finish = |mut p: Paragraph, para_style: Option<&str>, para_num: Option<(u32, u8)>| {
+        let info = styles.info(para_style);
+        if let Some(style) = info.style {
+            p.style = style;
+        }
+        // Lista: a do parágrafo, ou a herdada do estilo (Lista com Marcadores…).
+        if let Some((num_id, lvl)) = para_num.or(info.num) {
+            if num_id != 0 {
+                let bullet = numbering
+                    .get(&num_id)
+                    .and_then(|levels| levels.get(lvl as usize).copied())
+                    .unwrap_or(true);
+                p.attrs.list = Some(if bullet {
+                    ListKind::Bullet
+                } else {
+                    ListKind::Number
+                });
+                p.attrs.indent = lvl.min(MAX_INDENT);
+            }
+        }
+        // O que já é o padrão do Nova não vira marca.
+        let plain = p.style == BlockStyle::Paragraph;
+        for span in &mut p.spans {
+            span.marks.retain(|m| match m {
+                Mark::FontFamily { value } => value != DEFAULT_FONT,
+                Mark::FontSize { half_points } => !(plain && *half_points == DEFAULT_HALF_POINTS),
+                _ => true,
+            });
+        }
+        p
+    };
+    // Quebra de página no fim de um parágrafo vale para o seguinte.
+    let (mut from_break, mut carry_break) = (false, false);
 
     let push_text = |para: &mut Option<Paragraph>, run: &RunProps, text: &str| {
         let p = para.get_or_insert_with(Paragraph::default);
@@ -903,6 +1015,12 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                         para_num = None;
                         para_style = None;
                         start_style(&mut para, &mut para_run, None);
+                        if carry_break {
+                            if let Some(p) = para.as_mut() {
+                                p.attrs.page_break_before = true;
+                            }
+                            carry_break = false;
+                        }
                         if tc_depth > 0 {
                             if let Some(p) = para.as_mut() {
                                 p.attrs.shading = cell_shading.clone();
@@ -914,13 +1032,27 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     }
                     b"pPr" if !empty => in_ppr = true,
                     b"rPr" if !empty => in_rpr = true,
-                    b"r" => run = para_run.clone(),
+                    b"r" => {
+                        run = para_run.clone();
+                        if let Some(href) = &link {
+                            run.set(Mark::Link { href: href.clone() });
+                        }
+                    }
+                    b"hyperlink" if !empty => {
+                        link = attr(e, b"id")
+                            .and_then(|id| targets.get(&id).cloned())
+                            .filter(|h| nova_domain_text::is_link(h));
+                    }
                     b"pStyle" if in_ppr && !in_rpr => {
                         para_style = attr(e, b"val");
                         // O pStyle vem primeiro no pPr: a formatação direta que segue o sobrepõe.
                         let shading = para.as_ref().and_then(|p| p.attrs.shading.clone());
+                        let page_break = para.as_ref().is_some_and(|p| p.attrs.page_break_before);
                         para = Some(Paragraph::default());
                         start_style(&mut para, &mut para_run, para_style.as_deref());
+                        if let Some(p) = para.as_mut() {
+                            p.attrs.page_break_before |= page_break;
+                        }
                         if let (Some(p), Some(_)) = (para.as_mut(), &shading) {
                             if p.attrs.shading.is_none() {
                                 p.attrs.shading = shading;
@@ -942,7 +1074,10 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                         }
                     }
                     b"rStyle" if in_rpr && !in_ppr => {
-                        if let Some(id) = attr(e, b"val") {
+                        // O estilo "Hyperlink" (azul sublinhado) é a aparência do próprio link.
+                        if let Some(id) =
+                            attr(e, b"val").filter(|id| id != "Hyperlink" && link.is_none())
+                        {
                             for s in styles.chain(Some(&id)) {
                                 for prop in &s.rpr {
                                     run.apply(prop, &theme);
@@ -955,14 +1090,22 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     b"tab" if !in_ppr => push_text(&mut para, &run, "\t"),
                     b"br" | b"cr" => {
                         if attr(e, b"type").as_deref() == Some("page") {
-                            // Quebra de página vira parágrafo novo até o Nova ter páginas.
-                            if let Some(p) = para.take() {
-                                let attrs = p.attrs.clone();
-                                out.push(p);
+                            // Quebra de página no meio do parágrafo: o resto começa na página seguinte.
+                            let p = para.get_or_insert_with(Paragraph::default);
+                            if p.spans.iter().all(|s| s.text.is_empty()) {
+                                p.attrs.page_break_before = true;
+                            } else if let Some(p) = para.take() {
+                                let attrs = nova_domain_text::ParaAttrs {
+                                    page_break_before: true,
+                                    list: None,
+                                    ..p.attrs.clone()
+                                };
+                                out.push(finish(p, para_style.as_deref(), para_num));
                                 para = Some(Paragraph {
                                     attrs,
                                     ..Paragraph::default()
                                 });
+                                from_break = true;
                             }
                         } else {
                             push_text(&mut para, &run, "\u{b}");
@@ -987,43 +1130,25 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     b"pPr" => in_ppr = false,
                     b"rPr" => in_rpr = false,
                     b"tcPr" => in_tcpr = false,
+                    b"hyperlink" => link = None,
                     b"tc" => {
                         tc_depth = tc_depth.saturating_sub(1);
                         cell_shading = None;
                     }
                     b"p" => {
-                        let mut p = para.take().unwrap_or_default();
-                        let info = styles.info(para_style.as_deref());
-                        if let Some(style) = info.style {
-                            p.style = style;
+                        let p = finish(
+                            para.take().unwrap_or_default(),
+                            para_style.as_deref(),
+                            para_num,
+                        );
+                        // Parágrafo que só sobrou de uma quebra de página no fim do anterior:
+                        // a quebra passa para o próximo parágrafo.
+                        if from_break && p.spans.is_empty() {
+                            carry_break = true;
+                        } else {
+                            out.push(p);
                         }
-                        // Lista: a do parágrafo, ou a herdada do estilo (Lista com Marcadores…).
-                        if let Some((num_id, lvl)) = para_num.or(info.num) {
-                            if num_id != 0 {
-                                let bullet = numbering
-                                    .get(&num_id)
-                                    .and_then(|levels| levels.get(lvl as usize).copied())
-                                    .unwrap_or(true);
-                                p.attrs.list = Some(if bullet {
-                                    ListKind::Bullet
-                                } else {
-                                    ListKind::Number
-                                });
-                                p.attrs.indent = lvl.min(MAX_INDENT);
-                            }
-                        }
-                        // O que já é o padrão do Nova não vira marca.
-                        let plain = p.style == BlockStyle::Paragraph;
-                        for span in &mut p.spans {
-                            span.marks.retain(|m| match m {
-                                Mark::FontFamily { value } => value != DEFAULT_FONT,
-                                Mark::FontSize { half_points } => {
-                                    !(plain && *half_points == DEFAULT_HALF_POINTS)
-                                }
-                                _ => true,
-                            });
-                        }
-                        out.push(p);
+                        from_break = false;
                     }
                     _ => {}
                 }
@@ -1040,11 +1165,23 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
     Ok(out)
 }
 
+/// Cores que o Word e o LibreOffice dão aos links.
+const LINK_COLORS: &[&str] = &["#0563C1", "#0000FF", "#000080"];
+
 /// Marcas na ordem do núcleo (por nome) e trechos vizinhos iguais unidos.
 pub(crate) fn normalize(paragraphs: &mut [Paragraph]) {
     for p in paragraphs {
         let mut spans: Vec<Span> = Vec::with_capacity(p.spans.len());
         for mut span in p.spans.drain(..) {
+            // Azul sublinhado é a aparência do link, não formatação própria.
+            let styled_link = span.marks.iter().any(|m| matches!(m, Mark::Link { .. }))
+                && span.marks.iter().any(|m| {
+                    matches!(m, Mark::Color { value } if LINK_COLORS.contains(&value.to_uppercase().as_str()))
+                });
+            if styled_link {
+                span.marks
+                    .retain(|m| !matches!(m, Mark::Underline | Mark::Color { .. }));
+            }
             span.marks.sort_by_key(|m| m.kind().key());
             if span.text.is_empty() {
                 continue;
@@ -1069,6 +1206,18 @@ mod tests {
             "Relatório\nTexto com negrito e x2\nitem\nsubitem\npasso\nRua A\u{b}São Paulo\tSP",
         );
         let cmds = vec![
+            TextCommand::ApplyMark {
+                block: 5,
+                offset: 0,
+                len: 5,
+                mark: Mark::Link {
+                    href: "https://exemplo.com/a?b=1&c=2".into(),
+                },
+            },
+            TextCommand::SetBlockAttr {
+                block: 5,
+                attr: ParaAttr::PageBreakBefore(true),
+            },
             TextCommand::SetBlockStyle {
                 block: 0,
                 style: BlockStyle::Heading1,
@@ -1323,6 +1472,34 @@ mod tests {
         assert_eq!(p[3].attrs.align, Align::Center);
         // Célula sombreada: o parágrafo leva o sombreamento.
         assert_eq!(p[4].attrs.shading.as_deref(), Some("#D9E2F3"));
+    }
+
+    #[test]
+    fn link_e_quebra_de_pagina_do_word() {
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let opt = SimpleFileOptions::default();
+        let w = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
+        zip.start_file("word/document.xml", opt).unwrap();
+        write!(zip, r#"<w:document {w}><w:body>
+            <w:p><w:r><w:t xml:space="preserve">Veja </w:t></w:r><w:hyperlink r:id="rId7"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t>aqui</w:t></w:r></w:hyperlink><w:r><w:br w:type="page"/></w:r></w:p>
+            <w:p><w:r><w:t>Página 2</w:t></w:r><w:r><w:br w:type="page"/></w:r><w:r><w:t>Página 3</w:t></w:r></w:p>
+            <w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>Página 4</w:t></w:r></w:p>
+            </w:body></w:document>"#).unwrap();
+        zip.start_file("word/_rels/document.xml.rels", opt).unwrap();
+        write!(zip, r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://exemplo.com" TargetMode="External"/></Relationships>"#).unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+
+        let p = read_paragraphs(&bytes).unwrap();
+        let texts: Vec<String> = p.iter().map(Paragraph::text).collect();
+        assert_eq!(texts, ["Veja aqui", "Página 2", "Página 3", "Página 4"]);
+        assert_eq!(
+            p[0].spans[1].marks,
+            vec![Mark::Link {
+                href: "https://exemplo.com".into()
+            }]
+        );
+        let breaks: Vec<bool> = p.iter().map(|p| p.attrs.page_break_before).collect();
+        assert_eq!(breaks, [false, true, true, true]);
     }
 
     #[test]

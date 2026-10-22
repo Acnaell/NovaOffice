@@ -141,6 +141,8 @@ fn text_props(marks: &[Mark]) -> String {
             } else {
                 r#" style:text-position="sub 58%""#
             }),
+            // O link é o elemento text:a, não um estilo.
+            Mark::Link { .. } => {}
         }
     }
     p
@@ -188,6 +190,9 @@ fn para_props(a: &ParaAttrs) -> String {
             r#" fo:background-color="{}""#,
             color.to_lowercase()
         ));
+    }
+    if a.page_break_before {
+        p.push_str(r#" fo:break-before="page""#);
     }
     p
 }
@@ -269,10 +274,20 @@ fn content_xml(paragraphs: &[Paragraph]) -> String {
         for span in &p.spans {
             let text = odf_text(&span.text, at_start);
             at_start = span.text.ends_with(['\u{b}', '\n']);
-            if span.marks.is_empty() {
+            let href = span.marks.iter().find_map(|m| match m {
+                Mark::Link { href } => Some(href.as_str()),
+                _ => None,
+            });
+            if let Some(href) = href {
+                body.push_str(&format!(
+                    r#"<text:a xlink:type="simple" xlink:href="{}">"#,
+                    esc(href)
+                ));
+            }
+            let props = text_props(&span.marks);
+            if props.is_empty() {
                 body.push_str(&text);
             } else {
-                let props = text_props(&span.marks);
                 let index = text_styles
                     .iter()
                     .position(|s| *s == props)
@@ -284,6 +299,9 @@ fn content_xml(paragraphs: &[Paragraph]) -> String {
                     r#"<text:span text:style-name="T{}">{text}</text:span>"#,
                     index + 1
                 ));
+            }
+            if href.is_some() {
+                body.push_str("</text:a>");
             }
         }
         body.push_str(close_tag);
@@ -333,7 +351,7 @@ fn list_styles() -> String {
     out
 }
 
-const NS: &str = r#"xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0""#;
+const NS: &str = r#"xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:xlink="http://www.w3.org/1999/xlink""#;
 
 const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.3"><manifest:file-entry manifest:full-path="/" manifest:version="1.3" manifest:media-type="application/vnd.oasis.opendocument.text"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/></manifest:manifest>"#;
 
@@ -528,6 +546,9 @@ fn apply_para_props(e: &BytesStart, s: &mut OdfStyle) {
     }
     if let Some(pt) = attr(e, b"margin-bottom").and_then(|v| length_pt(&v)) {
         a.space_after = Some(pt);
+    }
+    if let Some(b) = attr(e, b"break-before") {
+        a.page_break_before = b == "page";
     }
     if let Some(bg) = attr(e, b"background-color") {
         let hex = bg.to_uppercase();
@@ -754,6 +775,16 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                             span_marks.push(marks);
                         }
                     }
+                    b"a" if !empty => {
+                        let mut marks = span_marks.last().cloned().unwrap_or_default();
+                        if let Some(href) =
+                            attr(e, b"href").filter(|h| nova_domain_text::is_link(h))
+                        {
+                            marks.retain(|m| m.kind() != nova_domain_text::MarkKind::Link);
+                            marks.push(Mark::Link { href });
+                        }
+                        span_marks.push(marks);
+                    }
                     b"tab" => push(&mut para, &span_marks, "\t"),
                     b"line-break" => push(&mut para, &span_marks, "\u{b}"),
                     b"s" => {
@@ -794,7 +825,7 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     b"list" => {
                         list_stack.pop();
                     }
-                    b"span" => {
+                    b"span" | b"a" => {
                         if span_marks.len() > 1 {
                             span_marks.pop();
                         }
@@ -830,6 +861,18 @@ mod tests {
             "Relatório\n  dois  espaços e negrito\nitem\nsub\npasso\nmeio\nnovo\nRua A\u{b}São Paulo\tSP",
         );
         let cmds = vec![
+            TextCommand::ApplyMark {
+                block: 7,
+                offset: 0,
+                len: 5,
+                mark: Mark::Link {
+                    href: "https://exemplo.com/a?b=1&c=2".into(),
+                },
+            },
+            TextCommand::SetBlockAttr {
+                block: 7,
+                attr: ParaAttr::PageBreakBefore(true),
+            },
             TextCommand::SetBlockStyle {
                 block: 0,
                 style: BlockStyle::Heading1,

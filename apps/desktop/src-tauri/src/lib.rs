@@ -82,6 +82,7 @@ fn discard_recovery(app: State<'_, App>) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|handle| {
             // Recentes e recuperação ficam na pasta de dados do app
             // (%APPDATA%\org.novaoffice.desktop no Windows).
