@@ -23,6 +23,7 @@ import {
 } from "./formatting";
 import { caret, deleteBackward } from "./model";
 import type { BlockView, DocView, Mark, ParaAttrs } from "./types";
+import { DEFAULT_PAGE } from "./types";
 
 const bold: Mark = { mark: "bold" };
 const size = (pt: number): Mark => ({ mark: "fontSize", halfPoints: pt * 2 });
@@ -35,6 +36,7 @@ const doc = (...blocks: BlockView[]): DocView => ({
   title: "t",
   dirty: false,
   format: null,
+  page: DEFAULT_PAGE,
 });
 
 const p = (spans: [string, Mark[]?][], attrs: Partial<ParaAttrs> = {}, style: BlockView["style"] = "paragraph"): BlockView => ({

@@ -40,7 +40,7 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
             }
         }
     }
-    let (body, nums, links) = body_xml(&paragraphs, &images);
+    let (body, nums, links) = body_xml(&paragraphs, &images, doc.page_setup());
     let media_names: Vec<String> = images
         .iter()
         .enumerate()
@@ -279,6 +279,7 @@ impl TableWriter {
 fn body_xml(
     paragraphs: &[Paragraph],
     images: &[(String, String, Vec<u8>)],
+    page: nova_domain_text::PageSetup,
 ) -> (String, Vec<Num>, Vec<String>) {
     let mut links: Vec<String> = Vec::new();
     let mut nums = vec![Num::Bullet];
@@ -387,7 +388,15 @@ fn body_xml(
         // O Word exige um parágrafo depois da última tabela do documento.
         out.push_str("<w:p/>");
     }
-    out.push_str(DOC_END);
+    let orient = if page.width > page.height {
+        r#" w:orient="landscape""#
+    } else {
+        ""
+    };
+    out.push_str(&format!(
+        r#"<w:sectPr><w:pgSz w:w="{}" w:h="{}"{orient}/><w:pgMar w:top="{}" w:right="{}" w:bottom="{}" w:left="{}" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>"#,
+        page.width, page.height, page.margin_top, page.margin_right, page.margin_bottom, page.margin_left
+    ));
     (out, nums, links)
 }
 
@@ -525,9 +534,6 @@ fn numbering_xml(nums: &[Num]) -> String {
 
 const DOC_START: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>"#;
 
-/// Página A4 com margens de 2,5 cm, como a página do Nova Text.
-const DOC_END: &str = r#"<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>"#;
-
 const CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="gif" ContentType="image/gif"/><Default Extension="bmp" ContentType="image/bmp"/><Default Extension="webp" ContentType="image/webp"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>"#;
 
 const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>"#;
@@ -545,10 +551,13 @@ const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media) = read_document(bytes)?;
-    let doc = TextDocument::from_paragraphs(client, &paragraphs)?;
+    let (paragraphs, media, page) = read_document(bytes)?;
+    let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
         doc.put_media(&id, &mime, &data)?;
+    }
+    if let Some(page) = page.filter(|p| p.validate().is_ok()) {
+        doc.load_page_setup(page)?;
     }
     Ok(doc)
 }
@@ -1081,7 +1090,14 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
     Ok(read_document(bytes)?.0)
 }
 
-fn read_document(bytes: &[u8]) -> Result<(Vec<Paragraph>, Vec<Media>), AppError> {
+/// O que se lê de um .docx: parágrafos, imagens e a página.
+type Document = (
+    Vec<Paragraph>,
+    Vec<Media>,
+    Option<nova_domain_text::PageSetup>,
+);
+
+fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     let mut zip =
         ZipArchive::new(Cursor::new(bytes)).map_err(|e| invalid(format!("não é um .docx: {e}")))?;
     let document =
@@ -1113,6 +1129,8 @@ fn read_document(bytes: &[u8]) -> Result<(Vec<Paragraph>, Vec<Media>), AppError>
         })
         .collect();
     let mut media: Vec<Media> = Vec::new();
+    // Página: a do último w:sectPr (o do corpo do documento).
+    let mut page: Option<nova_domain_text::PageSetup> = None;
     // Imagem sendo lida (w:drawing): profundidade, tamanho em EMU e relação.
     let mut drawing_depth = 0u32;
     let mut drawing: (Option<(u64, u64)>, Option<String>) = (None, None);
@@ -1249,6 +1267,35 @@ fn read_document(bytes: &[u8]) -> Result<(Vec<Paragraph>, Vec<Media>), AppError>
                     continue;
                 }
                 match name {
+                    b"pgSz" => {
+                        let n = |k: &[u8]| attr(e, k).and_then(|v| v.parse::<u32>().ok());
+                        if let (Some(w), Some(h)) = (n(b"w"), n(b"h")) {
+                            let p = page.get_or_insert_with(Default::default);
+                            p.width = w;
+                            p.height = h;
+                        }
+                    }
+                    b"pgMar" => {
+                        // Margens negativas (texto por cima do cabeçalho) contam pelo valor absoluto.
+                        let n = |k: &[u8]| {
+                            attr(e, k)
+                                .and_then(|v| v.parse::<i64>().ok())
+                                .map(|v| v.unsigned_abs() as u32)
+                        };
+                        let p = page.get_or_insert_with(Default::default);
+                        if let Some(v) = n(b"top") {
+                            p.margin_top = v;
+                        }
+                        if let Some(v) = n(b"bottom") {
+                            p.margin_bottom = v;
+                        }
+                        if let Some(v) = n(b"left").or_else(|| n(b"start")) {
+                            p.margin_left = v;
+                        }
+                        if let Some(v) = n(b"right").or_else(|| n(b"end")) {
+                            p.margin_right = v;
+                        }
+                    }
                     b"drawing" if !empty => {
                         drawing_depth = 1;
                         drawing = (None, None);
@@ -1501,7 +1548,7 @@ fn read_document(bytes: &[u8]) -> Result<(Vec<Paragraph>, Vec<Media>), AppError>
         out.push(Paragraph::default());
     }
     normalize(&mut out);
-    Ok((out, media))
+    Ok((out, media, page))
 }
 
 /// Cores que o Word e o LibreOffice dão aos links.

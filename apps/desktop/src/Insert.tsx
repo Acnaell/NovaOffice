@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { dateTimeFormats, normalizeHref } from "./formatting";
+import { cm, toCm, validPage } from "./layout";
+import type { PageSetup } from "./types";
 import { useI18n } from "./i18n";
 
 /** Caixa modal no estilo das do Word; Esc ou Cancelar fecha. */
@@ -129,6 +131,78 @@ export function DateTimeDialog({ onInsert, onClose }: { onInsert: (text: string)
             ))}
           </select>
         </label>
+        <div className="modal-actions">
+          <button type="submit" className="bs-primary">
+            {t("dialog.ok")}
+          </button>
+          <button type="button" className="bs-secondary" onClick={onClose}>
+            {t("save.cancel")}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/** Layout → Margens → Margens Personalizadas: as quatro margens em centímetros. */
+export function MarginsDialog({
+  page,
+  onApply,
+  onClose,
+}: {
+  page: PageSetup;
+  onApply: (page: PageSetup) => void;
+  onClose: () => void;
+}) {
+  const { t, locale } = useI18n();
+  const decimal = locale.startsWith("pt") ? "," : ".";
+  const show = (twips: number) => String(toCm(twips)).replace(".", decimal);
+  const [values, setValues] = useState({
+    marginTop: show(page.marginTop),
+    marginBottom: show(page.marginBottom),
+    marginLeft: show(page.marginLeft),
+    marginRight: show(page.marginRight),
+  });
+  const [error, setError] = useState(false);
+  const first = useRef<HTMLInputElement>(null);
+  useEffect(() => first.current?.select(), []);
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const parse = (v: string) => cm(Number(v.replace(",", ".")));
+    const next: PageSetup = {
+      ...page,
+      marginTop: parse(values.marginTop),
+      marginBottom: parse(values.marginBottom),
+      marginLeft: parse(values.marginLeft),
+      marginRight: parse(values.marginRight),
+    };
+    if (!validPage(next)) return setError(true);
+    onApply(next);
+  };
+  const field = (key: keyof typeof values, label: string, ref?: typeof first) => (
+    <label>
+      <span>{label}</span>
+      <input
+        ref={ref}
+        inputMode="decimal"
+        value={values[key]}
+        onChange={(e) => {
+          setValues({ ...values, [key]: e.target.value });
+          setError(false);
+        }}
+      />
+    </label>
+  );
+  return (
+    <Modal title={t("layout.customMargins")} onClose={onClose}>
+      <form onSubmit={submit} className="dialog-form">
+        <div className="dialog-grid">
+          {field("marginTop", t("layout.top"), first)}
+          {field("marginBottom", t("layout.bottom"))}
+          {field("marginLeft", t("layout.left"))}
+          {field("marginRight", t("layout.right"))}
+        </div>
+        {error && <p className="dialog-error">{t("layout.invalidMargins")}</p>}
         <div className="modal-actions">
           <button type="submit" className="bs-primary">
             {t("dialog.ok")}

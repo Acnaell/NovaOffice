@@ -50,12 +50,12 @@ import {
 } from "./model";
 import { Ribbon, type RibbonCommand } from "./Ribbon";
 import { SaveChangesDialog, type SaveChoice } from "./SaveDialog";
-import { DateTimeDialog, LinkDialog, type LinkRequest } from "./Insert";
+import { DateTimeDialog, LinkDialog, MarginsDialog, type LinkRequest } from "./Insert";
 import { deleteColumns, deleteRows, deleteTable, insertColumn, insertRow, insertTable } from "./tables";
 import { fileToBase64, insertImage, resizeImage, setImage, TEXT_WIDTH_PT } from "./images";
 import { matchShortcut, profileFor } from "./shortcuts";
 import { useTheme } from "./theme";
-import { applyPatch, type BlockStyle, type DocView, type FileFormat, type Recent, type RecoveryInfo, type HighlightColor, type Mark, type MarkKind, type ParaAttr, type TextCommand, type ToggleMark } from "./types";
+import { applyPatch, DEFAULT_PAGE, type BlockStyle, type PageSetup, type DocView, type FileFormat, type Recent, type RecoveryInfo, type HighlightColor, type Mark, type MarkKind, type ParaAttr, type TextCommand, type ToggleMark } from "./types";
 
 interface State {
   view: DocView;
@@ -75,7 +75,7 @@ const PARAGRAPH_SPACE = 12;
 /** Intervalo da recuperação automática (o Word usa 10 min; aqui é mais curto). */
 const AUTOSAVE_MS = 60_000;
 
-const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false, format: null };
+const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false, format: null, page: DEFAULT_PAGE };
 
 export default function App() {
   const [state, setState] = useState<State | null>(null);
@@ -87,6 +87,8 @@ export default function App() {
   const [lastHighlight, setLastHighlight] = useState<HighlightColor>("yellow");
   const [lastShading, setLastShading] = useState("#D9E2F3");
   const [linkRequest, setLinkRequest] = useState<LinkRequest | null>(null);
+  const [pageInfo, setPageInfo] = useState({ pages: 1, current: 1 });
+  const [marginsDialog, setMarginsDialog] = useState(false);
   const [dateDialog, setDateDialog] = useState(false);
   const [find, setFind] = useState<FindState | null>(null);
   // Tela Arquivo; na inicialização, com um documento vazio, é a tela inicial do NovaOffice.
@@ -426,6 +428,15 @@ export default function App() {
       const width = percent === null ? Math.min(image.width, TEXT_WIDTH_PT) : (TEXT_WIDTH_PT * percent) / 100;
       return { command: setImage(block, resizeImage(image, width)), selection: sel };
     });
+
+  /** Aba Layout: papel, margens e orientação (um passo de desfazer). */
+  const setPage = useCallback(
+    (page: PageSetup) => {
+      focusEditor();
+      runCommand({ type: "page.set", page });
+    },
+    [focusEditor, runCommand],
+  );
 
   const openLink = useCallback(
     (href: string) => {
@@ -924,6 +935,16 @@ export default function App() {
       )}
       {saveAsk && <SaveChangesDialog title={saveAsk.title} onChoose={saveAsk.resolve} />}
       {linkRequest && <LinkDialog request={linkRequest} onApply={applyLink} onRemove={removeLink} onClose={closeLinkDialog} />}
+      {marginsDialog && (
+        <MarginsDialog
+          page={view.page}
+          onClose={() => setMarginsDialog(false)}
+          onApply={(page) => {
+            setMarginsDialog(false);
+            setPage(page);
+          }}
+        />
+      )}
       {dateDialog && (
         <DateTimeDialog
           onClose={() => {
@@ -1004,6 +1025,9 @@ export default function App() {
         }}
         inTable={!!view.blocks[selection.focus.block]?.attrs.cell}
         onImage={!!view.blocks[selection.focus.block]?.attrs.image}
+        page={view.page}
+        onPage={setPage}
+        onCustomMargins={() => setMarginsDialog(true)}
       />
       <main className={`workspace${find ? " with-panel" : ""}`}>
         {find && (
@@ -1034,6 +1058,7 @@ export default function App() {
             onCommand={onCommand}
             onPointerUp={onPointerUp}
             onOpenLink={openLink}
+            onPageInfo={(info) => setPageInfo((p) => (p.pages === info.pages && p.current === info.current ? p : info))}
             onPasteImage={pasteImage}
             onEscape={() => {
               if (painter) setPainter(null);
@@ -1043,6 +1068,7 @@ export default function App() {
         </div>
       </main>
       <footer className="statusbar">
+        <span>{t("status.page", pageInfo)}</span>
         <span>{t(`style.${blockStyle}`)}</span>
         <span>
           {words === 1 ? t("status.word") : t("status.words", { words })} ·{" "}

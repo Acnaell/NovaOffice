@@ -4,6 +4,7 @@ import { fragmentHtml, fragmentOf, fragmentText, insertFragment, nearestHighligh
 import { findAll, nextMatch, replaceAll } from "./find";
 import { DEFAULT_ATTRS } from "./formatting";
 import type { BlockView, DocView, Mark, ParaAttrs } from "./types";
+import { DEFAULT_PAGE } from "./types";
 
 const bold: Mark = { mark: "bold" };
 const p = (spans: [string, Mark[]?][], attrs: Partial<ParaAttrs> = {}, style: BlockView["style"] = "paragraph"): BlockView => ({
@@ -11,7 +12,7 @@ const p = (spans: [string, Mark[]?][], attrs: Partial<ParaAttrs> = {}, style: Bl
   attrs: { ...DEFAULT_ATTRS, ...attrs },
   spans: spans.map(([text, marks = []]) => ({ text, marks })),
 });
-const doc = (...blocks: BlockView[]): DocView => ({ blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null });
+const doc = (...blocks: BlockView[]): DocView => ({ blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE });
 const sel = (b1: number, o1: number, b2 = b1, o2 = o1) => ({ anchor: { block: b1, offset: o1 }, focus: { block: b2, offset: o2 } });
 const simple = (f: BlockView[]) => f.map((b) => [b.style, b.attrs.list ?? "", b.attrs.indent, b.spans.map((s) => [s.text, s.marks.map((m) => m.mark).join("+")])]);
 

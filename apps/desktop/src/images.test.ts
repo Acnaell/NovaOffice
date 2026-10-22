@@ -3,8 +3,9 @@ import { DEFAULT_ATTRS } from "./formatting";
 import { insertImage, resizeImage } from "./images";
 import { caret, deleteBackward, deleteForward } from "./model";
 import type { BlockView, DocView, ImageRef } from "./types";
+import { DEFAULT_PAGE } from "./types";
 
-const doc = (...blocks: BlockView[]): DocView => ({ blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null });
+const doc = (...blocks: BlockView[]): DocView => ({ blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE });
 const p = (text: string, attrs: Partial<BlockView["attrs"]> = {}): BlockView => ({
   style: "paragraph",
   attrs: { ...DEFAULT_ATTRS, ...attrs },

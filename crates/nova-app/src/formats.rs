@@ -265,4 +265,36 @@ mod tests {
         let html = String::from_utf8(save(&doc, Format::Html, "t")).unwrap();
         assert!(html.contains(r#"<img src="data:image/png;base64,"#));
     }
+
+    #[test]
+    fn pagina_vai_e_volta() {
+        use nova_domain_text::{PageSetup, TextCommand};
+        let mut doc = TextDocument::from_plain_text(1, "paisagem");
+        // Ofício em paisagem, margens ABNT (3 cm em cima e à esquerda, 2 cm embaixo e à direita).
+        let page = PageSetup {
+            width: 20160,
+            height: 12240,
+            margin_top: 1701,
+            margin_bottom: 1134,
+            margin_left: 1701,
+            margin_right: 1134,
+        };
+        doc.execute(TextCommand::SetPage { page }).unwrap();
+        for format in [Format::Docx, Format::Odt, Format::Nova] {
+            let bytes = save(&doc, format, "t");
+            let back = open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
+            let got = back.page_setup();
+            // O .odt guarda em centímetros com 3 casas: diferença de até 1 twip.
+            let close = |a: u32, b: u32| a.abs_diff(b) <= 1;
+            assert!(
+                close(got.width, page.width)
+                    && close(got.height, page.height)
+                    && close(got.margin_top, page.margin_top)
+                    && close(got.margin_left, page.margin_left)
+                    && close(got.margin_bottom, page.margin_bottom),
+                "{format:?}: {got:?}"
+            );
+            assert!(!back.can_undo(), "{format:?}: abrir não entra no desfazer");
+        }
+    }
 }

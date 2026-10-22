@@ -3,8 +3,9 @@ import { DEFAULT_ATTRS } from "./formatting";
 import { caret, deleteBackward, deleteForward, deleteRange, type Selection } from "./model";
 import { deleteColumns, deleteRows, deleteTable, insertColumn, insertRow, insertTable, moveToCell, tableAt } from "./tables";
 import type { BlockView, CellRef, DocView, TextCommand } from "./types";
+import { DEFAULT_PAGE } from "./types";
 
-const doc = (...blocks: BlockView[]): DocView => ({ blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null });
+const doc = (...blocks: BlockView[]): DocView => ({ blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE });
 const p = (text: string, cell: CellRef | null = null): BlockView => ({
   style: "paragraph",
   attrs: { ...DEFAULT_ATTRS, cell },

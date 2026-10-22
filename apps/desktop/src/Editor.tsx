@@ -10,6 +10,7 @@ import { posToDom, readSelection, writeSelection } from "./dom";
 import type { Match } from "./find";
 import { autoLink, autoList, changeIndent, isDark, linkOf, listMarkers } from "./formatting";
 import { moveToCell, tableGrid } from "./tables";
+import { paginate, unpaginate, type PageInfo } from "./paginate";
 import {
   blockText,
   deleteBackward,
@@ -54,7 +55,15 @@ interface Props {
   onOpenLink: (href: string) => void;
   /** Imagem colada da área de transferência. */
   onPasteImage: (file: File) => void;
+  /** Página do cursor e total de páginas, para a barra de status. */
+  onPageInfo: (info: PageInfo) => void;
 }
+
+/** Intervalo entre as folhas na tela, em px. */
+const SHEET_GAP = 24;
+
+/** twips (1/1440 pol.) → px de CSS (1/96 pol.). */
+const px = (twips: number) => twips / 15;
 
 /** Quebra de linha manual (Shift+Enter), como no Word. */
 const LINE_BREAK = "\u000B";
@@ -64,6 +73,8 @@ const INDENT_STEP = "1.27cm";
 
 export function Editor(props: Props) {
   const { t } = useI18n();
+  const page = props.view.page;
+  const [pages, setPages] = useState(1);
   // Objeto estável: os parágrafos memorizados só redesenham quando mudam.
   const labels = useMemo(() => ({ pageBreak: t("insert.pageBreakMark"), followLink: t("insert.followLink") }), [t]);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -78,6 +89,45 @@ export function Editor(props: Props) {
     const root = rootRef.current;
     if (root && document.activeElement === root) writeSelection(root, latest.current.selection);
   }, [props.revision, props.showMarks]);
+
+  // Páginas: depois de cada desenho, empurra para a página seguinte o que não cabe.
+  const repaginate = useRef(() => {});
+  repaginate.current = () => {
+    const root = rootRef.current;
+    if (!root) return;
+    const info = paginate(
+      root,
+      { pageHeight: px(page.height), gap: SHEET_GAP, marginTop: px(page.marginTop), marginBottom: px(page.marginBottom) },
+      latest.current.selection.focus.block,
+    );
+    setPages((n) => (n === info.pages ? n : info.pages));
+    latest.current.onPageInfo(info);
+  };
+  useLayoutEffect(() => repaginate.current(), [props.revision, props.showMarks, props.selection.focus.block, page]);
+  useEffect(() => {
+    // Fontes carregadas depois mudam a altura das linhas; na impressão, o navegador pagina sozinho.
+    document.fonts?.ready.then(() => repaginate.current());
+    const before = () => rootRef.current && unpaginate(rootRef.current);
+    const after = () => repaginate.current();
+    window.addEventListener("beforeprint", before);
+    window.addEventListener("afterprint", after);
+    return () => {
+      window.removeEventListener("beforeprint", before);
+      window.removeEventListener("afterprint", after);
+    };
+  }, []);
+
+  // Impressão e PDF com o papel e as margens do documento.
+  useEffect(() => {
+    let style = document.getElementById("page-print") as HTMLStyleElement | null;
+    if (!style) {
+      style = document.createElement("style");
+      style.id = "page-print";
+      document.head.appendChild(style);
+    }
+    const pt = (twips: number) => `${twips / 20}pt`;
+    style.textContent = `@page { size: ${pt(page.width)} ${pt(page.height)}; margin: ${pt(page.marginTop)} ${pt(page.marginRight)} ${pt(page.marginBottom)} ${pt(page.marginLeft)}; }`;
+  }, [page]);
 
   // Imagem com o cursor no parágrafo dela: contorno e alça de tamanho.
   useLayoutEffect(() => {
@@ -427,9 +477,18 @@ export function Editor(props: Props) {
   }, []);
 
   return (
+    <div className="paper" style={{ width: `${px(page.width)}px` }}>
+      <div className="sheets" aria-hidden="true">
+        {Array.from({ length: pages }, (_, k) => (
+          <div key={k} className="sheet" style={{ top: `${k * (px(page.height) + SHEET_GAP)}px`, height: `${px(page.height)}px` }} />
+        ))}
+      </div>
     <div
       ref={rootRef}
       className={`page${props.showMarks ? " show-marks" : ""}`}
+      style={{
+        padding: `${px(page.marginTop)}px ${px(page.marginRight)}px ${px(page.marginBottom)}px ${px(page.marginLeft)}px`,
+      }}
       contentEditable
       suppressContentEditableWarning
       spellCheck
@@ -444,6 +503,7 @@ export function Editor(props: Props) {
         revision={props.revision}
         labels={labels}
       />
+    </div>
     </div>
   );
 }
