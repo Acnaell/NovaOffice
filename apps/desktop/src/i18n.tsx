@@ -337,6 +337,16 @@ const ptBR = {
   "autocorrect.remove": "Excluir",
   "autocorrect.reset": "Restaurar padrão",
   "autocorrect.ok": "OK",
+  "cmd.review.wordCount": "Contar Palavras",
+  "count.document": "Estatísticas do documento",
+  "count.selection": "Estatísticas da seleção",
+  "count.pages": "Páginas",
+  "count.words": "Palavras",
+  "count.charsNoSpaces": "Caracteres (sem espaços)",
+  "count.chars": "Caracteres (com espaços)",
+  "count.paragraphs": "Parágrafos",
+  "count.lines": "Linhas",
+  "count.close": "Fechar",
 };
 
 export type MessageKey = keyof typeof ptBR;
@@ -674,6 +684,16 @@ const en: Messages = {
   "autocorrect.remove": "Delete",
   "autocorrect.reset": "Reset to defaults",
   "autocorrect.ok": "OK",
+  "cmd.review.wordCount": "Word Count",
+  "count.document": "Document statistics",
+  "count.selection": "Selection statistics",
+  "count.pages": "Pages",
+  "count.words": "Words",
+  "count.charsNoSpaces": "Characters (no spaces)",
+  "count.chars": "Characters (with spaces)",
+  "count.paragraphs": "Paragraphs",
+  "count.lines": "Lines",
+  "count.close": "Close",
 };
 
 export const LOCALES = {

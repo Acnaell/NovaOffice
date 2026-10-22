@@ -730,6 +730,31 @@ const flows = [
     await h.reload();
     return eq(t, ['eu não sei ']) ? OK('Cada correção liga e desliga; a lista Substituir/Por é editável e fica salva.') : FALHA(JSON.stringify(t));
   } },
+  { area: 'Ferramentas', name: 'Contar Palavras (Revisão, Ctrl+Shift+G): páginas, palavras, caracteres, parágrafos e linhas', run: async (h) => {
+    const long = 'palavra '.repeat(40).trim();
+    await h.reset(['Olá, mundo!', '', long]);
+    const read = async () => {
+      const rows = await h.p.locator('.word-count tr').allInnerTexts();
+      return Object.fromEntries(rows.map((r) => r.split('	')).map(([k, v]) => [k.trim(), Number(v.replace(/\D/g, ''))]));
+    };
+    await h.p.locator('.tab', { hasText: 'Revisão' }).click();
+    await h.p.locator('.big-button', { hasText: 'Contar Palavras' }).click();
+    const all = await read();
+    await h.press('Escape');
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    await h.select(0, 0, 0, 4);
+    await h.press('Control+Shift+g');
+    const part = await h.p.locator('.word-count-scope').innerText();
+    const sel = await read();
+    await h.p.locator('.word-count button', { hasText: 'Fechar' }).click();
+    const closed = await h.p.locator('.word-count').count();
+    const ok = all['Páginas'] === 1 && all['Palavras'] === 42 && all['Caracteres (sem espaços)'] === 10 + 280
+      && all['Caracteres (com espaços)'] === 11 + 319 && all['Parágrafos'] === 2 && all['Linhas'] >= 3
+      && /seleção/.test(part) && sel['Palavras'] === 1 && sel['Caracteres (com espaços)'] === 4 && closed === 0;
+    return ok
+      ? OK(`${all['Linhas']} linhas medidas na tela; com seleção, conta só o trecho. Páginas estimadas pela altura (ainda sem paginação).`)
+      : FALHA(`${JSON.stringify(all)} | ${part} ${JSON.stringify(sel)} fechou=${closed === 0}`);
+  } },
   { area: 'Ferramentas', name: 'Contagem de palavras', run: async (h) => {
     await h.reset(['uma duas', 'três']);
     const status = await h.p.locator('.statusbar').innerText();
