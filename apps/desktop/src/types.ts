@@ -7,7 +7,27 @@ export type Mark =
   | { mark: "strike" }
   | { mark: "fontFamily"; value: string }
   | { mark: "fontSize"; halfPoints: number }
-  | { mark: "color"; value: string };
+  | { mark: "color"; value: string }
+  | { mark: "highlight"; value: HighlightColor }
+  | { mark: "vertAlign"; value: "superscript" | "subscript" };
+
+/** Cores de realce do Word (nomes do OOXML, `w:highlight`). */
+export type HighlightColor =
+  | "yellow"
+  | "green"
+  | "cyan"
+  | "magenta"
+  | "blue"
+  | "red"
+  | "darkBlue"
+  | "darkCyan"
+  | "darkGreen"
+  | "darkMagenta"
+  | "darkRed"
+  | "darkYellow"
+  | "darkGray"
+  | "lightGray"
+  | "black";
 
 export type MarkKind = Mark["mark"];
 
@@ -30,8 +50,36 @@ export interface Span {
   marks: Mark[];
 }
 
+export type Align = "left" | "center" | "right" | "justify";
+export type ListKind = "bullet" | "number";
+
+/** Atributos de parágrafo (src-tauri: `ParaAttrs`). */
+export interface ParaAttrs {
+  align: Align;
+  /** Nível de recuo, 0 a 8 (1,27 cm cada); numa lista, o nível do item. */
+  indent: number;
+  /** Entrelinhas em % do simples (100, 115, 150, 200…); `null` = padrão. */
+  lineSpacing: number | null;
+  /** Pontos; `null` = padrão do estilo. */
+  spaceBefore: number | null;
+  spaceAfter: number | null;
+  list: ListKind | null;
+}
+
+/** Um atributo a mudar, no formato do comando `block.setAttr`. */
+export type ParaAttr =
+  | { attr: "align"; value: Align }
+  | { attr: "indent"; value: number }
+  | { attr: "lineSpacing"; value: number | null }
+  | { attr: "spaceBefore"; value: number | null }
+  | { attr: "spaceAfter"; value: number | null }
+  | { attr: "list"; value: ListKind | null };
+
+export const MAX_INDENT = 8;
+
 export interface BlockView {
   style: BlockStyle;
+  attrs: ParaAttrs;
   spans: Span[];
 }
 
@@ -61,6 +109,7 @@ export type TextCommand =
   | { type: "block.insert"; index: number; text: string; style?: BlockStyle }
   | { type: "block.remove"; block: number }
   | { type: "block.setStyle"; block: number; style: BlockStyle }
+  | ({ type: "block.setAttr"; block: number } & ParaAttr)
   | { type: "history.undo" }
   | { type: "history.redo" }
   | { type: "batch"; commands: TextCommand[] };

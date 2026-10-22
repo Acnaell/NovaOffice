@@ -14,6 +14,7 @@ import {
   toggledMarks,
   wordCount,
 } from "./model";
+import { DEFAULT_ATTRS } from "./formatting";
 import type { BlockView, DocView, Mark } from "./types";
 
 const bold: Mark = { mark: "bold" };
@@ -24,6 +25,7 @@ function doc(...blocks: BlockView[]): DocView {
 
 const p = (...spans: [string, Mark[]?][]): BlockView => ({
   style: "paragraph",
+  attrs: { ...DEFAULT_ATTRS },
   spans: spans.map(([text, marks = []]) => ({ text, marks })),
 });
 

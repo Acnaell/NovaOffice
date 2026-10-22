@@ -189,6 +189,10 @@ export function deleteBackward(doc: DocView, sel: Selection): Edit {
     const len = charLenBefore(blockText(doc.blocks[block]), offset);
     return deleteRange({ block, offset: offset - len }, sel.focus);
   }
+  // No início de um item de lista, o primeiro Backspace tira o marcador (Word).
+  if (doc.blocks[block].attrs?.list) {
+    return { command: { type: "block.setAttr", block, attr: "list", value: null }, selection: sel };
+  }
   if (block > 0) {
     const prevLen = blockText(doc.blocks[block - 1]).length;
     return deleteRange({ block: block - 1, offset: prevLen }, sel.focus);
