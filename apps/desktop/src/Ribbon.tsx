@@ -22,7 +22,8 @@ import { LOCALES, useI18n, type Locale, type MessageKey } from "./i18n";
 import { BrandMark, icons } from "./icons";
 import { withShortcut, type CommandId, type Profile } from "./shortcuts";
 import { THEME_MODES, type ThemeMode } from "./theme";
-import type { Align, BlockStyle, FileFormat, HighlightColor, ListKind } from "./types";
+import type { Align, BlockStyle, FileFormat, HighlightColor, ListKind, PageSetup } from "./types";
+import { isLandscape, MARGIN_PRESETS, marginsOf, PAPER_SIZES, paperOf, toCm, withMargins, withOrientation, withPaper } from "./layout";
 
 /** Comandos da faixa: os com atalho e os que só existem como botão. */
 export type RibbonCommand =
@@ -61,8 +62,8 @@ const GALLERY: BlockStyle[] = ["paragraph", "heading1", "heading2", "heading3", 
 
 /** "Arquivo" não é uma aba de comandos: abre a tela Arquivo, como no Word. */
 /** "table" é a aba contextual Layout da Tabela, que só aparece com o cursor numa tabela. */
-type Tab = "home" | "insert" | "view" | "table" | "picture";
-const TABS: ("file" | Tab)[] = ["file", "home", "insert", "view"];
+type Tab = "home" | "insert" | "layout" | "view" | "table" | "picture";
+const TABS: ("file" | Tab)[] = ["file", "home", "insert", "layout", "view"];
 
 /** Marcas que aparecem pressionadas na faixa de opções. */
 export type ActiveMarks = Record<"bold" | "italic" | "underline" | "strike" | "subscript" | "superscript", boolean>;
@@ -112,6 +113,9 @@ export interface RibbonProps {
   inTable: boolean;
   /** O cursor está numa imagem: mostra a aba Formato da Imagem. */
   onImage: boolean;
+  page: PageSetup;
+  onPage: (page: PageSetup) => void;
+  onCustomMargins: () => void;
 }
 
 /** Entrelinhas oferecidas no menu, em % (como no Word: 1,0 1,15 1,5 2,0 2,5 3,0). */
@@ -424,6 +428,62 @@ export function Ribbon(props: RibbonProps) {
     </>
   );
 
+  const decimal = locale.startsWith("pt") ? "," : ".";
+  const num = (twips: number) => String(toCm(twips)).replace(".", decimal);
+  const currentMargins = marginsOf(props.page);
+  const currentPaper = paperOf(props.page);
+  const landscape = isLandscape(props.page);
+  const layout = (
+    <>
+      <Group label={t("group.pageSetup")}>
+        <MenuButton label={t("layout.margins")} className="big-button" menuClass="layout-menu" render={(close) => (
+          <>
+            {MARGIN_PRESETS.map((m) => (
+              <MenuItem key={m.id} checked={currentMargins?.id === m.id} onSelect={() => { close(); props.onPage(withMargins(props.page, m)); }}>
+                <span className="preset">
+                  <strong>{t(`margins.${m.id}` as MessageKey)}</strong>
+                  <small>{t("layout.marginValues", { top: num(m.top), bottom: num(m.bottom), left: num(m.left), right: num(m.right) })}</small>
+                </span>
+              </MenuItem>
+            ))}
+            <div className="menu-sep" />
+            <MenuItem onSelect={() => { close(); props.onCustomMargins(); }}>{t("layout.customMargins")}…</MenuItem>
+          </>
+        )}>
+          {icons.margins}
+          <span>{t("layout.margins")}</span>
+        </MenuButton>
+        <MenuButton label={t("layout.orientation")} className="big-button" render={(close) => (
+          <>
+            <MenuItem checked={!landscape} onSelect={() => { close(); props.onPage(withOrientation(props.page, false)); }}>{t("layout.portrait")}</MenuItem>
+            <MenuItem checked={landscape} onSelect={() => { close(); props.onPage(withOrientation(props.page, true)); }}>{t("layout.landscape")}</MenuItem>
+          </>
+        )}>
+          {landscape ? icons.landscape : icons.portrait}
+          <span>{t("layout.orientation")}</span>
+        </MenuButton>
+        <MenuButton label={t("layout.size")} className="big-button" menuClass="layout-menu" render={(close) => (
+          <>
+            {PAPER_SIZES.map((paper) => (
+              <MenuItem key={paper.id} checked={currentPaper?.id === paper.id} onSelect={() => { close(); props.onPage(withPaper(props.page, paper)); }}>
+                <span className="preset">
+                  <strong>{t(`paper.${paper.id}` as MessageKey)}</strong>
+                  <small>{num(paper.width)} × {num(paper.height)} cm</small>
+                </span>
+              </MenuItem>
+            ))}
+          </>
+        )}>
+          {icons.paperSize}
+          <span>{t("layout.size")}</span>
+        </MenuButton>
+      </Group>
+      <Group label={t("group.breaks")}>
+        {big("insert.pageBreak", icons.pageBreak, t("cmd.insert.pageBreak"), tip("insert.pageBreak"))}
+      </Group>
+    </>
+  );
+
   const pictureFormat = (
     <>
       <Group label={t("group.size")}>
@@ -446,6 +506,7 @@ export function Ribbon(props: RibbonProps) {
   const panels: Record<Tab, ReactNode> = {
     home,
     insert,
+    layout,
     table: tableLayout,
     picture: pictureFormat,
     view: (

@@ -2,7 +2,7 @@
 
 Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real com o núcleo Rust real.
 
-**94 funcionam · 3 parciais · 0 com falha · 5 ainda não existem**
+**98 funcionam · 2 parciais · 0 com falha · 5 ainda não existem**
 
 | | Área | Fluxo | Observação |
 | --- | --- | --- | --- |
@@ -71,7 +71,7 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Ferramentas | Localizar (Ctrl+L): painel, resultados e destaque | Enter vai para o próximo; Esc volta ao texto com a ocorrência selecionada. |
 | ✅ | Ferramentas | Substituir e Substituir Tudo (Ctrl+U) | "Concluído. 2 substituições feitas."; Ctrl+Z desfaz o Substituir Tudo de uma vez. |
 | 🟡 | Ferramentas | Verificação ortográfica | Usa o corretor do sistema/WebView (sublinhado vermelho); o idioma não acompanha o documento e não há verificação gramatical. Precisa ser confirmado no app instalado (WebView2/WebKit). |
-| ✅ | Ferramentas | Contagem de palavras | Texto normal · 3 palavras · 2 parágrafos · Alterações não salvas |
+| ✅ | Ferramentas | Contagem de palavras | Página 1 de 1 · Texto normal · 3 palavras · 2 parágrafos · Alterações não salvas |
 | ✅ | Ferramentas | Contagem de palavras com 1 parágrafo (plural) |  |
 | ⬜ | Ferramentas | Autocorreção (maiúscula no início da frase) | Não há autocorreção (maiúscula inicial, aspas inteligentes, -- → —). |
 | ✅ | Arquivo | Salvar (.docx padrão), fechar e reabrir preserva texto e formatação | Sugere "Sem título.docx" com "Documento do Word (*.docx)" primeiro; título da janela: "ciclo.docx — Nova Text" |
@@ -102,9 +102,12 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Inserir | Imagem salva em .docx e reaberta | Imagens do Word e do LibreOffice validadas à parte (testes do núcleo). |
 | ⬜ | Inserir | Cabeçalho, rodapé e número de página | Depende das páginas reais (aba Layout). |
 | ⬜ | Inserir | Comentários | Não há comentários. |
-| 🟡 | Exibição | Página com tamanho A4 e margens; várias páginas | Uma única "folha" contínua de 4108 px de altura: sem paginação, tamanho de papel ou margens configuráveis. |
+| ✅ | Exibição | Página com tamanho A4 e margens; várias páginas | 5 folhas A4 (21 × 29,7 cm); nenhum parágrafo atravessa a margem de baixo; "Página 1 de 5" na barra de status. |
 | ⬜ | Exibição | Zoom (Ctrl + roda / controle de zoom) | Não há controle de zoom no app. |
 | ✅ | Exibição | Tema claro/escuro | Recurso que o Word não tem nesta forma. |
 | ⬜ | Exibição | Régua | Não há régua. |
-| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 7 ms por tecla. |
-| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 17 ms por tecla. |
+| ✅ | Layout | Margens prontas (Normal, ABNT…) e personalizadas | Inclui ABNT (3 cm em cima e à esquerda, 2 cm embaixo e à direita). |
+| ✅ | Layout | Orientação paisagem e tamanho do papel | Ofício em paisagem; Ctrl+Z desfaz a mudança de página. |
+| ✅ | Layout | Papel e margens salvos no .docx | w:pgSz e w:pgMar como no Word. |
+| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 10 ms por tecla. |
+| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 27 ms por tecla. |

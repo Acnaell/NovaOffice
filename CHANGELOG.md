@@ -8,6 +8,26 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Páginas na tela**: o documento aparece em folhas separadas do tamanho do papel. Um parágrafo ou
+  uma tabela que não cabe no fim de uma página passa para a seguinte, e a quebra de página começa uma
+  folha nova. A barra de status mostra "Página X de Y".
+- Aba **Layout**:
+  - **Margens**: Normal, ABNT (3 cm em cima e à esquerda, 2 cm embaixo e à direita), Estreita,
+    Moderada, Larga e Margens Personalizadas, em centímetros;
+  - **Orientação**: retrato ou paisagem;
+  - **Tamanho**: A4, Carta, Ofício, A5 e A3.
+
+  Tudo isso entra no desfazer.
+- Papel e margens são lidos e gravados em .docx (`w:pgSz`/`w:pgMar`) e .odt (`style:page-layout`) e
+  valem para Imprimir e para o PDF.
+
+### Alterado
+
+- A marca "Quebra de Página" só aparece com Mostrar Tudo (¶), como no Word, porque a quebra agora começa
+  uma folha nova.
+
 ## [0.1.5] - 2026-10-22
 
 ### Adicionado

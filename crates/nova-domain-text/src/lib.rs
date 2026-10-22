@@ -14,6 +14,100 @@ pub use format::{
     MAX_TABLE_SIZE,
 };
 
+/// Página do documento, em twips (1/20 de ponto, 1/1440 de polegada), como no
+/// `w:sectPr` do Word. O padrão é A4 retrato com margens de 2,5 cm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageSetup {
+    pub width: u32,
+    pub height: u32,
+    pub margin_top: u32,
+    pub margin_bottom: u32,
+    pub margin_left: u32,
+    pub margin_right: u32,
+}
+
+impl Default for PageSetup {
+    fn default() -> Self {
+        PageSetup {
+            width: 11906,
+            height: 16838,
+            margin_top: 1417,
+            margin_bottom: 1417,
+            margin_left: 1417,
+            margin_right: 1417,
+        }
+    }
+}
+
+/// Uma polegada em twips: menor lado do papel e menor área de texto.
+const INCH: u32 = 1440;
+
+impl PageSetup {
+    const KEYS: [&'static str; 6] = [
+        "pageWidth",
+        "pageHeight",
+        "marginTop",
+        "marginBottom",
+        "marginLeft",
+        "marginRight",
+    ];
+
+    fn values(&self) -> [u32; 6] {
+        [
+            self.width,
+            self.height,
+            self.margin_top,
+            self.margin_bottom,
+            self.margin_left,
+            self.margin_right,
+        ]
+    }
+
+    pub fn validate(&self) -> Result<(), DomainError> {
+        let ok = (INCH..=22 * INCH).contains(&self.width)
+            && (INCH..=22 * INCH).contains(&self.height)
+            && self.margin_left + self.margin_right + INCH <= self.width
+            && self.margin_top + self.margin_bottom + INCH <= self.height;
+        if ok {
+            Ok(())
+        } else {
+            Err(DomainError::InvalidAttr(format!(
+                "página {self:?}: papel de 1 a 22 polegadas e pelo menos 1 polegada de texto"
+            )))
+        }
+    }
+
+    fn to_settings(self) -> Vec<(String, Option<AttrValue>)> {
+        Self::KEYS
+            .iter()
+            .zip(self.values())
+            .map(|(k, v)| (k.to_string(), Some(AttrValue::Number(f64::from(v)))))
+            .collect()
+    }
+
+    fn from_settings(map: &AttrMap) -> PageSetup {
+        let d = PageSetup::default();
+        let get = |key: &str, default: u32| match map.get(key) {
+            Some(AttrValue::Number(n)) if *n >= 0.0 && *n <= f64::from(22 * INCH) => *n as u32,
+            _ => default,
+        };
+        let page = PageSetup {
+            width: get("pageWidth", d.width),
+            height: get("pageHeight", d.height),
+            margin_top: get("marginTop", d.margin_top),
+            margin_bottom: get("marginBottom", d.margin_bottom),
+            margin_left: get("marginLeft", d.margin_left),
+            margin_right: get("marginRight", d.margin_right),
+        };
+        if page.validate().is_ok() {
+            page
+        } else {
+            d
+        }
+    }
+}
+
 /// Tipos de imagem aceitos (os que o Word, o LibreOffice e o navegador abrem).
 pub const MEDIA_TYPES: &[&str] = &[
     "image/png",
@@ -26,7 +120,7 @@ pub const MEDIA_TYPES: &[&str] = &[
 /// Maior arquivo embutido: 25 MB.
 pub const MAX_MEDIA_BYTES: usize = 25 * 1024 * 1024;
 
-use nova_crdt::{is_boundary, utf16_len, AttrMap, ClientId, CrdtError, Replica};
+use nova_crdt::{is_boundary, utf16_len, AttrMap, AttrValue, ClientId, CrdtError, Replica};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -94,6 +188,9 @@ pub enum TextCommand {
         #[serde(flatten)]
         attr: ParaAttr,
     },
+    /// Tamanho do papel e margens (aba Layout): `{"type":"page.set","page":{…}}`.
+    #[serde(rename = "page.set")]
+    SetPage { page: PageSetup },
     #[serde(rename = "history.undo")]
     Undo,
     #[serde(rename = "history.redo")]
@@ -163,6 +260,9 @@ pub enum TextEvent {
     /// O documento voltou a um estado anterior; a interface deve redesenhar tudo.
     Undone,
     Redone,
+    PageSet {
+        page: PageSetup,
+    },
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -481,6 +581,11 @@ impl TextDocument {
                 self.replica.set_block_attrs(block, &[attr.to_change()])?;
                 TextEvent::BlockAttrSet { block, attr }
             }
+            TextCommand::SetPage { page } => {
+                page.validate()?;
+                self.replica.set_settings(&page.to_settings());
+                TextEvent::PageSet { page }
+            }
             TextCommand::Undo => {
                 if !self.replica.undo() {
                     return Ok(Vec::new());
@@ -551,6 +656,19 @@ impl TextDocument {
 
     pub fn block_attrs(&self, block: u32) -> Result<ParaAttrs, DomainError> {
         Ok(ParaAttrs::from_attr_map(&self.replica.block_attrs(block)?))
+    }
+
+    /// Define a página ao abrir um arquivo, sem entrar no desfazer.
+    pub fn load_page_setup(&mut self, page: PageSetup) -> Result<(), DomainError> {
+        page.validate()?;
+        self.replica.set_settings(&page.to_settings());
+        self.replica.clear_history();
+        Ok(())
+    }
+
+    /// Tamanho do papel e margens.
+    pub fn page_setup(&self) -> PageSetup {
+        PageSetup::from_settings(&self.replica.settings())
     }
 
     /// Guarda um arquivo embutido (imagem). Não entra no desfazer.

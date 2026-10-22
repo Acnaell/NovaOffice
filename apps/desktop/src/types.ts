@@ -121,7 +121,22 @@ export interface DocView {
   path: string | null;
   title: string;
   dirty: boolean;
+  /** Papel e margens (aba Layout). */
+  page: PageSetup;
 }
+
+/** Página em twips (1/1440 de polegada), como no Word. */
+export interface PageSetup {
+  width: number;
+  height: number;
+  marginTop: number;
+  marginBottom: number;
+  marginLeft: number;
+  marginRight: number;
+}
+
+/** A4 retrato com margens de 2,5 cm, o padrão do núcleo. */
+export const DEFAULT_PAGE: PageSetup = { width: 11906, height: 16838, marginTop: 1417, marginBottom: 1417, marginLeft: 1417, marginRight: 1417 };
 
 /** Posição: bloco e offset em unidades UTF-16 (o mesmo que `string.length`). */
 export interface Pos {
@@ -139,6 +154,7 @@ export type TextCommand =
   | { type: "block.mergeNext"; block: number }
   | { type: "block.insert"; index: number; text: string; style?: BlockStyle }
   | { type: "block.remove"; block: number }
+  | { type: "page.set"; page: PageSetup }
   | { type: "block.setStyle"; block: number; style: BlockStyle }
   | ({ type: "block.setAttr"; block: number } & ParaAttr)
   | { type: "history.undo" }
@@ -157,6 +173,7 @@ export interface ViewPatch {
   path: string | null;
   title: string;
   dirty: boolean;
+  page?: PageSetup;
 }
 
 export interface DispatchResult {
@@ -170,7 +187,7 @@ export function applyPatch(view: DocView, patch: ViewPatch): DocView | null {
   blocks.splice(patch.start, patch.deleteCount, ...patch.blocks);
   if (blocks.length !== patch.blockCount) return null;
   const { canUndo, canRedo, path, title, dirty, format } = patch;
-  return { blocks, canUndo, canRedo, path, title, dirty, format };
+  return { blocks, canUndo, canRedo, path, title, dirty, format, page: patch.page ?? view.page };
 }
 
 export interface FormatInfo {

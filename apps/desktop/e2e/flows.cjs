@@ -949,9 +949,21 @@ const flows = [
   { area: 'Exibição', name: 'Página com tamanho A4 e margens; várias páginas', run: async (h) => {
     const many = Array.from({ length: 120 }, (_, i) => `Parágrafo ${i + 1} com algum texto para ocupar espaço na página.`);
     await h.reset(many);
-    const pages = await h.p.locator('.page').count();
-    const box = await h.p.locator('.page').boundingBox();
-    return pages > 1 ? OK() : PARCIAL(`Uma única "folha" contínua de ${Math.round(box.height)} px de altura: sem paginação, tamanho de papel ou margens configuráveis.`);
+    const sheets = await h.p.locator('.sheet').count();
+    const sheet = await h.p.locator('.sheet').first().boundingBox();
+    // Nenhum parágrafo pode atravessar o fim da área de texto de uma folha.
+    const crossing = await h.p.evaluate(() => {
+      const page = document.querySelector('.page');
+      const stride = document.querySelector('.sheet').offsetHeight + 24;
+      const end = (k) => k * stride + document.querySelector('.sheet').offsetHeight - parseFloat(getComputedStyle(page).paddingBottom);
+      return Array.from(page.children).filter((b) => {
+        const k = Math.floor(b.offsetTop / stride);
+        return b.offsetTop + b.offsetHeight > end(k) + 1;
+      }).length;
+    });
+    const status = await h.p.locator('.statusbar').innerText();
+    const ok = sheets > 1 && Math.abs(sheet.width - 794) < 2 && Math.abs(sheet.height - 1123) < 2 && crossing === 0 && new RegExp(`Página 1 de ${sheets}`).test(status);
+    return ok ? OK(`${sheets} folhas A4 (21 × 29,7 cm); nenhum parágrafo atravessa a margem de baixo; "Página 1 de ${sheets}" na barra de status.`) : FALHA(`folhas=${sheets} ${JSON.stringify(sheet)} atravessam=${crossing} ${status}`);
   } },
   { area: 'Exibição', name: 'Zoom (Ctrl + roda / controle de zoom)', run: async () => AUSENTE('Não há controle de zoom no app.') },
   { area: 'Exibição', name: 'Tema claro/escuro', run: async (h) => {
@@ -964,6 +976,51 @@ const flows = [
     return theme === 'dark' ? OK('Recurso que o Word não tem nesta forma.') : FALHA(`data-theme=${theme}`);
   } },
   { area: 'Exibição', name: 'Régua', run: async () => AUSENTE('Não há régua.') },
+
+  // ───────────── Layout
+  { area: 'Layout', name: 'Margens prontas (Normal, ABNT…) e personalizadas', run: async (h) => {
+    await h.reset(['texto']);
+    await h.p.locator('.tab', { hasText: 'Layout' }).click();
+    await h.p.locator('button[aria-label="Margens"]').click();
+    await h.p.locator('.popover .menu-item', { hasText: 'ABNT' }).click(); await h.settle(200);
+    const abnt = (await h.doc()).page;
+    await h.p.locator('button[aria-label="Margens"]').click();
+    await h.p.locator('.popover .menu-item', { hasText: 'Margens Personalizadas' }).click();
+    const inputs = h.p.locator('.dialog input');
+    await inputs.nth(0).fill('2'); await inputs.nth(2).fill('2,5');
+    await h.p.keyboard.press('Enter'); await h.settle(200);
+    const custom = (await h.doc()).page;
+    const padding = await h.p.locator('.page').evaluate((el) => getComputedStyle(el).paddingLeft);
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    const cm = (t) => Math.round((t / 1440) * 2.54 * 100) / 100;
+    const ok = cm(abnt.marginTop) === 3 && cm(abnt.marginLeft) === 3 && cm(abnt.marginRight) === 2 && cm(abnt.marginBottom) === 2 && cm(custom.marginTop) === 2 && cm(custom.marginLeft) === 2.5 && Math.abs(parseFloat(padding) - 94.5) < 1;
+    return ok ? OK('Inclui ABNT (3 cm em cima e à esquerda, 2 cm embaixo e à direita).') : FALHA(`${JSON.stringify(abnt)} ${JSON.stringify(custom)} padding=${padding}`);
+  } },
+  { area: 'Layout', name: 'Orientação paisagem e tamanho do papel', run: async (h) => {
+    await h.reset(['texto']);
+    await h.p.locator('.tab', { hasText: 'Layout' }).click();
+    await h.p.locator('button[aria-label="Orientação"]').click();
+    await h.p.locator('.popover .menu-item', { hasText: 'Paisagem' }).click(); await h.settle(200);
+    const landscape = await h.p.locator('.sheet').first().boundingBox();
+    await h.p.locator('button[aria-label="Tamanho"]').click();
+    await h.p.locator('.popover .menu-item', { hasText: 'Ofício' }).click(); await h.settle(200);
+    const legal = (await h.doc()).page;
+    await h.press('Control+z');
+    const undone = (await h.doc()).page;
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    const ok = Math.abs(landscape.width - 1123) < 2 && legal.width === 20160 && legal.height === 12240 && undone.width === 16838;
+    return ok ? OK('Ofício em paisagem; Ctrl+Z desfaz a mudança de página.') : FALHA(`${JSON.stringify(landscape)} ${JSON.stringify(legal)} ${JSON.stringify(undone)}`);
+  } },
+  { area: 'Layout', name: 'Papel e margens salvos no .docx', run: async (h) => {
+    await core('new_document');
+    await core('dispatch', { command: { type: 'page.set', page: { width: 16838, height: 11906, marginTop: 1701, marginBottom: 1134, marginLeft: 1701, marginRight: 1134 } } });
+    await core('save_document', { path: '/tmp/nova-flows/pagina.docx' });
+    await core('new_document');
+    const back = await core('open_document', { path: '/tmp/nova-flows/pagina.docx' });
+    const xml = require('child_process').execSync('unzip -p /tmp/nova-flows/pagina.docx word/document.xml').toString();
+    const ok = back.page.width === 16838 && back.page.marginLeft === 1701 && /w:orient="landscape"/.test(xml);
+    return ok ? OK('w:pgSz e w:pgMar como no Word.') : FALHA(JSON.stringify(back.page));
+  } },
 
   // ───────────── Desempenho
   { area: 'Desempenho', name: 'Digitar num documento longo (≈300 parágrafos)', run: async (h) => {

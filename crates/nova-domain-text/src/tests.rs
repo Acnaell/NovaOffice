@@ -941,3 +941,28 @@ fn imagens() {
     let copy = TextDocument::load(2, &doc.save()).unwrap();
     assert_eq!(copy.media("f00").unwrap().1, vec![137, 80, 78, 71]);
 }
+
+#[test]
+fn pagina_e_margens() {
+    let mut doc = TextDocument::new(1);
+    assert_eq!(doc.page_setup(), PageSetup::default());
+    let landscape = PageSetup {
+        width: 16838,
+        height: 11906,
+        ..PageSetup::default()
+    };
+    doc.execute(TextCommand::SetPage { page: landscape })
+        .unwrap();
+    assert_eq!(doc.page_setup(), landscape);
+    let bad = PageSetup {
+        margin_left: 9000,
+        margin_right: 9000,
+        ..PageSetup::default()
+    };
+    assert!(doc.execute(TextCommand::SetPage { page: bad }).is_err());
+    doc.execute(TextCommand::Undo).unwrap();
+    assert_eq!(doc.page_setup(), PageSetup::default());
+    let json = r#"{"type":"page.set","page":{"width":12240,"height":15840,"marginTop":1440,"marginBottom":1440,"marginLeft":1440,"marginRight":1440}}"#;
+    doc.execute(serde_json::from_str(json).unwrap()).unwrap();
+    assert_eq!(doc.page_setup().width, 12240);
+}

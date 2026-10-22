@@ -19,11 +19,12 @@ import {
 } from "./model";
 import { DEFAULT_ATTRS } from "./formatting";
 import type { BlockView, DocView, Mark } from "./types";
+import { DEFAULT_PAGE } from "./types";
 
 const bold: Mark = { mark: "bold" };
 
 function doc(...blocks: BlockView[]): DocView {
-  return { blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null };
+  return { blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE };
 }
 
 const p = (...spans: [string, Mark[]?][]): BlockView => ({

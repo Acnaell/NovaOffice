@@ -60,7 +60,7 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
     for (name, body) in [
         ("META-INF/manifest.xml", manifest),
         ("meta.xml", META.to_string()),
-        ("styles.xml", STYLES.to_string()),
+        ("styles.xml", styles_xml(doc.page_setup())),
         ("content.xml", content),
     ] {
         zip.start_file(name, deflated).expect("zip em memória");
@@ -72,6 +72,57 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         zip.write_all(data).expect("zip em memória");
     }
     zip.finish().expect("zip em memória").into_inner()
+}
+
+/// Estilos fixos mais a página (papel e margens) do documento.
+fn styles_xml(page: nova_domain_text::PageSetup) -> String {
+    let cm = |twips: u32| format!("{:.3}cm", f64::from(twips) / 1440.0 * 2.54);
+    let orientation = if page.width > page.height {
+        "landscape"
+    } else {
+        "portrait"
+    };
+    let layout = format!(
+        r#"<office:automatic-styles><style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="{}" fo:page-height="{}" style:print-orientation="{orientation}" fo:margin-top="{}" fo:margin-bottom="{}" fo:margin-left="{}" fo:margin-right="{}"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"/></office:master-styles></office:document-styles>"#,
+        cm(page.width),
+        cm(page.height),
+        cm(page.margin_top),
+        cm(page.margin_bottom),
+        cm(page.margin_left),
+        cm(page.margin_right)
+    );
+    STYLES.replacen("</office:document-styles>", &layout, 1)
+}
+
+/// Página do styles.xml: a do primeiro `style:page-layout-properties`.
+fn read_page(xml: &str) -> Option<nova_domain_text::PageSetup> {
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e))
+                if e.local_name().as_ref() == b"page-layout-properties" =>
+            {
+                let twips = |k: &[u8]| {
+                    attr(&e, k)
+                        .and_then(|v| length_cm(&v))
+                        .map(|cm| (cm / 2.54 * 1440.0).round().max(0.0) as u32)
+                };
+                let d = nova_domain_text::PageSetup::default();
+                return Some(nova_domain_text::PageSetup {
+                    width: twips(b"page-width")?,
+                    height: twips(b"page-height")?,
+                    margin_top: twips(b"margin-top").unwrap_or(d.margin_top),
+                    margin_bottom: twips(b"margin-bottom").unwrap_or(d.margin_bottom),
+                    margin_left: twips(b"margin-left").unwrap_or(d.margin_left),
+                    margin_right: twips(b"margin-right").unwrap_or(d.margin_right),
+                });
+            }
+            Ok(Event::Eof) | Err(_) => return None,
+            _ => {}
+        }
+        buf.clear();
+    }
 }
 
 fn esc(text: &str) -> String {
@@ -502,10 +553,13 @@ const STYLES: &str = r##"<?xml version="1.0" encoding="UTF-8"?><office:document-
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media) = read_document(bytes)?;
-    let doc = TextDocument::from_paragraphs(client, &paragraphs)?;
+    let (paragraphs, media, page) = read_document(bytes)?;
+    let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
         doc.put_media(&id, &mime, &data)?;
+    }
+    if let Some(page) = page.filter(|p| p.validate().is_ok()) {
+        doc.load_page_setup(page)?;
     }
     Ok(doc)
 }
@@ -798,7 +852,13 @@ fn resolve(
     (own.marks, own.attrs, block)
 }
 
-fn read_document(bytes: &[u8]) -> Result<(Vec<Paragraph>, Vec<crate::docx::Media>), AppError> {
+type Document = (
+    Vec<Paragraph>,
+    Vec<crate::docx::Media>,
+    Option<nova_domain_text::PageSetup>,
+);
+
+fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     // Imagens do pacote (Pictures/…), lidas antes do texto.
     let mut pictures: HashMap<String, Vec<u8>> = HashMap::new();
     {
@@ -838,8 +898,10 @@ fn read_document(bytes: &[u8]) -> Result<(Vec<Paragraph>, Vec<crate::docx::Media
     let content = read("content.xml")?.ok_or_else(|| invalid("content.xml ausente"))?;
     let mut styles = HashMap::new();
     let mut lists = HashMap::new();
+    let mut page = None;
     if let Some(s) = read("styles.xml")? {
         read_styles(&s, &mut styles, &mut lists);
+        page = read_page(&s);
     }
     read_styles(&content, &mut styles, &mut lists);
 
@@ -1128,7 +1190,7 @@ fn read_document(bytes: &[u8]) -> Result<(Vec<Paragraph>, Vec<crate::docx::Media
         out.push(Paragraph::default());
     }
     crate::docx::normalize(&mut out);
-    Ok((out, media))
+    Ok((out, media, page))
 }
 
 #[cfg(test)]

@@ -63,6 +63,8 @@ pub struct Replica {
     /// Arquivos embutidos (imagens), por id: `{mime, data}`. Fora do desfazer:
     /// desfazer a inserção de uma imagem remove o parágrafo, não o arquivo.
     media: MapRef,
+    /// Configurações do documento (página, margens…): chave → valor. Entram no desfazer.
+    settings: MapRef,
     undo: UndoManager<()>,
 }
 
@@ -75,11 +77,14 @@ impl Replica {
         });
         let blocks = doc.get_or_insert_array("blocks");
         let media = doc.get_or_insert_map("media");
-        let undo = UndoManager::with_scope_and_options(&doc, &blocks, UndoOptions::default());
+        let settings = doc.get_or_insert_map("settings");
+        let mut undo = UndoManager::with_scope_and_options(&doc, &blocks, UndoOptions::default());
+        undo.expand_scope(&settings);
         Self {
             doc,
             blocks,
             media,
+            settings,
             undo,
         }
     }
@@ -185,6 +190,33 @@ impl Replica {
             }
         }
         Ok(())
+    }
+
+    /// Configurações do documento.
+    pub fn settings(&self) -> AttrMap {
+        let txn = self.doc.transact();
+        self.settings
+            .iter(&txn)
+            .filter_map(|(key, value)| match value {
+                Out::Any(any) => from_any(&any).map(|v| (key.to_string(), v)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Define ou remove (`None`) configurações do documento.
+    pub fn set_settings(&self, changes: &[(String, Option<AttrValue>)]) {
+        let mut txn = self.doc.transact_mut();
+        for (key, value) in changes {
+            match value {
+                Some(value) => {
+                    self.settings.insert(&mut txn, key.as_str(), to_any(value));
+                }
+                None => {
+                    self.settings.remove(&mut txn, key);
+                }
+            }
+        }
     }
 
     /// Guarda um arquivo embutido. O id é escolhido por quem chama (em geral, um
@@ -461,6 +493,16 @@ fn to_any(value: &AttrValue) -> Any {
     }
 }
 
+fn from_any(any: &Any) -> Option<AttrValue> {
+    Some(match any {
+        Any::Bool(b) => AttrValue::Bool(*b),
+        Any::String(s) => AttrValue::Text(s.to_string()),
+        Any::Number(n) => AttrValue::Number(*n),
+        Any::BigInt(n) => AttrValue::Number(*n as f64),
+        _ => return None,
+    })
+}
+
 fn to_attrs(map: &AttrMap) -> Attrs {
     map.iter()
         .map(|(k, v)| (k.as_str().into(), to_any(v)))
@@ -694,5 +736,23 @@ mod tests {
             Some(("image/png".into(), vec![137, 80, 78, 71]))
         );
         assert_eq!(b.media("outro"), None);
+    }
+
+    #[test]
+    fn configuracoes_entram_no_desfazer_e_viajam() {
+        let mut a = Replica::new(1);
+        a.set_settings(&[("pageWidth".into(), Some(AttrValue::Number(11906.0)))]);
+        a.checkpoint();
+        a.set_settings(&[("pageWidth".into(), Some(AttrValue::Number(16838.0)))]);
+        let b = Replica::from_update(2, &a.encode_state()).unwrap();
+        assert_eq!(
+            b.settings().get("pageWidth"),
+            Some(&AttrValue::Number(16838.0))
+        );
+        assert!(a.undo());
+        assert_eq!(
+            a.settings().get("pageWidth"),
+            Some(&AttrValue::Number(11906.0))
+        );
     }
 }

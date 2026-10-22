@@ -471,16 +471,32 @@ select {
   padding: 32px 16px 64px;
 }
 
-/* Página A4 (210 mm) com margens de 2,5 cm. */
-.page {
-  max-width: 210mm;
-  min-height: 297mm;
+/* Folhas de papel atrás do texto: tamanho e margens vêm da aba Layout
+   (estilo em linha); a paginação empurra o que não cabe para a folha seguinte. */
+.paper {
+  position: relative;
+  max-width: 100%;
   margin: 0 auto;
-  padding: 25mm;
+}
+
+.sheets {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
   background: var(--page-bg);
+  box-shadow: var(--page-shadow);
+}
+
+.page {
+  position: relative;
   color: var(--page-text);
   color-scheme: light;
-  box-shadow: var(--page-shadow);
   font-family: "Calibri", "Carlito", "Segoe UI", sans-serif;
   font-size: 11pt;
   line-height: 1.5;
@@ -1728,7 +1744,11 @@ select {
    Fica fora do texto (pseudo-elemento), sem mudar as posições do cursor. */
 .page .block.page-break {
   position: relative;
-  margin-top: 36px;
+}
+
+/* A marca "Quebra de Página" aparece com Mostrar Tudo (¶), como no Word. */
+.page:not(.show-marks) .block.page-break::before {
+  display: none;
 }
 
 .page .block.page-break::before {
@@ -1966,5 +1986,45 @@ select {
 
   .page .image-handle {
     display: none !important;
+  }
+}
+
+/* Margens Personalizadas e menus da aba Layout. */
+.dialog-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.popover.layout-menu .menu-item {
+  min-height: 40px;
+}
+
+.preset strong,
+.preset small {
+  display: block;
+}
+
+.preset strong {
+  font-weight: 600;
+}
+
+.preset small {
+  color: var(--chrome-muted);
+  font-size: 11.5px;
+}
+
+@media print {
+  .paper {
+    width: auto !important;
+  }
+
+  .sheets {
+    display: none;
+  }
+
+  .page {
+    padding: 0 !important;
+    min-height: 0 !important;
   }
 }

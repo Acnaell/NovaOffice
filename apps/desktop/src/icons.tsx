@@ -325,6 +325,30 @@ export const icons = {
       <path d="M16.5 11.5s1.5 1.8 1.5 2.8a1.5 1.5 0 0 1-3 0c0-1 1.5-2.8 1.5-2.8z" />
     </Icon>
   ),
+  margins: (
+    <Icon>
+      <path d="M4.5 2.5h11v15h-11z" />
+      <path d="M4.5 5.5h11M4.5 14.5h11M7.5 2.5v15M12.5 2.5v15" strokeDasharray="1.5 1.5" />
+    </Icon>
+  ),
+  portrait: (
+    <Icon>
+      <path d="M5.5 2.5h9v15h-9z" />
+      <path d="M8 6h4M8 9h4M8 12h4" />
+    </Icon>
+  ),
+  landscape: (
+    <Icon>
+      <path d="M2.5 5.5h15v9h-15z" />
+      <path d="M6 8.5h8M6 11.5h8" />
+    </Icon>
+  ),
+  paperSize: (
+    <Icon>
+      <path d="M3.5 5.5h8v12h-8z" />
+      <path d="M7.5 5.5V2.5h9v12h-5" />
+    </Icon>
+  ),
   picture: (
     <Icon>
       <rect x="2.5" y="3.5" width="15" height="13" rx="1.5" />
