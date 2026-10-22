@@ -274,6 +274,20 @@ impl Editor {
         .map_err(|e| io_error("gravando", &path, e))
     }
 
+    /// Guarda uma imagem no documento (a inserção do parágrafo vem depois, por
+    /// `block.insert` + `block.setAttr image`, para entrar no desfazer).
+    pub fn add_image(&self, data: &[u8]) -> Result<nova_domain_text::ImageRef, String> {
+        nova_app::media::embed(self.session.document(), data, None).ok_or_else(|| {
+            "formato de imagem não suportado (use PNG, JPEG, GIF, BMP ou WebP) ou arquivo grande demais (máximo 25 MB)".to_string()
+        })
+    }
+
+    /// Imagem embutida como data URL, para a interface desenhar.
+    pub fn media(&self, id: &str) -> Option<String> {
+        let (mime, data) = self.session.document().media(id)?;
+        Some(nova_app::media::data_url(&mime, &data))
+    }
+
     /// Estado completo em .nova, para a recuperação automática.
     pub fn snapshot_bytes(&self) -> Vec<u8> {
         file::encode(self.session.document())

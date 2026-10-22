@@ -60,6 +60,9 @@ pub struct Span {
 pub struct Replica {
     doc: Doc,
     blocks: ArrayRef,
+    /// Arquivos embutidos (imagens), por id: `{mime, data}`. Fora do desfazer:
+    /// desfazer a inserção de uma imagem remove o parágrafo, não o arquivo.
+    media: MapRef,
     undo: UndoManager<()>,
 }
 
@@ -71,8 +74,14 @@ impl Replica {
             ..Options::default()
         });
         let blocks = doc.get_or_insert_array("blocks");
+        let media = doc.get_or_insert_map("media");
         let undo = UndoManager::with_scope_and_options(&doc, &blocks, UndoOptions::default());
-        Self { doc, blocks, undo }
+        Self {
+            doc,
+            blocks,
+            media,
+            undo,
+        }
     }
 
     /// Cria uma réplica a partir do estado completo de outra. O estado
@@ -176,6 +185,38 @@ impl Replica {
             }
         }
         Ok(())
+    }
+
+    /// Guarda um arquivo embutido. O id é escolhido por quem chama (em geral, um
+    /// hash do conteúdo): o mesmo id com o mesmo conteúdo não duplica nada.
+    pub fn put_media(&self, id: &str, mime: &str, data: &[u8]) {
+        let mut txn = self.doc.transact_mut();
+        if self.media.get(&txn, id).is_some() {
+            return;
+        }
+        let mut entry = std::collections::HashMap::new();
+        entry.insert("mime".to_string(), Any::String(mime.into()));
+        entry.insert("data".to_string(), Any::Buffer(data.into()));
+        self.media.insert(&mut txn, id, Any::Map(entry.into()));
+    }
+
+    /// Arquivo embutido: (tipo MIME, bytes).
+    pub fn media(&self, id: &str) -> Option<(String, Vec<u8>)> {
+        let txn = self.doc.transact();
+        match self.media.get(&txn, id)? {
+            Out::Any(Any::Map(entry)) => {
+                let mime = match entry.get("mime")? {
+                    Any::String(s) => s.to_string(),
+                    _ => return None,
+                };
+                let data = match entry.get("data")? {
+                    Any::Buffer(b) => b.to_vec(),
+                    _ => return None,
+                };
+                Some((mime, data))
+            }
+            _ => None,
+        }
     }
 
     /// Insere texto. Sem `attrs`, o texto herda a formatação à esquerda (como
@@ -640,5 +681,18 @@ mod tests {
             r.apply_update(&[0xff, 0xff, 0xff]),
             Err(CrdtError::InvalidUpdate(_))
         ));
+    }
+
+    #[test]
+    fn arquivos_embutidos_viajam_com_o_documento() {
+        let a = Replica::new(1);
+        a.put_media("abc", "image/png", &[137, 80, 78, 71]);
+        a.put_media("abc", "image/png", &[0]); // mesmo id: não sobrescreve
+        let b = Replica::from_update(2, &a.encode_state()).unwrap();
+        assert_eq!(
+            b.media("abc"),
+            Some(("image/png".into(), vec![137, 80, 78, 71]))
+        );
+        assert_eq!(b.media("outro"), None);
     }
 }

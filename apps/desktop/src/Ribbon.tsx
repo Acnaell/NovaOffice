@@ -28,6 +28,12 @@ import type { Align, BlockStyle, FileFormat, HighlightColor, ListKind } from "./
 export type RibbonCommand =
   | CommandId
   | "insert.dateTime"
+  | "insert.picture"
+  | "image.size25"
+  | "image.size50"
+  | "image.size75"
+  | "image.size100"
+  | "image.delete"
   | "table.insertAbove"
   | "table.insertBelow"
   | "table.insertLeft"
@@ -55,7 +61,7 @@ const GALLERY: BlockStyle[] = ["paragraph", "heading1", "heading2", "heading3", 
 
 /** "Arquivo" não é uma aba de comandos: abre a tela Arquivo, como no Word. */
 /** "table" é a aba contextual Layout da Tabela, que só aparece com o cursor numa tabela. */
-type Tab = "home" | "insert" | "view" | "table";
+type Tab = "home" | "insert" | "view" | "table" | "picture";
 const TABS: ("file" | Tab)[] = ["file", "home", "insert", "view"];
 
 /** Marcas que aparecem pressionadas na faixa de opções. */
@@ -104,6 +110,8 @@ export interface RibbonProps {
   onInsertTable: (rows: number, cols: number) => void;
   /** O cursor está numa tabela: mostra a aba Layout da Tabela. */
   inTable: boolean;
+  /** O cursor está numa imagem: mostra a aba Formato da Imagem. */
+  onImage: boolean;
 }
 
 /** Entrelinhas oferecidas no menu, em % (como no Word: 1,0 1,15 1,5 2,0 2,5 3,0). */
@@ -114,8 +122,8 @@ export function Ribbon(props: RibbonProps) {
   const [tab, setTab] = useState<Tab>("home");
   // Saindo da tabela, a aba Layout da Tabela some e volta a Página Inicial.
   useEffect(() => {
-    if (!props.inTable && tab === "table") setTab("home");
-  }, [props.inTable, tab]);
+    if ((!props.inTable && tab === "table") || (!props.onImage && tab === "picture")) setTab("home");
+  }, [props.inTable, props.onImage, tab]);
   const [collapsed, setCollapsed] = useState(false);
 
   const label = (command: CommandId) => t(`cmd.${command}` as MessageKey);
@@ -371,6 +379,9 @@ export function Ribbon(props: RibbonProps) {
       <Group label={t("group.pages")}>
         {big("insert.pageBreak", icons.pageBreak, t("cmd.insert.pageBreak"), tip("insert.pageBreak"))}
       </Group>
+      <Group label={t("group.illustrations")}>
+        {big("insert.picture", icons.picture, t("insert.picture"))}
+      </Group>
       <Group label={t("group.tables")}>
         <MenuButton label={t("insert.table")} className="big-button" menuClass="tables" render={(close) => <TablePicker close={close} onPick={props.onInsertTable} />}>
           {icons.table}
@@ -413,10 +424,30 @@ export function Ribbon(props: RibbonProps) {
     </>
   );
 
+  const pictureFormat = (
+    <>
+      <Group label={t("group.size")}>
+        {big("image.size25", icons.picture, "25%", t("image.width", { percent: 25 }))}
+        {big("image.size50", icons.picture, "50%", t("image.width", { percent: 50 }))}
+        {big("image.size75", icons.picture, "75%", t("image.width", { percent: 75 }))}
+        {big("image.size100", icons.picture, "100%", t("image.width", { percent: 100 }))}
+      </Group>
+      <Group label={t("group.arrange")}>
+        {big("para.alignLeft", icons.alignLeft, t("image.left"), tip("para.alignLeft"))}
+        {big("para.alignCenter", icons.alignCenter, t("image.center"), tip("para.alignCenter"))}
+        {big("para.alignRight", icons.alignRight, t("image.right"), tip("para.alignRight"))}
+      </Group>
+      <Group label={t("group.delete")}>
+        {big("image.delete", icons.tableDelete, t("image.delete"))}
+      </Group>
+    </>
+  );
+
   const panels: Record<Tab, ReactNode> = {
     home,
     insert,
     table: tableLayout,
+    picture: pictureFormat,
     view: (
       <>
         <Group label={t("group.theme")}>
@@ -472,7 +503,7 @@ export function Ribbon(props: RibbonProps) {
       </div>
       <div className="ribbon">
         <div className="tabs" role="tablist" aria-label={t("ribbon.label")}>
-          {[...TABS, ...(props.inTable ? (["table"] as const) : [])].map((id) => (
+          {[...TABS, ...(props.inTable ? (["table"] as const) : []), ...(props.onImage ? (["picture"] as const) : [])].map((id) => (
             <button
               key={id}
               role="tab"
@@ -480,7 +511,7 @@ export function Ribbon(props: RibbonProps) {
               aria-selected={id === "file" ? false : tab === id}
               aria-controls={id === "file" ? undefined : "ribbon-panel"}
               aria-haspopup={id === "file" ? "dialog" : undefined}
-              className={id === "file" ? "tab tab-file" : id === "table" ? "tab tab-context" : "tab"}
+              className={id === "file" ? "tab tab-file" : id === "table" || id === "picture" ? "tab tab-context" : "tab"}
               onMouseDown={keepFocus}
               onClick={() => {
                 if (id === "file") return props.onBackstage("home");
@@ -504,7 +535,7 @@ export function Ribbon(props: RibbonProps) {
         </div>
         {!collapsed && (
           <div className="panel" role="tabpanel" id="ribbon-panel" aria-labelledby={`tab-${tab}`}>
-            {panels[tab === "table" && !props.inTable ? "home" : tab]}
+            {panels[(tab === "table" && !props.inTable) || (tab === "picture" && !props.onImage) ? "home" : tab]}
           </div>
         )}
       </div>

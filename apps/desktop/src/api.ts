@@ -1,7 +1,7 @@
 // Chamadas ao núcleo Rust (comandos Tauri definidos em src-tauri/src/lib.rs).
 
 import { invoke } from "@tauri-apps/api/core";
-import type { DispatchResult, DocView, FormatInfo, Recent, RecoveryInfo, TextCommand } from "./types";
+import type { DispatchResult, DocView, FormatInfo, ImageRef, Recent, RecoveryInfo, TextCommand } from "./types";
 
 export const api = {
   snapshot: () => invoke<DocView>("snapshot"),
@@ -19,4 +19,9 @@ export const api = {
   recoveryInfo: () => invoke<RecoveryInfo | null>("recovery_info"),
   recover: () => invoke<DocView>("recover"),
   discardRecovery: () => invoke<void>("discard_recovery"),
+  /** Guarda a imagem no documento; a interface insere o parágrafo com ela. */
+  addImageFile: (path: string) => invoke<ImageRef>("add_image_file", { path }),
+  addImageData: (data: string) => invoke<ImageRef>("add_image_data", { data }),
+  /** A imagem embutida como data URL. */
+  media: (id: string) => invoke<string | null>("media", { id }),
 };

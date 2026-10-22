@@ -1920,3 +1920,51 @@ select {
   margin-top: -2px;
   color: var(--chrome-muted);
 }
+
+/* ---------- Imagens ---------- */
+
+.page .embedded-image {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+  user-select: none;
+}
+
+.page .embedded-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+.page .embedded-image.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.page .image-handle {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  display: none;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--accent);
+  background: #fff;
+  cursor: nwse-resize;
+}
+
+.page .embedded-image.selected .image-handle {
+  display: block;
+}
+
+@media print {
+  .page .embedded-image.selected {
+    outline: none;
+  }
+
+  .page .image-handle {
+    display: none !important;
+  }
+}

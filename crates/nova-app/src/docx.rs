@@ -29,13 +29,32 @@ const INDENT_TWIPS: u32 = 720;
 
 pub fn export(doc: &TextDocument) -> Vec<u8> {
     let paragraphs = doc.paragraphs();
-    let (body, nums, links) = body_xml(&paragraphs);
+    // Imagens usadas, na ordem em que aparecem: (id, tipo, bytes).
+    let mut images: Vec<(String, String, Vec<u8>)> = Vec::new();
+    for p in &paragraphs {
+        if let Some(image) = &p.attrs.image {
+            if !images.iter().any(|(id, ..)| *id == image.id) {
+                if let Some((mime, data)) = doc.media(&image.id) {
+                    images.push((image.id.clone(), mime, data));
+                }
+            }
+        }
+    }
+    let (body, nums, links) = body_xml(&paragraphs, &images);
+    let media_names: Vec<String> = images
+        .iter()
+        .enumerate()
+        .map(|(i, (_, mime, _))| format!("media/image{}.{}", i + 1, crate::media::extension(mime)))
+        .collect();
     let files: [(&str, String); 8] = [
         ("[Content_Types].xml", CONTENT_TYPES.to_string()),
         ("_rels/.rels", ROOT_RELS.to_string()),
         ("docProps/app.xml", APP_XML.to_string()),
         ("docProps/core.xml", CORE_XML.to_string()),
-        ("word/_rels/document.xml.rels", document_rels(&links)),
+        (
+            "word/_rels/document.xml.rels",
+            document_rels(&links, &media_names),
+        ),
         ("word/document.xml", body),
         ("word/styles.xml", STYLES_XML.to_string()),
         ("word/numbering.xml", numbering_xml(&nums)),
@@ -46,7 +65,29 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         zip.start_file(name, options).expect("zip em memória");
         zip.write_all(content.as_bytes()).expect("zip em memória");
     }
+    // Imagens já são comprimidas: vão sem compressão.
+    let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, (_, _, data)) in media_names.iter().zip(&images) {
+        zip.start_file(format!("word/{name}"), stored)
+            .expect("zip em memória");
+        zip.write_all(data).expect("zip em memória");
+    }
     zip.finish().expect("zip em memória").into_inner()
+}
+
+/// Pontos → EMU (unidade do DrawingML).
+const EMU_PER_PT: u64 = 12700;
+
+/// Uma imagem "alinhada com o texto" (`wp:inline`).
+fn drawing_xml(out: &mut String, image: &nova_domain_text::ImageRef, index: usize) {
+    let (cx, cy) = (
+        u64::from(image.width) * EMU_PER_PT,
+        u64::from(image.height) * EMU_PER_PT,
+    );
+    let n = index + 1;
+    out.push_str(&format!(
+        r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{n}" name="Imagem {n}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="{n}" name="Imagem {n}"/><pic:cNvPicPr><a:picLocks noChangeAspect="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdImg{n}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
+    ));
 }
 
 fn esc(text: &str) -> String {
@@ -88,8 +129,14 @@ enum Num {
 }
 
 /// Relações do documento: estilos, numeração e um alvo externo por link (rId10, rId11…).
-fn document_rels(links: &[String]) -> String {
+fn document_rels(links: &[String], media: &[String]) -> String {
     let mut out = String::from(DOCUMENT_RELS.trim_end_matches("</Relationships>"));
+    for (i, target) in media.iter().enumerate() {
+        out.push_str(&format!(
+            r#"<Relationship Id="rIdImg{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="{target}"/>"#,
+            i + 1
+        ));
+    }
     for (i, href) in links.iter().enumerate() {
         out.push_str(&format!(
             r#"<Relationship Id="rId{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="{}" TargetMode="External"/>"#,
@@ -229,7 +276,10 @@ impl TableWriter {
     }
 }
 
-fn body_xml(paragraphs: &[Paragraph]) -> (String, Vec<Num>, Vec<String>) {
+fn body_xml(
+    paragraphs: &[Paragraph],
+    images: &[(String, String, Vec<u8>)],
+) -> (String, Vec<Num>, Vec<String>) {
     let mut links: Vec<String> = Vec::new();
     let mut nums = vec![Num::Bullet];
     let mut out = String::from(DOC_START);
@@ -303,6 +353,11 @@ fn body_xml(paragraphs: &[Paragraph]) -> (String, Vec<Num>, Vec<String>) {
             out.push_str("<w:pPr>");
             out.push_str(&ppr);
             out.push_str("</w:pPr>");
+        }
+        if let Some(image) = &p.attrs.image {
+            if let Some(index) = images.iter().position(|(id, ..)| *id == image.id) {
+                drawing_xml(&mut out, image, index);
+            }
         }
         // Trechos vizinhos com o mesmo link ficam num só w:hyperlink.
         let mut open_link: Option<&str> = None;
@@ -468,12 +523,12 @@ fn numbering_xml(nums: &[Num]) -> String {
     out
 }
 
-const DOC_START: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>"#;
+const DOC_START: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>"#;
 
 /// Página A4 com margens de 2,5 cm, como a página do Nova Text.
 const DOC_END: &str = r#"<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>"#;
 
-const CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>"#;
+const CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="gif" ContentType="image/gif"/><Default Extension="bmp" ContentType="image/bmp"/><Default Extension="webp" ContentType="image/webp"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>"#;
 
 const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>"#;
 
@@ -490,8 +545,22 @@ const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let paragraphs = read_paragraphs(bytes)?;
-    Ok(TextDocument::from_paragraphs(client, &paragraphs)?)
+    let (paragraphs, media) = read_document(bytes)?;
+    let doc = TextDocument::from_paragraphs(client, &paragraphs)?;
+    for (id, mime, data) in media {
+        doc.put_media(&id, &mime, &data)?;
+    }
+    Ok(doc)
+}
+
+/// Arquivo embutido lido de um documento: (id, tipo, bytes).
+pub(crate) type Media = (String, String, Vec<u8>);
+
+fn part_bytes(zip: &mut ZipArchive<Cursor<&[u8]>>, name: &str) -> Option<Vec<u8>> {
+    let mut file = zip.by_name(name).ok()?;
+    let mut data = Vec::new();
+    file.read_to_end(&mut data).ok()?;
+    Some(data)
 }
 
 fn invalid(msg: impl Into<String>) -> AppError {
@@ -791,7 +860,8 @@ fn place_in_cell(
 }
 
 /// Id da relação → endereço, para os links externos.
-fn read_link_targets(xml: &str) -> HashMap<String, String> {
+/// Relações de um tipo (`…/hyperlink`, `…/image`): id → alvo.
+fn read_rels(xml: &str, kind: &str) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let mut reader = Reader::from_str(xml);
     let mut buf = Vec::new();
@@ -800,7 +870,7 @@ fn read_link_targets(xml: &str) -> HashMap<String, String> {
             Ok(Event::Start(e)) | Ok(Event::Empty(e))
                 if e.local_name().as_ref() == b"Relationship" =>
             {
-                if attr(&e, b"Type").is_some_and(|t| t.ends_with("/hyperlink")) {
+                if attr(&e, b"Type").is_some_and(|t| t.ends_with(kind)) {
                     if let (Some(id), Some(target)) = (attr(&e, b"Id"), attr(&e, b"Target")) {
                         out.insert(id, target);
                     }
@@ -1006,7 +1076,12 @@ fn apply_para(attrs: &mut nova_domain_text::ParaAttrs, p: &Prop) {
 const DEFAULT_FONT: &str = "Calibri";
 const DEFAULT_HALF_POINTS: u16 = 22;
 
+#[cfg(test)]
 fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
+    Ok(read_document(bytes)?.0)
+}
+
+fn read_document(bytes: &[u8]) -> Result<(Vec<Paragraph>, Vec<Media>), AppError> {
     let mut zip =
         ZipArchive::new(Cursor::new(bytes)).map_err(|e| invalid(format!("não é um .docx: {e}")))?;
     let document =
@@ -1024,9 +1099,24 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
     let numbering = part(&mut zip, "word/numbering.xml")?
         .map(|x| read_numbering(&x))
         .unwrap_or_default();
-    let targets = part(&mut zip, "word/_rels/document.xml.rels")?
-        .map(|x| read_link_targets(&x))
-        .unwrap_or_default();
+    let rels = part(&mut zip, "word/_rels/document.xml.rels")?.unwrap_or_default();
+    let targets = read_rels(&rels, "/hyperlink");
+    // Imagens: id da relação → bytes (o alvo é relativo a word/).
+    let pictures: HashMap<String, Vec<u8>> = read_rels(&rels, "/image")
+        .into_iter()
+        .filter_map(|(rid, target)| {
+            let path = match target.strip_prefix('/') {
+                Some(absolute) => absolute.to_string(),
+                None => format!("word/{target}"),
+            };
+            part_bytes(&mut zip, &path).map(|data| (rid, data))
+        })
+        .collect();
+    let mut media: Vec<Media> = Vec::new();
+    // Imagem sendo lida (w:drawing): profundidade, tamanho em EMU e relação.
+    let mut drawing_depth = 0u32;
+    let mut drawing: (Option<(u64, u64)>, Option<String>) = (None, None);
+    let mut para_images: Vec<nova_domain_text::ImageRef> = Vec::new();
     // Link aberto (w:hyperlink): vale para os trechos dentro dele.
     let mut link: Option<String> = None;
 
@@ -1141,9 +1231,30 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     buf.clear();
                     continue;
                 }
+                if drawing_depth > 0 {
+                    if !empty {
+                        drawing_depth += 1;
+                    }
+                    match name {
+                        b"extent" if drawing.0.is_none() => {
+                            let n = |k: &[u8]| attr(e, k).and_then(|v| v.parse::<u64>().ok());
+                            if let (Some(cx), Some(cy)) = (n(b"cx"), n(b"cy")) {
+                                drawing.0 = Some((cx, cy));
+                            }
+                        }
+                        b"blip" if drawing.1.is_none() => drawing.1 = attr(e, b"embed"),
+                        _ => {}
+                    }
+                    buf.clear();
+                    continue;
+                }
                 match name {
-                    b"del" | b"instrText" | b"drawing" | b"pict" | b"object"
-                    | b"footnoteReference" | b"endnoteReference" | b"commentReference"
+                    b"drawing" if !empty => {
+                        drawing_depth = 1;
+                        drawing = (None, None);
+                    }
+                    b"del" | b"instrText" | b"pict" | b"object" | b"footnoteReference"
+                    | b"endnoteReference" | b"commentReference"
                         if !empty =>
                     {
                         skip_depth = 1
@@ -1189,6 +1300,7 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     }
                     b"p" => {
                         para = Some(Paragraph::default());
+                        para_images.clear();
                         para_num = None;
                         para_style = None;
                         start_style(&mut para, &mut para_run, None);
@@ -1299,6 +1411,31 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     buf.clear();
                     continue;
                 }
+                if drawing_depth > 0 {
+                    drawing_depth -= 1;
+                    if drawing_depth == 0 {
+                        let data = drawing.1.take().and_then(|rid| pictures.get(&rid));
+                        if let Some(data) = data.filter(|d| crate::media::sniff_mime(d).is_some()) {
+                            let id = crate::media::media_id(data);
+                            let size = drawing.0.take().map(|(cx, cy)| {
+                                crate::media::fit(
+                                    cx as f64 / EMU_PER_PT as f64,
+                                    cy as f64 / EMU_PER_PT as f64,
+                                    f64::from(nova_domain_text::MAX_IMAGE_PT),
+                                )
+                            });
+                            let (width, height) =
+                                size.unwrap_or_else(|| crate::media::initial_size(data));
+                            if !media.iter().any(|(m, ..)| *m == id) {
+                                let mime = crate::media::sniff_mime(data).unwrap_or("image/png");
+                                media.push((id.clone(), mime.to_string(), data.clone()));
+                            }
+                            para_images.push(nova_domain_text::ImageRef { id, width, height });
+                        }
+                    }
+                    buf.clear();
+                    continue;
+                }
                 match e.local_name().as_ref() {
                     b"t" => in_text = false,
                     b"pPr" => in_ppr = false,
@@ -1318,10 +1455,34 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     b"p" => {
                         let mut p = para.take().unwrap_or_default();
                         place_in_cell(&mut p, &cell, &cell_shading);
-                        let p = finish(p, para_style.as_deref(), para_num);
+                        let mut p = finish(p, para_style.as_deref(), para_num);
+                        // Imagens do parágrafo: cada uma num parágrafo próprio, antes do texto.
+                        if !para_images.is_empty() {
+                            let attrs = nova_domain_text::ParaAttrs {
+                                list: None,
+                                ..p.attrs.clone()
+                            };
+                            let text_too = p.spans.iter().any(|s| !s.text.is_empty());
+                            let images = std::mem::take(&mut para_images);
+                            let last = images.len() - 1;
+                            for (i, image) in images.into_iter().enumerate() {
+                                if i == last && !text_too {
+                                    p.attrs.image = Some(image);
+                                    p.attrs.list = None;
+                                } else {
+                                    out.push(Paragraph {
+                                        attrs: nova_domain_text::ParaAttrs {
+                                            image: Some(image),
+                                            ..attrs.clone()
+                                        },
+                                        ..Paragraph::default()
+                                    });
+                                }
+                            }
+                        }
                         // Parágrafo que só sobrou de uma quebra de página no fim do anterior:
                         // a quebra passa para o próximo parágrafo.
-                        if from_break && p.spans.is_empty() {
+                        if from_break && p.spans.is_empty() && p.attrs.image.is_none() {
                             carry_break = true;
                         } else {
                             out.push(p);
@@ -1340,7 +1501,7 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
         out.push(Paragraph::default());
     }
     normalize(&mut out);
-    Ok(out)
+    Ok((out, media))
 }
 
 /// Cores que o Word e o LibreOffice dão aos links.

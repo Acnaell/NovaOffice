@@ -52,6 +52,7 @@ import { Ribbon, type RibbonCommand } from "./Ribbon";
 import { SaveChangesDialog, type SaveChoice } from "./SaveDialog";
 import { DateTimeDialog, LinkDialog, type LinkRequest } from "./Insert";
 import { deleteColumns, deleteRows, deleteTable, insertColumn, insertRow, insertTable } from "./tables";
+import { fileToBase64, insertImage, resizeImage, setImage, TEXT_WIDTH_PT } from "./images";
 import { matchShortcut, profileFor } from "./shortcuts";
 import { useTheme } from "./theme";
 import { applyPatch, type BlockStyle, type DocView, type FileFormat, type Recent, type RecoveryInfo, type HighlightColor, type Mark, type MarkKind, type ParaAttr, type TextCommand, type ToggleMark } from "./types";
@@ -393,6 +394,39 @@ export default function App() {
     run((doc, sel) => ({ command: removeMarks(doc, sel, ["link"]), selection: caret(ordered(sel)[1]) }));
   };
 
+  /** Inserir → Imagens: escolhe o arquivo, guarda no documento e insere no cursor. */
+  const insertPicture = () =>
+    afterQueue(async () => {
+      const path = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: tRef.current("insert.imageFilter"), extensions: ["png", "jpg", "jpeg", "gif", "bmp", "webp"] }],
+      });
+      if (!path) return;
+      const image = await api.addImageFile(path);
+      focusEditor();
+      run((doc, sel) => insertImage(doc, sel, image));
+    });
+
+  const pasteImage = useCallback(
+    (file: File) => {
+      fileToBase64(file)
+        .then((data) => api.addImageData(data))
+        .then((image) => run((doc, sel) => insertImage(doc, sel, image)), showError);
+    },
+    [run, showError],
+  );
+
+  /** Formato da Imagem: largura em % da largura do texto, mantendo a proporção. */
+  const sizeImage = (percent: number | null) =>
+    run((doc, sel) => {
+      const block = sel.focus.block;
+      const image = doc.blocks[block]?.attrs.image;
+      if (!image) return null;
+      const width = percent === null ? Math.min(image.width, TEXT_WIDTH_PT) : (TEXT_WIDTH_PT * percent) / 100;
+      return { command: setImage(block, resizeImage(image, width)), selection: sel };
+    });
+
   const openLink = useCallback(
     (href: string) => {
       openUrl(href).catch(showError);
@@ -710,6 +744,19 @@ export default function App() {
       case "table.deleteTable":
         focusEditor();
         return run(deleteTable);
+      case "insert.picture":
+        return insertPicture();
+      case "image.size25":
+        return sizeImage(25);
+      case "image.size50":
+        return sizeImage(50);
+      case "image.size75":
+        return sizeImage(75);
+      case "image.size100":
+        return sizeImage(100);
+      case "image.delete":
+        focusEditor();
+        return run((_doc, sel) => ({ command: setImage(sel.focus.block, null), selection: sel }));
       case "insert.pageBreak":
         focusEditor();
         return run(insertPageBreak);
@@ -956,6 +1003,7 @@ export default function App() {
           run((doc, sel) => insertTable(doc, sel, rows, cols));
         }}
         inTable={!!view.blocks[selection.focus.block]?.attrs.cell}
+        onImage={!!view.blocks[selection.focus.block]?.attrs.image}
       />
       <main className={`workspace${find ? " with-panel" : ""}`}>
         {find && (
@@ -986,6 +1034,7 @@ export default function App() {
             onCommand={onCommand}
             onPointerUp={onPointerUp}
             onOpenLink={openLink}
+            onPasteImage={pasteImage}
             onEscape={() => {
               if (painter) setPainter(null);
               else if (find) setFind(null);

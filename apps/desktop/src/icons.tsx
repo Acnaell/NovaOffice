@@ -325,6 +325,13 @@ export const icons = {
       <path d="M16.5 11.5s1.5 1.8 1.5 2.8a1.5 1.5 0 0 1-3 0c0-1 1.5-2.8 1.5-2.8z" />
     </Icon>
   ),
+  picture: (
+    <Icon>
+      <rect x="2.5" y="3.5" width="15" height="13" rx="1.5" />
+      <circle cx="7" cy="8" r="1.5" />
+      <path d="M2.5 14.5l4.5-4 3 2.5 3.5-3.5 4 4" />
+    </Icon>
+  ),
   table: (
     <Icon>
       <rect x="2.5" y="3.5" width="15" height="13" rx="1" />

@@ -117,6 +117,22 @@ impl App {
         Ok(editor.view())
     }
 
+    /// Inserir → Imagens: lê o arquivo e guarda no documento.
+    pub fn add_image_file(&self, path: &str) -> Result<nova_domain_text::ImageRef, String> {
+        let data = std::fs::read(path).map_err(|e| format!("lendo {path}: {e}"))?;
+        self.editor().add_image(&data)
+    }
+
+    /// Imagem colada (base64), da área de transferência.
+    pub fn add_image_data(&self, base64: &str) -> Result<nova_domain_text::ImageRef, String> {
+        let data = nova_app::media::from_base64(base64).ok_or("imagem colada inválida")?;
+        self.editor().add_image(&data)
+    }
+
+    pub fn media(&self, id: &str) -> Option<String> {
+        self.editor().media(id)
+    }
+
     pub fn discard_recovery(&self) {
         self.store.discard_recovery();
     }

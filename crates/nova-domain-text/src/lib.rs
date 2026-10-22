@@ -9,9 +9,22 @@
 mod format;
 
 pub use format::{
-    is_hex_color, is_link, Align, BlockStyle, CellRef, ListKind, Mark, MarkKind, ParaAttr,
-    ParaAttrs, Paragraph, Span, HIGHLIGHT_COLORS, MAX_INDENT, MAX_TABLE_SIZE,
+    is_hex_color, is_link, is_media_id, Align, BlockStyle, CellRef, ImageRef, ListKind, Mark,
+    MarkKind, ParaAttr, ParaAttrs, Paragraph, Span, HIGHLIGHT_COLORS, MAX_IMAGE_PT, MAX_INDENT,
+    MAX_TABLE_SIZE,
 };
+
+/// Tipos de imagem aceitos (os que o Word, o LibreOffice e o navegador abrem).
+pub const MEDIA_TYPES: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/bmp",
+    "image/webp",
+];
+
+/// Maior arquivo embutido: 25 MB.
+pub const MAX_MEDIA_BYTES: usize = 25 * 1024 * 1024;
 
 use nova_crdt::{is_boundary, utf16_len, AttrMap, ClientId, CrdtError, Replica};
 use serde::{Deserialize, Serialize};
@@ -172,6 +185,8 @@ pub enum DomainError {
     InvalidRange,
     #[error("batch não pode conter batch, history.undo ou history.redo")]
     InvalidBatch,
+    #[error("arquivo embutido inválido: {0}")]
+    InvalidMedia(String),
 }
 
 pub struct TextDocument {
@@ -261,6 +276,7 @@ impl TextDocument {
                 d.page_break_before
                     .then_some(ParaAttr::PageBreakBefore(true)),
                 d.cell.clone().map(|c| ParaAttr::Cell(Some(c))),
+                d.image.clone().map(|i| ParaAttr::Image(Some(i))),
             ];
             commands.extend(
                 changes
@@ -425,12 +441,16 @@ impl TextDocument {
                 };
                 self.replica
                     .split_block(block, offset, new_style.as_str())?;
-                // A quebra de página fica só no parágrafo original.
+                // A quebra de página e a imagem ficam só no parágrafo original.
                 if attrs.page_break_before {
                     self.replica.set_block_attrs(
                         block + 1,
                         &[ParaAttr::PageBreakBefore(false).to_change()],
                     )?;
+                }
+                if attrs.image.is_some() {
+                    self.replica
+                        .set_block_attrs(block + 1, &[ParaAttr::Image(None).to_change()])?;
                 }
                 TextEvent::BlockSplit { block, offset }
             }
@@ -531,6 +551,26 @@ impl TextDocument {
 
     pub fn block_attrs(&self, block: u32) -> Result<ParaAttrs, DomainError> {
         Ok(ParaAttrs::from_attr_map(&self.replica.block_attrs(block)?))
+    }
+
+    /// Guarda um arquivo embutido (imagem). Não entra no desfazer.
+    pub fn put_media(&self, id: &str, mime: &str, data: &[u8]) -> Result<(), DomainError> {
+        if !is_media_id(id) {
+            return Err(DomainError::InvalidMedia(format!("id {id:?}")));
+        }
+        if !MEDIA_TYPES.contains(&mime) {
+            return Err(DomainError::InvalidMedia(format!("tipo {mime}")));
+        }
+        if data.is_empty() || data.len() > MAX_MEDIA_BYTES {
+            return Err(DomainError::InvalidMedia(format!("{} bytes", data.len())));
+        }
+        self.replica.put_media(id, mime, data);
+        Ok(())
+    }
+
+    /// Arquivo embutido: (tipo MIME, bytes).
+    pub fn media(&self, id: &str) -> Option<(String, Vec<u8>)> {
+        self.replica.media(id)
     }
 
     /// Link do caractere na posição (UTF-16), se houver.

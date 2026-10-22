@@ -8,6 +8,17 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Imagens** (Inserir → Imagens): PNG, JPEG, GIF, BMP e WebP do computador, ou coladas da área de
+  transferência (capturas de tela, imagens copiadas do navegador). Entram com o tamanho do Word (96
+  ppp), no máximo da largura do texto.
+- Aba contextual **Formato da Imagem**: largura de 25%, 50%, 75% ou 100% da largura do texto,
+  alinhamento e Excluir Imagem. A alça no canto muda o tamanho com o mouse, mantendo a proporção.
+  Backspace no início da imagem (ou Delete antes dela) apaga a imagem.
+- Imagens ficam dentro do documento (também no .nova e na colaboração) e são lidas e gravadas em
+  .docx, .odt, .html e Markdown (embutidas como data URL).
+
 ## [0.1.4] - 2026-10-22
 
 ### Adicionado

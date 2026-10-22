@@ -20,6 +20,9 @@ const absentShortcut = (keys, what, setup = ['Texto de exemplo']) => async (h) =
   return AUSENTE(`${what} não existe; ${keys} ${harmless ? 'não altera o documento' : 'ALTERA o documento de forma inesperada'}.`);
 };
 
+/** PNG 64×32 (azul com um círculo), gerado para os testes. */
+const PNG_64x32 = 'iVBORw0KGgoAAAANSUhEUgAAAEAAAAAgCAIAAAAt/+nTAAAAk0lEQVR42mPUqjjJMJQBE8MQB6MeGPXAqAdGPTCwgIV2Rh+WWYzMtX0SO2Q8gOZ0ZEGqe4OJPq4nUnbgPUCM+6jrByY6u57qfhgtRskNVGpFwmgMjHpg1ANUAqRWsdSqkkdjgKxApWKLiMoxQIzLqNueo34Swu8+qrdGadKchrhyCPcHaOri0VJo1AOjHhj1wKACAL2oJzHC/B0+AAAAAElFTkSuQmCC';
+
 const flows = [
   // ───────────── Digitação e edição
   { area: 'Digitação', name: 'Digitar texto com acentos e cedilha', run: async (h) => {
@@ -880,16 +883,64 @@ const flows = [
     const t = await h.texts();
     return tds === 2 && eq(t, ['x', 'y', 'fim']) && fs.existsSync('/tmp/nova-flows/tabela.docx') ? OK('Tabelas do Word e do LibreOffice validadas à parte (testes do núcleo).') : FALHA(`td=${tds} ${JSON.stringify(t)}`);
   } },
-  { area: 'Inserir', name: 'Imagem', run: async (h) => {
+  { area: 'Inserir', name: 'Imagem do computador (Inserir → Imagens), tamanho e alinhamento', run: async (h) => {
+    require('fs').writeFileSync('/tmp/nova-flows/foto.png', Buffer.from(PNG_64x32, 'base64'));
+    await h.reset(['antes', '']);
+    await h.select(1, 0);
+    await h.p.evaluate(() => { window.__dialog.open = '/tmp/nova-flows/foto.png'; });
+    await h.p.locator('.tab', { hasText: 'Inserir' }).click();
+    await h.p.locator('button', { hasText: 'Imagens' }).click(); await h.settle(400);
+    const d = await h.doc();
+    const image = d.blocks[1].attrs.image;
+    const shown = await h.p.locator('.embedded-image img').count();
+    const contextual = await h.p.locator('.tab', { hasText: 'Formato da Imagem' }).count();
+    await h.p.locator('.tab', { hasText: 'Formato da Imagem' }).click();
+    await h.p.locator('button', { hasText: '50%' }).click(); await h.settle(150);
+    await h.p.locator('button', { hasText: 'Centralizar' }).click(); await h.settle(150);
+    const after = (await h.doc()).blocks[1].attrs;
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    const ok = image && image.width === 48 && image.height === 24 && shown === 1 && contextual === 1 && after.image.width === 241 && after.image.height === 121 && after.align === 'center';
+    return ok ? OK('64×32 px entra com 48×24 pt (96 ppp, como o Word); aba Formato da Imagem com tamanho e alinhamento.') : FALHA(`${JSON.stringify(image)} img=${shown} aba=${contextual} depois=${JSON.stringify(after)}`);
+  } },
+  { area: 'Inserir', name: 'Colar imagem (captura de tela) e mudar o tamanho com o mouse', run: async (h) => {
     await h.reset(['']);
-    await h.p.evaluate(() => {
+    await h.p.evaluate((b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       const dt = new DataTransfer();
-      dt.items.add(new File([new Uint8Array([137, 80, 78, 71])], 'a.png', { type: 'image/png' }));
+      dt.items.add(new File([bytes], 'captura.png', { type: 'image/png' }));
       document.querySelector('.page').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-    });
-    await h.settle();
-    const t = await h.texts();
-    return AUSENTE(`Próxima parte da aba Inserir; colar uma imagem ${eq(t, ['']) ? 'é ignorado sem erro' : 'produz ' + JSON.stringify(t)}.`);
+    }, PNG_64x32);
+    await h.settle(500);
+    const pasted = (await h.doc()).blocks[0].attrs.image;
+    await h.p.locator('.embedded-image').click(); await h.settle(150);
+    const handle = h.p.locator('.image-handle');
+    const box = await handle.boundingBox();
+    await h.p.mouse.move(box.x + 5, box.y + 5);
+    await h.p.mouse.down();
+    await h.p.mouse.move(box.x + 69, box.y + 30, { steps: 4 });
+    await h.p.mouse.up(); await h.settle(200);
+    const resized = (await h.doc()).blocks[0].attrs.image;
+    await h.press('Backspace');
+    const removed = (await h.doc()).blocks[0].attrs.image;
+    const ok = pasted && resized && resized.width > pasted.width && Math.abs(resized.width / resized.height - 2) < 0.1 && removed === null;
+    return ok ? OK('A alça no canto mantém a proporção; Backspace apaga a imagem.') : FALHA(`${JSON.stringify(pasted)} → ${JSON.stringify(resized)} → ${JSON.stringify(removed)}`);
+  } },
+  { area: 'Inserir', name: 'Imagem salva em .docx e reaberta', run: async (h) => {
+    require('fs').writeFileSync('/tmp/nova-flows/foto.png', Buffer.from(PNG_64x32, 'base64'));
+    await core('new_document');
+    const image = await core('add_image_file', { path: '/tmp/nova-flows/foto.png' });
+    await core('dispatch', { command: { type: 'batch', commands: [
+      { type: 'text.insert', block: 0, offset: 0, text: 'legenda' },
+      { type: 'block.insert', index: 0, text: '' },
+      { type: 'block.setAttr', block: 0, attr: 'image', value: image }] } });
+    await core('save_document', { path: '/tmp/nova-flows/imagem.docx' });
+    await h.reset();
+    await h.p.evaluate(() => { window.__dialog.open = '/tmp/nova-flows/imagem.docx'; });
+    await h.press('Control+a'); await h.settle(100);
+    await h.p.locator('.bs-big', { hasText: 'Procurar' }).click(); await h.settle(500);
+    const back = await h.doc();
+    const loaded = await h.p.locator('.embedded-image img').evaluate((img) => img.complete && img.naturalWidth);
+    return back.blocks[0].attrs.image?.width === image.width && loaded === 64 ? OK('Imagens do Word e do LibreOffice validadas à parte (testes do núcleo).') : FALHA(`${JSON.stringify(back.blocks[0].attrs)} carregou=${loaded}`);
   } },
   { area: 'Inserir', name: 'Cabeçalho, rodapé e número de página', run: async () => AUSENTE('Depende das páginas reais (aba Layout).') },
   { area: 'Inserir', name: 'Comentários', run: async () => AUSENTE('Não há comentários.') },
