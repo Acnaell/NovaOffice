@@ -3,7 +3,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use nova_app::{file, markdown, new_client_id, Session};
+use nova_app::formats::{self, Format};
+use nova_app::{file, new_client_id, Session};
 use nova_domain_text::{BlockStyle, ParaAttrs, Span, TextCommand, TextDocument, TextEvent};
 use serde::Serialize;
 
@@ -12,6 +13,8 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub struct DocView {
     pub blocks: Vec<BlockView>,
+    /// Extensão do formato do arquivo atual (`docx`, `odt`, `nova`…), ou `null` se ainda não foi salvo.
+    pub format: Option<&'static str>,
     pub can_undo: bool,
     pub can_redo: bool,
     pub path: Option<String>,
@@ -39,6 +42,7 @@ pub struct DispatchResult {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ViewPatch {
+    pub format: Option<&'static str>,
     pub start: u32,
     pub delete_count: u32,
     pub blocks: Vec<BlockView>,
@@ -130,6 +134,7 @@ fn dirty_range(events: &[TextEvent]) -> Option<(u32, u32)> {
 pub struct Editor {
     session: Session,
     path: Option<PathBuf>,
+    format: Option<Format>,
     dirty: bool,
 }
 
@@ -139,28 +144,41 @@ impl Editor {
     }
 
     fn with(document: TextDocument, path: Option<PathBuf>) -> Self {
+        let format = path.as_deref().and_then(Format::from_path);
         Self {
             session: Session::new(document),
             path,
+            format,
             dirty: false,
         }
     }
 
-    /// Abre um `.nova`, ou importa texto (`.txt`, `.md` e outros) como um
-    /// documento novo, sem arquivo associado: salvar pede um `.nova`.
+    /// Abre um arquivo em qualquer formato conhecido (.docx, .odt, .nova,
+    /// .md, .txt). Como no Word, salvar depois grava no mesmo arquivo e formato;
+    /// extensões desconhecidas abrem como texto e pedem um destino ao salvar.
     pub fn open(path: &Path) -> Result<Self, String> {
-        if is_nova(path) {
-            let bytes = fs::read(path).map_err(|e| io_error("lendo", path, e))?;
-            let document = file::decode(new_client_id(), &bytes)
-                .map_err(|e| format!("abrindo {}: {e}", path.display()))?;
-            Ok(Self::with(document, Some(path.to_path_buf())))
-        } else {
-            let text = fs::read_to_string(path).map_err(|e| io_error("lendo", path, e))?;
-            let mut editor =
-                Self::with(TextDocument::from_plain_text(new_client_id(), &text), None);
-            editor.dirty = true;
-            Ok(editor)
-        }
+        let bytes = fs::read(path).map_err(|e| io_error("lendo", path, e))?;
+        let document = formats::open(new_client_id(), path, &bytes)
+            .map_err(|e| format!("abrindo {}: {e}", path.display()))?;
+        let known = Format::from_path(path).is_some();
+        let mut editor = Self::with(document, known.then(|| path.to_path_buf()));
+        editor.dirty = !known;
+        Ok(editor)
+    }
+
+    /// Documento restaurado da recuperação automática: com alterações não salvas.
+    pub fn recovered(document: TextDocument, path: Option<PathBuf>) -> Self {
+        let mut editor = Self::with(document, path);
+        editor.dirty = true;
+        editor
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
     }
 
     pub fn dispatch(&mut self, command: TextCommand) -> Result<DispatchResult, String> {
@@ -184,6 +202,7 @@ impl Editor {
     fn patch(&self, start: u32, end: u32, delete_count: u32) -> ViewPatch {
         let view = self.meta();
         ViewPatch {
+            format: view.format,
             start,
             delete_count,
             blocks: (start..end).map(|i| self.block_view(i)).collect(),
@@ -210,36 +229,54 @@ impl Editor {
         let doc = self.session.document();
         DocView {
             blocks: Vec::new(),
+            format: self.format.map(Format::extension),
             can_undo: doc.can_undo(),
             can_redo: doc.can_redo(),
             path: self.path.as_ref().map(|p| p.display().to_string()),
-            title: self.path.as_ref().and_then(|p| p.file_stem()).map_or_else(
-                || "Sem título".to_string(),
-                |s| s.to_string_lossy().into_owned(),
-            ),
+            title: title_of(self.path.as_deref()),
             dirty: self.dirty,
         }
     }
 
-    /// Salva no arquivo atual ou em `target`; o nome sempre termina em `.nova`.
+    /// Salva no arquivo atual ou em `target` (Salvar como). O formato vem da
+    /// extensão; sem extensão conhecida, grava como documento do Word (.docx),
+    /// o padrão do Word.
     pub fn save(&mut self, target: Option<PathBuf>) -> Result<(), String> {
         let path = match target {
-            Some(path) => with_nova_extension(path),
+            Some(path) => with_known_extension(path),
             None => self
                 .path
                 .clone()
                 .ok_or("o documento ainda não tem arquivo; use Salvar como")?,
         };
-        fs::write(&path, file::encode(self.session.document()))
-            .map_err(|e| io_error("gravando", &path, e))?;
+        let format = Format::from_path(&path).unwrap_or(Format::Docx);
+        let title = title_of(Some(&path));
+        fs::write(
+            &path,
+            formats::save(self.session.document(), format, &title),
+        )
+        .map_err(|e| io_error("gravando", &path, e))?;
         self.path = Some(path);
+        self.format = Some(format);
         self.dirty = false;
         Ok(())
     }
 
-    pub fn export_markdown(&self, path: &Path) -> Result<(), String> {
-        fs::write(path, markdown::export(self.session.document()))
-            .map_err(|e| io_error("gravando", path, e))
+    /// Exportar: grava uma cópia em outro formato sem mudar o arquivo atual.
+    pub fn export(&self, path: &Path) -> Result<(), String> {
+        let path = with_known_extension(path.to_path_buf());
+        let format = Format::from_path(&path).unwrap_or(Format::Docx);
+        let title = title_of(self.path.as_deref());
+        fs::write(
+            &path,
+            formats::save(self.session.document(), format, &title),
+        )
+        .map_err(|e| io_error("gravando", &path, e))
+    }
+
+    /// Estado completo em .nova, para a recuperação automática.
+    pub fn snapshot_bytes(&self) -> Vec<u8> {
+        file::encode(self.session.document())
     }
 
     pub fn view(&self) -> DocView {
@@ -252,16 +289,21 @@ impl Editor {
     }
 }
 
-fn is_nova(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("nova"))
+pub fn title_of(path: Option<&Path>) -> String {
+    path.and_then(|p| p.file_stem()).map_or_else(
+        || "Sem título".to_string(),
+        |s| s.to_string_lossy().into_owned(),
+    )
 }
 
-fn with_nova_extension(path: PathBuf) -> PathBuf {
-    if is_nova(&path) {
+/// Sem extensão conhecida, o arquivo ganha `.docx`.
+fn with_known_extension(path: PathBuf) -> PathBuf {
+    if Format::from_path(&path).is_some() {
         path
     } else {
-        path.with_extension("nova")
+        let mut name = path.into_os_string();
+        name.push(".docx");
+        PathBuf::from(name)
     }
 }
 
@@ -303,11 +345,12 @@ mod tests {
             editor.save(None).is_err(),
             "sem arquivo, salvar exige um destino"
         );
-        editor.save(Some(dir.join("carta.txt"))).unwrap();
+        editor.save(Some(dir.join("carta"))).unwrap();
         let view = editor.view();
         assert!(!view.dirty);
         assert_eq!(view.title, "carta");
-        assert!(view.path.unwrap().ends_with("carta.nova"));
+        assert_eq!(view.format, Some("docx"), "sem extensão, salva como Word");
+        assert!(view.path.unwrap().ends_with("carta.docx"));
     }
 
     #[test]
@@ -333,14 +376,52 @@ mod tests {
     }
 
     #[test]
-    fn importar_texto_cria_documento_sem_arquivo() {
+    fn abrir_texto_mantem_o_arquivo_e_o_formato() {
         let dir = temp_dir("importar");
         let path = dir.join("notas.txt");
         fs::write(&path, "linha 1\nlinha 2").unwrap();
 
         let view = Editor::open(&path).unwrap().view();
         assert_eq!(view.blocks.len(), 2);
-        assert!(view.path.is_none() && view.dirty);
+        assert_eq!(view.format, Some("txt"));
+        assert!(view.path.is_some() && !view.dirty);
+
+        let other = dir.join("notas.xyz");
+        fs::write(&other, "x").unwrap();
+        let view = Editor::open(&other).unwrap().view();
+        assert!(
+            view.path.is_none() && view.dirty,
+            "extensão desconhecida pede Salvar como"
+        );
+    }
+
+    #[test]
+    fn salvar_em_cada_formato_e_reabrir() {
+        let dir = temp_dir("formatos");
+        let mut editor = Editor::new();
+        editor.dispatch(insert("Olá")).unwrap();
+        editor
+            .dispatch(TextCommand::ApplyMark {
+                block: 0,
+                offset: 0,
+                len: 3,
+                mark: Mark::Bold,
+            })
+            .unwrap();
+        for ext in ["docx", "odt", "nova", "md"] {
+            let path = dir.join(format!("doc.{ext}"));
+            editor.save(Some(path.clone())).unwrap();
+            let back = Editor::open(&path).unwrap().view();
+            assert_eq!(back.blocks[0].spans[0].text, "Olá", "{ext}");
+            assert_eq!(back.blocks[0].spans[0].marks, vec![Mark::Bold], "{ext}");
+            assert_eq!(back.format, Some(ext));
+        }
+        // Exportar não muda o arquivo atual.
+        editor.export(&dir.join("copia.html")).unwrap();
+        assert!(editor.view().path.unwrap().ends_with("doc.md"));
+        assert!(fs::read_to_string(dir.join("copia.html"))
+            .unwrap()
+            .contains("<strong>Olá</strong>"));
     }
 
     #[test]

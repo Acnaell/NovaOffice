@@ -2,7 +2,7 @@
 
 Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real com o núcleo Rust real.
 
-**71 funcionam · 3 parciais · 0 com falha · 17 ainda não existem**
+**81 funcionam · 3 parciais · 0 com falha · 11 ainda não existem**
 
 | | Área | Fluxo | Observação |
 | --- | --- | --- | --- |
@@ -81,16 +81,20 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Ferramentas | Contagem de palavras | Texto normal · 3 palavras · 2 parágrafos · Alterações não salvas |
 | ✅ | Ferramentas | Contagem de palavras com 1 parágrafo (plural) |  |
 | ⬜ | Ferramentas | Autocorreção (maiúscula no início da frase) | Não há autocorreção (maiúscula inicial, aspas inteligentes, -- → —). |
-| ✅ | Arquivo | Salvar, fechar e reabrir (.nova) preserva texto e formatação | Título da janela: "ciclo — NovaOffice" |
+| ✅ | Arquivo | Salvar (.docx padrão), fechar e reabrir preserva texto e formatação | Sugere "Sem título.docx" com "Documento do Word (*.docx)" primeiro; título da janela: "ciclo.docx — Nova Text" |
+| ✅ | Arquivo | Salvar como em cada formato (tela Arquivo) | odt:ok · nova:ok · md:ok · txt:ok · html:ok · docx:ok |
 | ✅ | Arquivo | Ctrl+B num documento novo pede onde salvar |  |
-| ✅ | Arquivo | Novo documento com alterações pergunta antes de descartar |  |
-| ⬜ | Arquivo | Fechar a janela com alterações não salvas | Fechar a janela não pergunta (limitação já conhecida); o trabalho se perde. |
-| ⬜ | Arquivo | Abrir arquivo .docx do Word | Só abre .nova, .txt e .md. Importar/exportar .docx está no roadmap (plugins de formato). |
-| 🟡 | Arquivo | Abrir .txt / .md | Markdown é aberto como texto puro (sem converter # e **): ["# Título","","Texto com **negrito**","- item"] |
-| ⬜ | Arquivo | Exportar para PDF | Só exporta Markdown. |
-| ⬜ | Arquivo | Imprimir (Ctrl+P) | Imprimir não existe; Control+p não altera o documento. |
-| ⬜ | Arquivo | Salvamento automático / recuperação | Não há salvamento automático nem recuperação após travamento. |
-| ⬜ | Arquivo | Documentos recentes | Não há lista de recentes. |
+| ✅ | Arquivo | Novo documento com alterações pergunta Salvar / Não Salvar / Cancelar |  |
+| ✅ | Arquivo | Fechar a janela com alterações não salvas | Cancelar mantém a janela; Salvar grava e fecha. |
+| ✅ | Arquivo | Abrir arquivo .docx do Word | Filtro: "Todos os documentos (*.docx;*.odt;*.nova;*.md;*.txt)". Arquivos do Word e do LibreOffice validados à parte (testes do núcleo). |
+| ✅ | Arquivo | Abrir .txt / .md | Markdown vira títulos, negrito e listas. |
+| ✅ | Arquivo | Documentos recentes | 11 na lista; um clique reabre. |
+| ✅ | Arquivo | Exportar uma cópia (.html) sem mudar o arquivo atual |  |
+| 🟡 | Arquivo | Exportar para PDF | Pela janela de impressão do sistema ("Salvar como PDF"); ainda sem exportação direta para .pdf. |
+| ✅ | Arquivo | Imprimir (Ctrl+P) | Tela Imprimir → janela de impressão do sistema; só a página sai no papel. |
+| ✅ | Arquivo | Salvamento automático / recuperação | Cópia a cada minuto; ao abrir de novo, a tela inicial oferece Recuperar. |
+| ✅ | NovaOffice | Tela inicial ao abrir o programa | 6 aplicativos, Novo e Recentes; título "NovaOffice". |
+| ✅ | NovaOffice | Menu de aplicativos (grade ao lado do logo) | Nova Text, Nova Sheets, Nova Slides, Nova Draw, Nova Base, Nova Math; os outros 5 aparecem como "Em breve"; Esc fecha. |
 | 🟡 | Exibição | Página com tamanho A4 e margens; várias páginas | Uma única "folha" contínua de 4108 px de altura: sem paginação, tamanho de papel ou margens configuráveis. |
 | ⬜ | Exibição | Zoom (Ctrl + roda / controle de zoom) | Não há controle de zoom no app. |
 | ✅ | Exibição | Tema claro/escuro | Recurso que o Word não tem nesta forma. |

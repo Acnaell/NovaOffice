@@ -30,6 +30,7 @@ const doc = (...blocks: BlockView[]): DocView => ({
   path: null,
   title: "t",
   dirty: false,
+  format: null,
 });
 
 const p = (spans: [string, Mark[]?][], attrs: Partial<ParaAttrs> = {}, style: BlockView["style"] = "paragraph"): BlockView => ({

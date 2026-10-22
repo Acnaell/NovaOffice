@@ -318,4 +318,49 @@ export const icons = {
       <path d="M5 7.5l5 5 5-5" />
     </Icon>
   ),
+  grid: (
+    <Icon>
+      <rect x="3" y="3" width="3.5" height="3.5" />
+      <rect x="8.25" y="3" width="3.5" height="3.5" />
+      <rect x="13.5" y="3" width="3.5" height="3.5" />
+      <rect x="3" y="8.25" width="3.5" height="3.5" />
+      <rect x="8.25" y="8.25" width="3.5" height="3.5" />
+      <rect x="13.5" y="8.25" width="3.5" height="3.5" />
+      <rect x="3" y="13.5" width="3.5" height="3.5" />
+      <rect x="8.25" y="13.5" width="3.5" height="3.5" />
+      <rect x="13.5" y="13.5" width="3.5" height="3.5" />
+    </Icon>
+  ),
+  home: (
+    <Icon>
+      <path d="M2.5 9.5L10 3l7.5 6.5" />
+      <path d="M4.5 8v8.5h4v-5h3v5h4V8" />
+    </Icon>
+  ),
+  print: (
+    <Icon>
+      <path d="M5.5 7.5v-5h9v5" />
+      <rect x="2.5" y="7.5" width="15" height="7" rx="1" />
+      <path d="M5.5 12.5h9v5h-9z" />
+    </Icon>
+  ),
+  pdf: (
+    <Icon>
+      <path d="M5 2.5h6.5l3.5 3.5v11.5H5z" />
+      <path d="M11.5 2.5V6H15" />
+      <path d="M7 14.5c2-1 4-4 3-6.5-1 2.5 1 5 3.5 5.5" />
+    </Icon>
+  ),
+  closeDoc: (
+    <Icon>
+      <path d="M5 2.5h6.5l3.5 3.5v11.5H5z" />
+      <path d="M8 10l4 4M12 10l-4 4" />
+    </Icon>
+  ),
+  arrowLeft: (
+    <Icon>
+      <circle cx="10" cy="10" r="7.5" />
+      <path d="M11 6.5L7.5 10l3.5 3.5M7.5 10h6" />
+    </Icon>
+  ),
 } satisfies Record<string, ReactNode>;

@@ -1,7 +1,16 @@
 // Substitui o IPC do Tauri: comandos do app vão para a ponte HTTP com o núcleo real.
 (() => {
   window.__calls = [];
-  window.__dialog = { ask: true, save: "/tmp/nova-flows/doc.nova", open: "/tmp/nova-flows/doc.nova" };
+  window.__listeners = {};
+  window.__destroyed = false;
+  window.__printed = 0;
+  window.print = () => { window.__printed++; };
+  /** Simula o clique no X da janela. */
+  window.__requestClose = () => {
+    const id = window.__listeners["tauri://close-requested"];
+    if (id) window["_" + id]({ event: "tauri://close-requested", id: 1, payload: null });
+  };
+  window.__dialog = { ask: true, save: "/tmp/nova-flows/doc.docx", open: "/tmp/nova-flows/doc.docx" };
   let cb = 0;
   window.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: "main" }, currentWebview: { windowLabel: "main", label: "main" } },
@@ -15,8 +24,13 @@
         if (k === "ask" || k === "confirm" || k === "message") return window.__dialog.ask;
         return window.__dialog[k] ?? null;
       }
+      if (cmd === "plugin:event|listen") {
+        window.__listeners[args.event] = args.handler;
+        return args.handler;
+      }
       if (cmd.startsWith("plugin:window|")) {
         if (cmd.endsWith("set_title")) window.__title = args.value ?? args.title;
+        if (cmd.endsWith("destroy")) window.__destroyed = true;
         return null;
       }
       if (cmd.startsWith("plugin:")) return null;

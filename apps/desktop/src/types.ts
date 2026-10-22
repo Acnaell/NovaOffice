@@ -83,8 +83,13 @@ export interface BlockView {
   spans: Span[];
 }
 
+/** Extensões dos formatos de arquivo (src-tauri: nova_app::formats::Format). */
+export type FileFormat = "docx" | "odt" | "nova" | "md" | "txt" | "html";
+
 export interface DocView {
   blocks: BlockView[];
+  /** Formato do arquivo atual; `null` se o documento ainda não foi salvo. */
+  format: FileFormat | null;
   canUndo: boolean;
   canRedo: boolean;
   path: string | null;
@@ -116,6 +121,7 @@ export type TextCommand =
 
 /** Parágrafos `start..start + deleteCount` trocados por `blocks` (src-tauri: `ViewPatch`). */
 export interface ViewPatch {
+  format: FileFormat | null;
   start: number;
   deleteCount: number;
   blocks: BlockView[];
@@ -137,6 +143,25 @@ export function applyPatch(view: DocView, patch: ViewPatch): DocView | null {
   const blocks = view.blocks.slice();
   blocks.splice(patch.start, patch.deleteCount, ...patch.blocks);
   if (blocks.length !== patch.blockCount) return null;
-  const { canUndo, canRedo, path, title, dirty } = patch;
-  return { blocks, canUndo, canRedo, path, title, dirty };
+  const { canUndo, canRedo, path, title, dirty, format } = patch;
+  return { blocks, canUndo, canRedo, path, title, dirty, format };
+}
+
+export interface FormatInfo {
+  extension: FileFormat;
+  canOpen: boolean;
+  keepsFormatting: boolean;
+}
+
+export interface Recent {
+  path: string;
+  title: string;
+  /** Milissegundos desde 1970. */
+  openedAt: number;
+}
+
+export interface RecoveryInfo {
+  title: string;
+  path: string | null;
+  savedAt: number;
 }

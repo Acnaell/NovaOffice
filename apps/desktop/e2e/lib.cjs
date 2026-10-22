@@ -32,11 +32,25 @@ function makeHelpers(p) {
         });
         if (cmds.length) await core('dispatch', { command: { type: 'batch', commands: cmds } });
       }
+      await h.reload();
+    },
+    /** Recarrega a interface; na tela inicial (documento vazio), entra no documento em branco. */
+    async reload() {
       await p.reload();
       await p.waitForSelector('.page');
+      await h.settle(60);
+      if (await p.locator('.backstage').count()) {
+        await p.locator('.bs-tile').first().click();
+        await p.waitForSelector('.backstage', { state: 'detached' });
+      }
       await p.focus('.page');
       await h.settle(80);
     },
+    /** Último pedido feito a uma janela de diálogo (abrir/salvar). */
+    async lastDialog(kind) {
+      return p.evaluate((k) => [...window.__calls].reverse().find((c) => c.cmd === 'plugin:dialog|' + k)?.args.options, kind);
+    },
+    async modalVisible() { return (await p.locator('.modal').count()) > 0; },
     /** Põe o cursor (ou seleção) por posição de modelo, como um clique faria. */
     async select(b1, o1, b2 = b1, o2 = o1) {
       await p.evaluate(([b1, o1, b2, o2]) => {

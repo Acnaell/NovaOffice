@@ -23,7 +23,7 @@ import type { BlockView, DocView, Mark } from "./types";
 const bold: Mark = { mark: "bold" };
 
 function doc(...blocks: BlockView[]): DocView {
-  return { blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false };
+  return { blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null };
 }
 
 const p = (...spans: [string, Mark[]?][]): BlockView => ({
