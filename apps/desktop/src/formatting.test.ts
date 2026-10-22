@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  autoLink,
   autoList,
   changeCase,
   changeIndent,
@@ -8,6 +9,9 @@ import {
   DEFAULT_ATTRS,
   formatTarget,
   growFont,
+  insertPageBreak,
+  linkRangeAt,
+  normalizeHref,
   listMarkers,
   nextCaseMode,
   removeMarks,
@@ -223,5 +227,59 @@ describe("parágrafo", () => {
     expect(listMarkers([n(), n(), n(1), n(1), n(2), n(), p([["fim"]]), n(), b(), b(1), b(2), b(3)])).toEqual([
       "1.", "2.", "a.", "b.", "i.", "3.", null, "1.", "•", "◦", "▪", "•",
     ]);
+  });
+});
+
+describe("inserir", () => {
+  const link = (href: string): Mark => ({ mark: "link", href });
+
+  it("endereço digitado vira link aceito", () => {
+    expect(normalizeHref("exemplo.com")).toBe("https://exemplo.com");
+    expect(normalizeHref("www.gov.br/x?y=1")).toBe("https://www.gov.br/x?y=1");
+    expect(normalizeHref("fulano@empresa.com.br")).toBe("mailto:fulano@empresa.com.br");
+    expect(normalizeHref("https://a.b")).toBe("https://a.b");
+    expect(normalizeHref("javascript:alert(1)")).toBeNull();
+    expect(normalizeHref("só texto")).toBeNull();
+  });
+
+  it("endereço antes do espaço vira link (AutoFormatação)", () => {
+    const d = doc(p([["veja www.exemplo.com."]]));
+    expect(autoLink(d, sel(0, 21))).toEqual({
+      type: "text.applyMark",
+      block: 0,
+      offset: 5,
+      len: 15,
+      mark: link("https://www.exemplo.com"),
+    });
+    expect(autoLink(doc(p([["texto comum"]])), sel(0, 11))).toBeNull();
+    // Já é link: não refaz.
+    expect(autoLink(doc(p([["https://a.com", [link("https://a.com")]]])), sel(0, 13))).toBeNull();
+  });
+
+  it("trecho do link em volta do cursor", () => {
+    const d = doc(p([["ver "], ["o ", [link("https://a.com")]], ["site", [bold, link("https://a.com")]], [" já"]]));
+    expect(linkRangeAt(d, { block: 0, offset: 7 })).toEqual({ from: 4, to: 10, href: "https://a.com" });
+    expect(linkRangeAt(d, { block: 0, offset: 1 })).toBeNull();
+  });
+
+  it("Ctrl+Enter divide e marca a quebra; Backspace no início apaga a quebra", () => {
+    const d = doc(p([["antes depois"]]));
+    expect(insertPageBreak(d, sel(0, 6))).toEqual({
+      command: {
+        type: "batch",
+        commands: [
+          { type: "block.split", block: 0, offset: 6 },
+          { type: "block.setAttr", block: 1, attr: "pageBreakBefore", value: true },
+        ],
+      },
+      selection: sel(1, 0),
+    });
+    const broken = doc(p([["a"]]), p([["b"]], { pageBreakBefore: true }));
+    expect(deleteBackward(broken, caret({ block: 1, offset: 0 })).command).toEqual({
+      type: "block.setAttr",
+      block: 1,
+      attr: "pageBreakBefore",
+      value: false,
+    });
   });
 });

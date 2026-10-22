@@ -9,6 +9,10 @@ export type CommandId =
   | "file.save"
   | "file.saveAs"
   | "file.print"
+  | "insert.pageBreak"
+  | "insert.link"
+  | "insert.date"
+  | "insert.time"
   | "edit.undo"
   | "edit.redo"
   | "edit.cut"
@@ -59,6 +63,10 @@ type Bindings = Partial<Record<CommandId, string[]>>;
 /** Atalhos que são iguais no Word em qualquer idioma. */
 const COMMON: Bindings = {
   "file.print": ["Ctrl+P", "Ctrl+Shift+F12"],
+  "insert.pageBreak": ["Ctrl+Enter"],
+  "insert.link": ["Ctrl+K"],
+  "insert.date": ["Alt+Shift+D"],
+  "insert.time": ["Alt+Shift+T"],
   "edit.undo": ["Ctrl+Z"],
   "format.italic": ["Ctrl+I"],
   "format.strike": ["Alt+Shift+5"],

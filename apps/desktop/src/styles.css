@@ -1711,3 +1711,131 @@ select {
 .swatch.none {
   background: linear-gradient(to top right, transparent 45%, #c00000 45% 55%, transparent 55%), #fff;
 }
+
+/* ---------- Inserir ---------- */
+
+.page .link {
+  color: #0563c1;
+  text-decoration: underline;
+  cursor: text;
+}
+
+.page .link:hover {
+  cursor: pointer;
+}
+
+/* Quebra de página: linha tracejada com o nome, como em Mostrar Tudo do Word.
+   Fica fora do texto (pseudo-elemento), sem mudar as posições do cursor. */
+.page .block.page-break {
+  position: relative;
+  margin-top: 36px;
+}
+
+.page .block.page-break::before {
+  content: attr(data-page-break);
+  position: absolute;
+  top: -26px;
+  left: 0;
+  right: 0;
+  display: block;
+  border-top: 1px dashed #9aa7b4;
+  padding-top: 2px;
+  text-align: center;
+  font: 10px "Segoe UI", system-ui, sans-serif;
+  color: #7a8794;
+  pointer-events: none;
+  user-select: none;
+}
+
+.dialog {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.dialog-title {
+  margin-bottom: 14px;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dialog-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--chrome-muted);
+}
+
+.dialog-form input,
+.dialog-form select {
+  padding: 6px 8px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 6px;
+  background: var(--ribbon-bg);
+  color: var(--chrome-text);
+  font: inherit;
+  font-size: 13.5px;
+}
+
+.dialog-form input:disabled {
+  opacity: 0.6;
+}
+
+.dialog-form input[aria-invalid="true"] {
+  border-color: #c00000;
+}
+
+.dialog-error {
+  margin: -4px 0 0;
+  color: #c00000;
+  font-size: 12px;
+}
+
+.modal-actions .push-left {
+  margin-right: auto;
+}
+
+.popover.symbols {
+  padding: 8px;
+}
+
+.symbol-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 30px);
+  gap: 2px;
+}
+
+.popover .symbol {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 16px;
+  text-align: center;
+}
+
+.popover .symbol:hover {
+  border-color: var(--accent);
+}
+
+@media print {
+  .page .block.page-break {
+    break-before: page;
+    margin-top: 0;
+  }
+
+  .page .block.page-break::before {
+    display: none;
+  }
+
+  .page .link {
+    color: inherit;
+  }
+}

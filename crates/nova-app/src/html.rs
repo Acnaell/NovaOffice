@@ -47,6 +47,7 @@ fn span_html(text: &str, marks: &[Mark]) -> String {
                 css.push(format!("font-size:{}pt", f64::from(*half_points) / 2.0))
             }
             Mark::Color { value } => css.push(format!("color:{value}")),
+            Mark::Link { .. } => {}
             Mark::Highlight { value } => {
                 let hex = HIGHLIGHT
                     .iter()
@@ -56,10 +57,17 @@ fn span_html(text: &str, marks: &[Mark]) -> String {
             }
         }
     }
-    if css.is_empty() {
+    let html = if css.is_empty() {
         html
     } else {
         format!(r#"<span style="{}">{html}</span>"#, css.join(";"))
+    };
+    match marks.iter().find_map(|m| match m {
+        Mark::Link { href } => Some(href),
+        _ => None,
+    }) {
+        Some(href) => format!(r#"<a href="{}">{html}</a>"#, esc(href)),
+        None => html,
     }
 }
 
@@ -85,6 +93,9 @@ fn paragraph_html(p: &Paragraph, tag: &str) -> String {
     }
     if let Some(v) = p.attrs.space_after {
         css.push(format!("margin-bottom:{v}pt"));
+    }
+    if p.attrs.page_break_before {
+        css.push("break-before:page".to_string());
     }
     if let Some(bg) = &p.attrs.shading {
         css.push(format!("background:{bg};padding:2pt 4pt"));

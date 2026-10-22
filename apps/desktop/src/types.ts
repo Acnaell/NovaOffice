@@ -9,7 +9,8 @@ export type Mark =
   | { mark: "fontSize"; halfPoints: number }
   | { mark: "color"; value: string }
   | { mark: "highlight"; value: HighlightColor }
-  | { mark: "vertAlign"; value: "superscript" | "subscript" };
+  | { mark: "vertAlign"; value: "superscript" | "subscript" }
+  | { mark: "link"; href: string };
 
 /** Cores de realce do Word (nomes do OOXML, `w:highlight`). */
 export type HighlightColor =
@@ -66,6 +67,8 @@ export interface ParaAttrs {
   list: ListKind | null;
   /** Sombreamento (cor de fundo) do parágrafo, `#RRGGBB`. */
   shading: string | null;
+  /** Começa numa página nova (Quebra de Página, Ctrl+Enter). */
+  pageBreakBefore: boolean;
 }
 
 /** Um atributo a mudar, no formato do comando `block.setAttr`. */
@@ -76,7 +79,8 @@ export type ParaAttr =
   | { attr: "spaceBefore"; value: number | null }
   | { attr: "spaceAfter"; value: number | null }
   | { attr: "list"; value: ListKind | null }
-  | { attr: "shading"; value: string | null };
+  | { attr: "shading"; value: string | null }
+  | { attr: "pageBreakBefore"; value: boolean };
 
 export const MAX_INDENT = 8;
 

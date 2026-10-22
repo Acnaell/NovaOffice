@@ -540,6 +540,7 @@ fn alinhamento_recuo_espacamento_e_lista() {
             space_after: Some(12),
             list: Some(ListKind::Number),
             shading: None,
+            page_break_before: false,
         }
     );
     assert_eq!(doc.block_attrs(1).unwrap(), ParaAttrs::default());
@@ -777,4 +778,85 @@ fn sombreamento_aceita_so_cor_valida() {
     })
     .unwrap();
     assert_eq!(doc.block_attrs(0).unwrap().shading, None);
+}
+
+#[test]
+fn link_e_quebra_de_pagina() {
+    let mut doc = TextDocument::from_plain_text(1, "site\nfim");
+    doc.execute(TextCommand::ApplyMark {
+        block: 0,
+        offset: 0,
+        len: 4,
+        mark: Mark::Link {
+            href: "https://exemplo.com".into(),
+        },
+    })
+    .unwrap();
+    assert!(doc
+        .execute(TextCommand::ApplyMark {
+            block: 0,
+            offset: 0,
+            len: 4,
+            mark: Mark::Link {
+                href: "javascript:alert(1)".into(),
+            },
+        })
+        .is_err());
+    // Ctrl+Enter: divide e marca o novo parágrafo; Enter depois não leva a quebra adiante.
+    doc.execute(TextCommand::Batch {
+        commands: vec![
+            TextCommand::SplitBlock {
+                block: 0,
+                offset: 4,
+            },
+            TextCommand::SetBlockAttr {
+                block: 1,
+                attr: ParaAttr::PageBreakBefore(true),
+            },
+        ],
+    })
+    .unwrap();
+    doc.execute(TextCommand::SplitBlock {
+        block: 1,
+        offset: 0,
+    })
+    .unwrap();
+    let flags: Vec<bool> = (0..doc.block_count())
+        .map(|b| doc.block_attrs(b).unwrap().page_break_before)
+        .collect();
+    assert_eq!(flags, [false, true, false, false]);
+    assert_eq!(
+        doc.paragraphs()[0].spans[0].marks,
+        vec![Mark::Link {
+            href: "https://exemplo.com".into()
+        }]
+    );
+}
+
+#[test]
+fn digitar_depois_do_link_nao_estende_o_link() {
+    let mut doc = TextDocument::from_plain_text(1, "site");
+    let link = Mark::Link {
+        href: "https://exemplo.com".into(),
+    };
+    doc.execute(TextCommand::ApplyMark {
+        block: 0,
+        offset: 0,
+        len: 4,
+        mark: link.clone(),
+    })
+    .unwrap();
+    for (offset, text) in [(4, " fim"), (2, "XX")] {
+        doc.execute(TextCommand::InsertText {
+            block: 0,
+            offset,
+            text: text.into(),
+            marks: None,
+        })
+        .unwrap();
+    }
+    let spans = doc.block_spans(0).unwrap();
+    assert_eq!(spans[0].text, "siXXte");
+    assert_eq!(spans[0].marks, vec![link]);
+    assert_eq!((spans[1].text.as_str(), spans[1].marks.len()), (" fim", 0));
 }

@@ -55,17 +55,38 @@ fn block(doc: &TextDocument, index: u32) -> String {
         let text = doc.block_text(index).expect("índice dentro do documento");
         return format!("    {text}");
     }
-    let body: String = doc
-        .block_spans(index)
-        .expect("índice dentro do documento")
-        .iter()
-        .map(inline)
-        .collect();
+    let spans = doc.block_spans(index).expect("índice dentro do documento");
+    // Trechos vizinhos com o mesmo link viram um só [texto](endereço).
+    let mut body = String::new();
+    let mut i = 0;
+    while i < spans.len() {
+        let href = link_of(&spans[i]);
+        let mut j = i + 1;
+        while j < spans.len() && href.is_some() && link_of(&spans[j]) == href {
+            j += 1;
+        }
+        let text: String = spans[i..j].iter().map(inline).collect();
+        match href {
+            Some(h) => body.push_str(&format!(
+                "[{text}]({})",
+                h.replace(' ', "%20").replace(')', "%29")
+            )),
+            None => body.push_str(&text),
+        }
+        i = j;
+    }
     match style.heading_level() {
         Some(level) => format!("{} {body}", "#".repeat(level as usize)),
         None if style == BlockStyle::Quote => format!("> {body}"),
         None => body,
     }
+}
+
+fn link_of(span: &Span) -> Option<&str> {
+    span.marks.iter().find_map(|m| match m {
+        Mark::Link { href } => Some(href.as_str()),
+        _ => None,
+    })
 }
 
 /// Marcadores ficam colados ao texto: `**dois** ` e não `**dois **`, que o
@@ -322,6 +343,30 @@ fn parse_inline(raw: &str) -> Vec<Span> {
             i += 2;
             continue;
         }
+        // [texto](endereço)
+        if c == '[' {
+            let close = (i + 1..chars.len()).find(|&j| chars[j] == ']');
+            if let Some(close) = close.filter(|&j| chars.get(j + 1) == Some(&'(')) {
+                if let Some(end) = (close + 2..chars.len()).find(|&j| chars[j] == ')') {
+                    let href: String = chars[close + 2..end].iter().collect();
+                    if nova_domain_text::is_link(&href) {
+                        push(&mut spans, &mut text, &marks);
+                        let label: String = chars[i + 1..close].iter().collect();
+                        for mut s in parse_inline(&label) {
+                            for m in &marks {
+                                if !s.marks.iter().any(|x| x.kind() == m.kind()) {
+                                    s.marks.push(m.clone());
+                                }
+                            }
+                            s.marks.push(Mark::Link { href: href.clone() });
+                            spans.push(s);
+                        }
+                        i = end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
         if c == '`' {
             if let Some(end) = (i + 1..chars.len()).find(|&j| chars[j] == '`') {
                 push(&mut spans, &mut text, &marks);
@@ -343,6 +388,7 @@ fn parse_inline(raw: &str) -> Vec<Span> {
         let at = i;
         let opens = |len: usize| chars.get(at + len).is_some_and(|c| !c.is_whitespace());
         let closes = i > 0 && !chars[i - 1].is_whitespace();
+        let mut consumed = false;
         for (token, mark) in [("**", Mark::Bold), ("__", Mark::Bold), ("~~", Mark::Strike)] {
             if rest.starts_with(token) {
                 let on = marks.contains(&mark);
@@ -350,11 +396,12 @@ fn parse_inline(raw: &str) -> Vec<Span> {
                     push(&mut spans, &mut text, &marks);
                     toggle(&mut marks, mark);
                     i += 2;
+                    consumed = true;
                     break;
                 }
             }
         }
-        if i < chars.len() && chars[i] != c {
+        if consumed {
             continue;
         }
         if rest.starts_with("<u>") || rest.starts_with("</u>") {
@@ -400,6 +447,29 @@ fn parse_inline(raw: &str) -> Vec<Span> {
 mod tests {
     use super::*;
     use nova_domain_text::{Mark, TextCommand};
+
+    #[test]
+    fn links_vao_e_voltam() {
+        let doc = import(
+            1,
+            "Veja [o **site**](https://exemplo.com) e [isto](javascript:x).",
+        )
+        .unwrap();
+        let p = &doc.paragraphs()[0];
+        let link = Mark::Link {
+            href: "https://exemplo.com".into(),
+        };
+        assert!(p
+            .spans
+            .iter()
+            .any(|s| s.text == "site" && s.marks.contains(&link) && s.marks.contains(&Mark::Bold)));
+        assert!(
+            p.text().ends_with("e isto."),
+            "esquema não aceito: fica só o texto: {:?}",
+            p.text()
+        );
+        assert!(export(&doc).contains("[o **site**](https://exemplo.com)"));
+    }
 
     #[test]
     fn titulos_marcas_citacao_e_codigo() {

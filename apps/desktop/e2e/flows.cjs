@@ -507,11 +507,6 @@ const flows = [
     const c = (await h.doc()).blocks[0].attrs.lineSpacing;
     return a === 200 && b === 150 && c === null && d.spaceBefore === 12 ? OK() : FALHA(`${a} ${b} ${c} ${JSON.stringify(d)}`);
   } },
-  { area: 'Parágrafo', name: 'Quebra de página (Ctrl+Enter)', run: async (h) => {
-    await h.reset(['antes']); await h.select(0, 5); await h.press('Control+Enter'); await h.type('depois');
-    const t = await h.texts();
-    return AUSENTE(`Fica para a fase Layout (páginas reais); Ctrl+Enter ${t.length === 2 ? 'cria um parágrafo comum' : 'resulta em ' + JSON.stringify(t)}.`);
-  } },
   { area: 'Parágrafo', name: 'Sombreamento do parágrafo', run: async (h) => {
     await h.reset(['fundo escuro', 'normal']);
     await h.select(0, 2);
@@ -532,24 +527,6 @@ const flows = [
     return shown.startsWith('a·b→c') && after.includes('¶') && eq(t, ['aX b\tc']) ? OK('Espaços (·), tabulações (→) e ¶ aparecem sem entrar no texto.') : FALHA(`${JSON.stringify(shown)} ${after} ${JSON.stringify(t)}`);
   } },
 
-  // ───────────── Inserir
-  { area: 'Inserir', name: 'Tabela', run: async () => AUSENTE('Não há tabelas (roadmap).') },
-  { area: 'Inserir', name: 'Imagem', run: async (h) => {
-    await h.reset(['']);
-    await h.p.evaluate(() => {
-      const dt = new DataTransfer();
-      dt.items.add(new File([new Uint8Array([137, 80, 78, 71])], 'a.png', { type: 'image/png' }));
-      document.querySelector('.page').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-    });
-    await h.settle();
-    const t = await h.texts();
-    return AUSENTE(`Não há imagens (roadmap); colar uma imagem ${eq(t, ['']) ? 'é ignorado sem erro' : 'produz ' + JSON.stringify(t)}.`);
-  } },
-  { area: 'Inserir', name: 'Hiperlink (Ctrl+K)', run: absentShortcut('Control+k', 'Hiperlink') },
-  { area: 'Inserir', name: 'Links digitados viram clicáveis', run: async () => AUSENTE('Endereços como https://… ficam como texto comum.') },
-  { area: 'Inserir', name: 'Símbolos e caracteres especiais', run: async () => AUSENTE('Não há janela de símbolos (dá para colar ou usar o teclado do sistema).') },
-  { area: 'Inserir', name: 'Cabeçalho, rodapé e número de página', run: async () => AUSENTE('Não há cabeçalho/rodapé nem paginação.') },
-  { area: 'Inserir', name: 'Comentários', run: async () => AUSENTE('Não há comentários.') },
 
   // ───────────── Revisão e ferramentas
   { area: 'Ferramentas', name: 'Localizar (Ctrl+L): painel, resultados e destaque', run: async (h) => {
@@ -769,6 +746,94 @@ const flows = [
     const ok = names.length === 6 && current === 'Nova Text' && soon === 5 && closed;
     return ok ? OK(`${names.join(', ')}; os outros 5 aparecem como "Em breve"; Esc fecha.`) : FALHA(`${names} atual=${current} breve=${soon} fechou=${closed}`);
   } },
+
+  // ───────────── Inserir
+  { area: 'Inserir', name: 'Quebra de Página (Ctrl+Enter)', run: async (h) => {
+    await h.reset(['antes depois']);
+    await h.select(0, 6);
+    await h.press('Control+Enter');
+    const d = await h.doc();
+    const marked = await h.p.locator('.block.page-break').count();
+    await h.press('Backspace');
+    const after = await h.doc();
+    const ok = eq(d.blocks.map((b) => [b.spans.map((s) => s.text).join(''), b.attrs.pageBreakBefore]), [['antes ', false], ['depois', true]]) && marked === 1 && !after.blocks[1].attrs.pageBreakBefore;
+    return ok ? OK('Linha "Quebra de Página" na tela, página nova ao imprimir e no .docx/.odt; Backspace apaga a quebra.') : FALHA(JSON.stringify(d.blocks.map((b) => b.attrs)));
+  } },
+  { area: 'Inserir', name: 'Link no texto selecionado (Ctrl+K) e Ctrl+clique', run: async (h) => {
+    await h.reset(['veja o site hoje']);
+    await h.select(0, 7, 0, 11);
+    await h.press('Control+k');
+    if (!(await h.modalVisible())) return FALHA('Ctrl+K não abriu a caixa.');
+    await h.p.locator('.dialog input').nth(1).fill('exemplo.com');
+    await h.p.keyboard.press('Enter'); await h.settle(200);
+    const spans = await h.spans(0);
+    const linked = spans.find((s) => s.marks.some((m) => m.mark === 'link'));
+    await h.p.evaluate(() => { window.__opened = null; });
+    await h.p.locator('.page .link').click({ modifiers: ['Control'] }); await h.settle(100);
+    const opened = await h.p.evaluate(() => window.__opened);
+    await h.select(0, 16); await h.type(' fim');
+    const last = (await h.spans(0)).at(-1);
+    const ok = linked?.text === 'site' && linked.marks.find((m) => m.mark === 'link').href === 'https://exemplo.com' && opened === 'https://exemplo.com' && !last.marks.some((m) => m.mark === 'link');
+    return ok ? OK('"exemplo.com" vira https://exemplo.com; Ctrl+clique abre no navegador.') : FALHA(`${JSON.stringify(spans)} aberto=${opened}`);
+  } },
+  { area: 'Inserir', name: 'Link sem seleção, editar e remover', run: async (h) => {
+    await h.reset(['']);
+    await h.press('Control+k');
+    await h.p.locator('.dialog input').nth(0).fill('Fale conosco');
+    await h.p.locator('.dialog input').nth(1).fill('contato@empresa.com.br');
+    await h.p.keyboard.press('Enter'); await h.settle(200);
+    const made = await h.spans(0);
+    await h.select(0, 3);
+    await h.press('Control+k');
+    const address = await h.p.locator('.dialog input').nth(1).inputValue();
+    await h.p.locator('.modal button', { hasText: 'Remover Link' }).click(); await h.settle(200);
+    const removed = await h.spans(0);
+    const ok = made[0]?.text === 'Fale conosco' && made[0].marks[0]?.href === 'mailto:contato@empresa.com.br' && address === 'mailto:contato@empresa.com.br' && removed.every((s) => !s.marks.length);
+    return ok ? OK() : FALHA(`${JSON.stringify(made)} → ${address} → ${JSON.stringify(removed)}`);
+  } },
+  { area: 'Inserir', name: 'Endereço digitado vira link (AutoFormatação)', run: async (h) => {
+    await h.reset(['']);
+    await h.type('acesse www.gov.br hoje');
+    const spans = await h.spans(0);
+    const link = spans.find((s) => s.marks.some((m) => m.mark === 'link'));
+    return link?.text === 'www.gov.br' ? OK() : FALHA(JSON.stringify(spans));
+  } },
+  { area: 'Inserir', name: 'Data e Hora', run: async (h) => {
+    await h.reset(['']);
+    await h.p.locator('.tab', { hasText: 'Inserir' }).click();
+    await h.p.locator('button', { hasText: 'Data e Hora' }).click(); await h.settle(100);
+    const options = await h.p.locator('.dialog option').count();
+    await h.p.locator('.modal button', { hasText: 'OK' }).click(); await h.settle(200);
+    const t = await h.texts();
+    await h.press('Alt+Shift+D');
+    const t2 = await h.texts();
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    return /^\d{2}\/\d{2}\/\d{4}$/.test(t[0]) && t2[0].length === 20 ? OK(`${options} formatos; Alt+Shift+D insere a data.`) : FALHA(JSON.stringify([t, t2]));
+  } },
+  { area: 'Inserir', name: 'Símbolo', run: async (h) => {
+    await h.reset(['x']);
+    await h.select(0, 1);
+    await h.p.locator('.tab', { hasText: 'Inserir' }).click();
+    await h.p.locator('button[aria-label="Símbolo"]').click();
+    await h.p.locator('.popover .symbol', { hasText: '©' }).click(); await h.settle(150);
+    const t = await h.texts();
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    return t[0] === 'x©' ? OK() : FALHA(JSON.stringify(t));
+  } },
+  { area: 'Inserir', name: 'Tabela', run: async () => AUSENTE('Próxima parte da aba Inserir.') },
+  { area: 'Inserir', name: 'Imagem', run: async (h) => {
+    await h.reset(['']);
+    await h.p.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([new Uint8Array([137, 80, 78, 71])], 'a.png', { type: 'image/png' }));
+      document.querySelector('.page').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+    await h.settle();
+    const t = await h.texts();
+    return AUSENTE(`Próxima parte da aba Inserir; colar uma imagem ${eq(t, ['']) ? 'é ignorado sem erro' : 'produz ' + JSON.stringify(t)}.`);
+  } },
+  { area: 'Inserir', name: 'Cabeçalho, rodapé e número de página', run: async () => AUSENTE('Depende das páginas reais (aba Layout).') },
+  { area: 'Inserir', name: 'Comentários', run: async () => AUSENTE('Não há comentários.') },
 
   // ───────────── Exibição
   { area: 'Exibição', name: 'Página com tamanho A4 e margens; várias páginas', run: async (h) => {

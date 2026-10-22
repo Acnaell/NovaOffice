@@ -2,7 +2,7 @@
 // realce, sobrescrito/subscrito, maiúsculas, limpar formatação e parágrafo
 // (alinhamento, recuo, entrelinhas, listas). Testados em formatting.test.ts.
 
-import { blockText, isCollapsed, ordered, segments, type Selection } from "./model";
+import { blockText, isCollapsed, marksAt, ordered, segments, splitBlock, type Edit, type Selection } from "./model";
 import type {
   BlockStyle,
   BlockView,
@@ -25,6 +25,7 @@ export const DEFAULT_ATTRS: ParaAttrs = {
   spaceAfter: null,
   list: null,
   shading: null,
+  pageBreakBefore: false,
 };
 
 /** Fundo escuro o bastante para o texto automático ficar branco, como no Word. */
@@ -374,4 +375,93 @@ export function listMarkers(blocks: BlockView[]): (string | null)[] {
     const formatted = [String(n), toLetters(n), toRoman(n)][level % 3];
     return `${formatted}.`;
   });
+}
+
+// ---------- Inserir ----------
+
+/** Esquemas aceitos em links (os mesmos do núcleo). */
+const LINK_SCHEMES = ["http://", "https://", "mailto:", "tel:", "ftp://", "file://"];
+
+/**
+ * Endereço digitado pela pessoa → link aceito, como o Word faz:
+ * "exemplo.com" → "https://exemplo.com", "fulano@x.com" → "mailto:fulano@x.com".
+ */
+export function normalizeHref(input: string): string | null {
+  const raw = input.trim();
+  if (!raw || raw.length > 2048) return null;
+  const lower = raw.toLowerCase();
+  if (LINK_SCHEMES.some((s) => lower.startsWith(s))) return raw;
+  if (/^[^\s@/]+@[^\s@/]+\.[^\s@/]+$/.test(raw)) return `mailto:${raw}`;
+  if (/^(www\.)?[\p{L}\p{N}-]+(\.[\p{L}\p{N}-]+)+(:\d+)?([/?#].*)?$/u.test(raw)) return `https://${raw}`;
+  return null;
+}
+
+/** O link do trecho, se houver. */
+export const linkOf = (marks: Mark[]): string | null => {
+  const m = marks.find((x) => x.mark === "link");
+  return m && m.mark === "link" ? m.href : null;
+};
+
+/** Trecho contínuo com o mesmo link em volta da posição (para editar ou remover o link). */
+export function linkRangeAt(doc: DocView, pos: { block: number; offset: number }): { from: number; to: number; href: string } | null {
+  const block = doc.blocks[pos.block];
+  if (!block) return null;
+  let start = 0;
+  const ranges: { from: number; to: number; href: string | null }[] = [];
+  for (const span of block.spans) {
+    ranges.push({ from: start, to: start + span.text.length, href: linkOf(span.marks) });
+    start += span.text.length;
+  }
+  const i = ranges.findIndex((r) => r.href && pos.offset >= r.from && pos.offset <= r.to && (pos.offset < r.to || r.to > r.from));
+  if (i < 0) return null;
+  const href = ranges[i].href!;
+  let from = ranges[i].from;
+  let to = ranges[i].to;
+  for (let j = i - 1; j >= 0 && ranges[j].href === href; j--) from = ranges[j].from;
+  for (let j = i + 1; j < ranges.length && ranges[j].href === href; j++) to = ranges[j].to;
+  return { from, to, href };
+}
+
+/**
+ * AutoFormatação ao digitar espaço ou Enter: um endereço da Web ou e-mail
+ * logo antes do cursor vira link, como no Word.
+ */
+export function autoLink(doc: DocView, sel: Selection): TextCommand | null {
+  if (!isCollapsed(sel)) return null;
+  const { block, offset } = sel.focus;
+  const text = blockText(doc.blocks[block]).slice(0, offset);
+  const match = /(?:^|[\s(])((?:https?:\/\/|www\.)[^\s]+|[^\s@()]+@[^\s@()]+\.[a-z]{2,})$/i.exec(text);
+  if (!match) return null;
+  const word = match[1].replace(/[.,;:!?)]+$/, "");
+  const href = normalizeHref(word);
+  const from = text.length - match[1].length;
+  if (!href || linkOf(marksAt(doc, { block, offset: from + 1 }))) return null;
+  return { type: "text.applyMark", block, offset: from, len: word.length, mark: { mark: "link", href } };
+}
+
+/** Ctrl+Enter: divide o parágrafo e o novo começa na página seguinte. */
+export function insertPageBreak(doc: DocView, sel: Selection): Edit {
+  const split = splitBlock(doc, sel);
+  const at = split.selection.focus.block;
+  const commands = [split.command, { type: "block.setAttr", block: at, attr: "pageBreakBefore", value: true } as TextCommand].filter(
+    (c): c is TextCommand => !!c,
+  );
+  return { command: { type: "batch", commands: commands.flatMap((c) => (c.type === "batch" ? c.commands : [c])) }, selection: split.selection };
+}
+
+/** Datas e horas do Inserir → Data e Hora, nos formatos do Word para o idioma. */
+export function dateTimeFormats(now: Date, locale: string): string[] {
+  const f = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat(locale, o).format(now);
+  const list = [
+    f({ day: "2-digit", month: "2-digit", year: "numeric" }),
+    f({ weekday: "long", day: "numeric", month: "long", year: "numeric" }),
+    f({ day: "numeric", month: "long", year: "numeric" }),
+    f({ day: "2-digit", month: "2-digit", year: "2-digit" }),
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
+    f({ month: "long", year: "numeric" }),
+    f({ day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }),
+    f({ hour: "2-digit", minute: "2-digit" }),
+    f({ hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+  ];
+  return [...new Set(list)];
 }

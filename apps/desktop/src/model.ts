@@ -189,6 +189,10 @@ export function deleteBackward(doc: DocView, sel: Selection): Edit {
     const len = charLenBefore(blockText(doc.blocks[block]), offset);
     return deleteRange({ block, offset: offset - len }, sel.focus);
   }
+  // No início de um parágrafo depois de uma quebra de página, o Backspace apaga a quebra.
+  if (doc.blocks[block].attrs?.pageBreakBefore) {
+    return { command: { type: "block.setAttr", block, attr: "pageBreakBefore", value: false }, selection: sel };
+  }
   // No início de um item de lista, o primeiro Backspace tira o marcador (Word).
   if (doc.blocks[block].attrs?.list) {
     return { command: { type: "block.setAttr", block, attr: "list", value: null }, selection: sel };

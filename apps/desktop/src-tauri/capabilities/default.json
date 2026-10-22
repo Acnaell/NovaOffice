@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissões da janela principal: comandos do núcleo, diálogos de arquivo e título da janela",
+  "description": "Permissões da janela principal: comandos do núcleo, diálogos de arquivo, título da janela e abrir links no navegador",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -11,6 +11,7 @@
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-ask",
-    "dialog:allow-message"
+    "dialog:allow-message",
+    "opener:default"
   ]
 }

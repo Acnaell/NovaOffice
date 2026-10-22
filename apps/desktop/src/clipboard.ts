@@ -2,7 +2,7 @@
 // (JSON, sem perdas), HTML (para Word, navegador, e-mail) e texto simples.
 // Colar aceita qualquer um dos três; o HTML de fora vira parágrafos e marcas.
 
-import { DEFAULT_ATTRS, pieces } from "./formatting";
+import { DEFAULT_ATTRS, linkOf, normalizeHref, pieces } from "./formatting";
 import { blockText, caret, ordered, type Edit, type Selection } from "./model";
 import type { Align, BlockStyle, BlockView, DocView, HighlightColor, Mark, ParaAttrs, TextCommand } from "./types";
 
@@ -93,12 +93,16 @@ function spanHtml(text: string, marks: Mark[]): string {
       case "color":
         css.push(`color:${m.value}`);
         break;
+      case "link":
+        break;
       case "highlight":
         css.push(`background:${HIGHLIGHT_CSS[m.value]}`);
         break;
     }
   }
-  return css.length ? `<span style="${css.join(";")}">${html}</span>` : html;
+  const styled = css.length ? `<span style="${css.join(";")}">${html}</span>` : html;
+  const href = linkOf(marks);
+  return href ? `<a href="${escapeHtml(href)}">${styled}</a>` : styled;
 }
 
 export function fragmentHtml(fragment: Fragment): string {
@@ -223,6 +227,11 @@ function marksFromElement(el: HTMLElement, inherited: Mark[]): Mark[] {
     case "MARK":
       set({ mark: "highlight", value: "yellow" });
       break;
+    case "A": {
+      const href = normalizeHref(el.getAttribute("href") ?? "");
+      if (href) set({ mark: "link", href });
+      break;
+    }
   }
   const s = el.style;
   const weight = s.fontWeight;

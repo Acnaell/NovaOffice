@@ -8,6 +8,24 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- Aba **Inserir**, primeira parte:
+  - **Quebra de Página** (Ctrl+Enter), mostrada como uma linha no texto e respeitada ao imprimir; o
+    Backspace no início do parágrafo apaga a quebra.
+  - **Link** (Ctrl+K) no texto selecionado ou com texto novo, editar e remover; "exemplo.com" vira
+    `https://exemplo.com` e um e-mail vira `mailto:`. Ctrl+clique abre no navegador.
+  - Endereços da Web e e-mails digitados viram links ao digitar espaço ou Enter (AutoFormatação).
+  - **Data e Hora** com os formatos do idioma; Alt+Shift+D e Alt+Shift+T inserem data e hora.
+  - **Símbolo**: grade com os símbolos mais usados (©, ®, ™, §, °, ±, €, setas, letras gregas…).
+- Links e quebras de página são lidos e gravados em .docx, .odt, .html e Markdown (`[texto](endereço)`);
+  links copiados vão para outros programas como links.
+
+### Corrigido
+
+- Markdown: negrito no fim do parágrafo (`texto **negrito**`) deixava um `*` sobrando.
+- .docx: quebra de página no fim de um parágrafo criava um parágrafo vazio a mais.
+
 ## [0.1.2] - 2026-10-22
 
 ### Adicionado
