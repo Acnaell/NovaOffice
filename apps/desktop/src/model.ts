@@ -4,6 +4,7 @@
 import type {
   BlockStyle,
   BlockView,
+  CellRef,
   DocView,
   Mark,
   MarkKind,
@@ -129,10 +130,10 @@ export function setStyle(doc: DocView, sel: Selection, style: BlockStyle): TextC
 }
 
 /** Digitar ou colar: substitui a seleção; quebras de linha viram parágrafos. */
-export function insertText(_doc: DocView, sel: Selection, text: string, marks?: Mark[]): Edit {
+export function insertText(doc: DocView, sel: Selection, text: string, marks?: Mark[]): Edit {
   const [from, to] = ordered(sel);
   const commands: TextCommand[] = [];
-  const removal = deleteRange(from, to).command;
+  const removal = deleteRange(from, to, doc).command;
   if (removal) commands.push(removal);
 
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
@@ -161,10 +162,10 @@ export function insertText(_doc: DocView, sel: Selection, text: string, marks?: 
 }
 
 /** Enter. */
-export function splitBlock(_doc: DocView, sel: Selection): Edit {
+export function splitBlock(doc: DocView, sel: Selection): Edit {
   const [from, to] = ordered(sel);
   const commands: TextCommand[] = [];
-  const removal = deleteRange(from, to).command;
+  const removal = deleteRange(from, to, doc).command;
   if (removal) commands.push(removal);
   commands.push({ type: "block.split", block: from.block, offset: from.offset });
   return { command: wrap(commands), selection: caret({ block: from.block + 1, offset: 0 }) };
@@ -172,8 +173,23 @@ export function splitBlock(_doc: DocView, sel: Selection): Edit {
 
 /** Dentro de um parágrafo usa `text.delete`, que se agrupa com a digitação no
  *  desfazer; entre parágrafos, `text.deleteRange`, que é um passo próprio. */
-export function deleteRange(from: Pos, to: Pos): Edit {
+export function deleteRange(from: Pos, to: Pos, doc?: DocView): Edit {
   if (comparePos(from, to) === 0) return { command: null, selection: caret(from) };
+  // Seleção que atravessa células de tabela: apaga o texto de cada parágrafo,
+  // sem juntar parágrafos (a estrutura da tabela fica), como o Word.
+  if (doc && from.block !== to.block) {
+    const touchesTable = doc.blocks.slice(from.block, to.block + 1).some((b) => b.attrs?.cell);
+    if (touchesTable) {
+      const commands: TextCommand[] = [];
+      for (let b = to.block; b >= from.block; b--) {
+        const len = blockText(doc.blocks[b]).length;
+        const start = b === from.block ? from.offset : 0;
+        const end = b === to.block ? to.offset : len;
+        if (end > start) commands.push({ type: "text.delete", block: b, offset: start, len: end - start });
+      }
+      return { command: wrap(commands), selection: caret(from) };
+    }
+  }
   const command: TextCommand =
     from.block === to.block
       ? { type: "text.delete", block: from.block, offset: from.offset, len: to.offset - from.offset }
@@ -181,9 +197,15 @@ export function deleteRange(from: Pos, to: Pos): Edit {
   return { command, selection: caret(from) };
 }
 
+/** Mesma célula de tabela (ou os dois fora de tabela). */
+function sameCellRef(a: CellRef | null | undefined, b: CellRef | null | undefined): boolean {
+  if (!a && !b) return true;
+  return !!a && !!b && a.table === b.table && a.row === b.row && a.col === b.col;
+}
+
 /** Backspace. No início de um parágrafo, junta com o anterior. */
 export function deleteBackward(doc: DocView, sel: Selection): Edit {
-  if (!isCollapsed(sel)) return deleteRange(...ordered(sel));
+  if (!isCollapsed(sel)) return deleteRange(...ordered(sel), doc);
   const { block, offset } = sel.focus;
   if (offset > 0) {
     const len = charLenBefore(blockText(doc.blocks[block]), offset);
@@ -199,6 +221,11 @@ export function deleteBackward(doc: DocView, sel: Selection): Edit {
   }
   if (block > 0) {
     const prevLen = blockText(doc.blocks[block - 1]).length;
+    // Não junta parágrafos de células diferentes, nem texto de fora com uma célula:
+    // o cursor só vai para o fim do parágrafo anterior.
+    if (!sameCellRef(doc.blocks[block].attrs?.cell, doc.blocks[block - 1].attrs?.cell)) {
+      return { command: null, selection: doc.blocks[block].attrs?.cell ? sel : caret({ block: block - 1, offset: prevLen }) };
+    }
     return deleteRange({ block: block - 1, offset: prevLen }, sel.focus);
   }
   return { command: null, selection: sel };
@@ -206,13 +233,16 @@ export function deleteBackward(doc: DocView, sel: Selection): Edit {
 
 /** Delete. No fim de um parágrafo, puxa o seguinte. */
 export function deleteForward(doc: DocView, sel: Selection): Edit {
-  if (!isCollapsed(sel)) return deleteRange(...ordered(sel));
+  if (!isCollapsed(sel)) return deleteRange(...ordered(sel), doc);
   const { block, offset } = sel.focus;
   const text = blockText(doc.blocks[block]);
   if (offset < text.length) {
     return deleteRange(sel.focus, { block, offset: offset + charLenAfter(text, offset) });
   }
-  if (block < doc.blocks.length - 1) return deleteRange(sel.focus, { block: block + 1, offset: 0 });
+  if (block < doc.blocks.length - 1) {
+    if (!sameCellRef(doc.blocks[block].attrs?.cell, doc.blocks[block + 1].attrs?.cell)) return { command: null, selection: sel };
+    return deleteRange(sel.focus, { block: block + 1, offset: 0 });
+  }
   return { command: null, selection: sel };
 }
 
@@ -232,7 +262,7 @@ export function deleteWordForward(doc: DocView, sel: Selection): Edit {
 
 /** Apaga até o início (`backward`) ou o fim do parágrafo. */
 export function deleteToBlockEdge(doc: DocView, sel: Selection, backward: boolean): Edit {
-  if (!isCollapsed(sel)) return deleteRange(...ordered(sel));
+  if (!isCollapsed(sel)) return deleteRange(...ordered(sel), doc);
   const { block } = sel.focus;
   const edge = { block, offset: backward ? 0 : blockText(doc.blocks[block]).length };
   return backward ? deleteRange(edge, sel.focus) : deleteRange(sel.focus, edge);

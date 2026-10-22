@@ -2,10 +2,10 @@
 // comandos com o nome embaixo, na mesma organização do Microsoft Word. Os
 // comandos chegam por `onCommand`, com os mesmos ids da tabela de atalhos.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AppLauncher } from "./AppLauncher";
 import { HIGHLIGHT_CSS } from "./clipboard";
-import { SymbolMenu } from "./Insert";
+import { SymbolMenu, TablePicker } from "./Insert";
 import {
   ColorBarIcon,
   FontColorMenu,
@@ -25,7 +25,16 @@ import { THEME_MODES, type ThemeMode } from "./theme";
 import type { Align, BlockStyle, FileFormat, HighlightColor, ListKind } from "./types";
 
 /** Comandos da faixa: os com atalho e os que só existem como botão. */
-export type RibbonCommand = CommandId | "insert.dateTime";
+export type RibbonCommand =
+  | CommandId
+  | "insert.dateTime"
+  | "table.insertAbove"
+  | "table.insertBelow"
+  | "table.insertLeft"
+  | "table.insertRight"
+  | "table.deleteRows"
+  | "table.deleteColumns"
+  | "table.deleteTable";
 
 export const BLOCK_STYLES: BlockStyle[] = [
   "paragraph",
@@ -45,7 +54,8 @@ const styleCommand = (style: BlockStyle): CommandId => `style.${style}`;
 const GALLERY: BlockStyle[] = ["paragraph", "heading1", "heading2", "heading3", "quote", "code"];
 
 /** "Arquivo" não é uma aba de comandos: abre a tela Arquivo, como no Word. */
-type Tab = "home" | "insert" | "view";
+/** "table" é a aba contextual Layout da Tabela, que só aparece com o cursor numa tabela. */
+type Tab = "home" | "insert" | "view" | "table";
 const TABS: ("file" | Tab)[] = ["file", "home", "insert", "view"];
 
 /** Marcas que aparecem pressionadas na faixa de opções. */
@@ -91,6 +101,9 @@ export interface RibbonProps {
   onPainter: (sticky: boolean) => void;
   /** Insere texto no cursor (Símbolo). */
   onInsertText: (text: string) => void;
+  onInsertTable: (rows: number, cols: number) => void;
+  /** O cursor está numa tabela: mostra a aba Layout da Tabela. */
+  inTable: boolean;
 }
 
 /** Entrelinhas oferecidas no menu, em % (como no Word: 1,0 1,15 1,5 2,0 2,5 3,0). */
@@ -99,6 +112,10 @@ const SPACINGS = [100, 115, 150, 200, 250, 300];
 export function Ribbon(props: RibbonProps) {
   const { t, locale, setLocale } = useI18n();
   const [tab, setTab] = useState<Tab>("home");
+  // Saindo da tabela, a aba Layout da Tabela some e volta a Página Inicial.
+  useEffect(() => {
+    if (!props.inTable && tab === "table") setTab("home");
+  }, [props.inTable, tab]);
   const [collapsed, setCollapsed] = useState(false);
 
   const label = (command: CommandId) => t(`cmd.${command}` as MessageKey);
@@ -354,6 +371,12 @@ export function Ribbon(props: RibbonProps) {
       <Group label={t("group.pages")}>
         {big("insert.pageBreak", icons.pageBreak, t("cmd.insert.pageBreak"), tip("insert.pageBreak"))}
       </Group>
+      <Group label={t("group.tables")}>
+        <MenuButton label={t("insert.table")} className="big-button" menuClass="tables" render={(close) => <TablePicker close={close} onPick={props.onInsertTable} />}>
+          {icons.table}
+          <span>{t("insert.table")}</span>
+        </MenuButton>
+      </Group>
       <Group label={t("group.links")}>
         {big("insert.link", icons.link, t("cmd.insert.link"), tip("insert.link"))}
       </Group>
@@ -369,9 +392,31 @@ export function Ribbon(props: RibbonProps) {
     </>
   );
 
+  const tableLayout = (
+    <>
+      <Group label={t("group.rowsCols")}>
+        <MenuButton label={t("table.delete")} className="big-button" render={(close) => (
+          <>
+            <MenuItem onSelect={() => { close(); props.onCommand("table.deleteColumns"); }}>{t("table.deleteColumns")}</MenuItem>
+            <MenuItem onSelect={() => { close(); props.onCommand("table.deleteRows"); }}>{t("table.deleteRows")}</MenuItem>
+            <MenuItem onSelect={() => { close(); props.onCommand("table.deleteTable"); }}>{t("table.deleteTable")}</MenuItem>
+          </>
+        )}>
+          {icons.tableDelete}
+          <span>{t("table.delete")}</span>
+        </MenuButton>
+        {big("table.insertAbove", icons.rowAbove, t("table.insertAbove"))}
+        {big("table.insertBelow", icons.rowBelow, t("table.insertBelow"))}
+        {big("table.insertLeft", icons.colLeft, t("table.insertLeft"))}
+        {big("table.insertRight", icons.colRight, t("table.insertRight"))}
+      </Group>
+    </>
+  );
+
   const panels: Record<Tab, ReactNode> = {
     home,
     insert,
+    table: tableLayout,
     view: (
       <>
         <Group label={t("group.theme")}>
@@ -427,7 +472,7 @@ export function Ribbon(props: RibbonProps) {
       </div>
       <div className="ribbon">
         <div className="tabs" role="tablist" aria-label={t("ribbon.label")}>
-          {TABS.map((id) => (
+          {[...TABS, ...(props.inTable ? (["table"] as const) : [])].map((id) => (
             <button
               key={id}
               role="tab"
@@ -435,7 +480,7 @@ export function Ribbon(props: RibbonProps) {
               aria-selected={id === "file" ? false : tab === id}
               aria-controls={id === "file" ? undefined : "ribbon-panel"}
               aria-haspopup={id === "file" ? "dialog" : undefined}
-              className={id === "file" ? "tab tab-file" : "tab"}
+              className={id === "file" ? "tab tab-file" : id === "table" ? "tab tab-context" : "tab"}
               onMouseDown={keepFocus}
               onClick={() => {
                 if (id === "file") return props.onBackstage("home");
@@ -459,7 +504,7 @@ export function Ribbon(props: RibbonProps) {
         </div>
         {!collapsed && (
           <div className="panel" role="tabpanel" id="ribbon-panel" aria-labelledby={`tab-${tab}`}>
-            {panels[tab]}
+            {panels[tab === "table" && !props.inTable ? "home" : tab]}
           </div>
         )}
       </div>

@@ -541,6 +541,7 @@ fn alinhamento_recuo_espacamento_e_lista() {
             list: Some(ListKind::Number),
             shading: None,
             page_break_before: false,
+            cell: None,
         }
     );
     assert_eq!(doc.block_attrs(1).unwrap(), ParaAttrs::default());
@@ -859,4 +860,46 @@ fn digitar_depois_do_link_nao_estende_o_link() {
     assert_eq!(spans[0].text, "siXXte");
     assert_eq!(spans[0].marks, vec![link]);
     assert_eq!((spans[1].text.as_str(), spans[1].marks.len()), (" fim", 0));
+}
+
+#[test]
+fn celulas_de_tabela() {
+    let mut doc = TextDocument::from_plain_text(1, "a\nb");
+    let cell = |row, col| CellRef {
+        table: "t1".into(),
+        row,
+        col,
+    };
+    for (block, c) in [(0, cell(0, 0)), (1, cell(0, 1))] {
+        doc.execute(TextCommand::SetBlockAttr {
+            block,
+            attr: ParaAttr::Cell(Some(c)),
+        })
+        .unwrap();
+    }
+    // Enter dentro da célula cria outro parágrafo na mesma célula.
+    doc.execute(TextCommand::SplitBlock {
+        block: 0,
+        offset: 1,
+    })
+    .unwrap();
+    let cells: Vec<Option<CellRef>> = (0..3).map(|b| doc.block_attrs(b).unwrap().cell).collect();
+    assert_eq!(
+        cells,
+        [Some(cell(0, 0)), Some(cell(0, 0)), Some(cell(0, 1))]
+    );
+    assert!(doc
+        .execute(TextCommand::SetBlockAttr {
+            block: 0,
+            attr: ParaAttr::Cell(Some(CellRef {
+                table: "com espaço".into(),
+                row: 0,
+                col: 0
+            })),
+        })
+        .is_err());
+    // O JSON que a interface manda.
+    let json = r#"{"type":"block.setAttr","block":2,"attr":"cell","value":{"table":"t-2","row":3,"col":1}}"#;
+    doc.execute(serde_json::from_str(json).unwrap()).unwrap();
+    assert_eq!(doc.block_attrs(2).unwrap().cell.unwrap().table, "t-2");
 }

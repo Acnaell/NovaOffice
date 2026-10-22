@@ -51,6 +51,7 @@ import {
 import { Ribbon, type RibbonCommand } from "./Ribbon";
 import { SaveChangesDialog, type SaveChoice } from "./SaveDialog";
 import { DateTimeDialog, LinkDialog, type LinkRequest } from "./Insert";
+import { deleteColumns, deleteRows, deleteTable, insertColumn, insertRow, insertTable } from "./tables";
 import { matchShortcut, profileFor } from "./shortcuts";
 import { useTheme } from "./theme";
 import { applyPatch, type BlockStyle, type DocView, type FileFormat, type Recent, type RecoveryInfo, type HighlightColor, type Mark, type MarkKind, type ParaAttr, type TextCommand, type ToggleMark } from "./types";
@@ -692,6 +693,23 @@ export default function App() {
         return setBackstage("saveAs");
       case "file.print":
         return setBackstage("print");
+      case "table.insertAbove":
+      case "table.insertBelow":
+        focusEditor();
+        return run((doc, sel) => insertRow(doc, sel, command === "table.insertBelow"));
+      case "table.insertLeft":
+      case "table.insertRight":
+        focusEditor();
+        return run((doc, sel) => insertColumn(doc, sel, command === "table.insertRight"));
+      case "table.deleteRows":
+        focusEditor();
+        return run(deleteRows);
+      case "table.deleteColumns":
+        focusEditor();
+        return run(deleteColumns);
+      case "table.deleteTable":
+        focusEditor();
+        return run(deleteTable);
       case "insert.pageBreak":
         focusEditor();
         return run(insertPageBreak);
@@ -933,6 +951,11 @@ export default function App() {
         onPaste={pasteFromRibbon}
         onPainter={onPainter}
         onInsertText={insertTextAtCaret}
+        onInsertTable={(rows, cols) => {
+          focusEditor();
+          run((doc, sel) => insertTable(doc, sel, rows, cols));
+        }}
+        inTable={!!view.blocks[selection.focus.block]?.attrs.cell}
       />
       <main className={`workspace${find ? " with-panel" : ""}`}>
         {find && (

@@ -69,6 +69,14 @@ export interface ParaAttrs {
   shading: string | null;
   /** Começa numa página nova (Quebra de Página, Ctrl+Enter). */
   pageBreakBefore: boolean;
+  /** Célula de tabela do parágrafo; parágrafos seguidos da mesma tabela formam a tabela. */
+  cell: CellRef | null;
+}
+
+export interface CellRef {
+  table: string;
+  row: number;
+  col: number;
 }
 
 /** Um atributo a mudar, no formato do comando `block.setAttr`. */
@@ -80,7 +88,8 @@ export type ParaAttr =
   | { attr: "spaceAfter"; value: number | null }
   | { attr: "list"; value: ListKind | null }
   | { attr: "shading"; value: string | null }
-  | { attr: "pageBreakBefore"; value: boolean };
+  | { attr: "pageBreakBefore"; value: boolean }
+  | { attr: "cell"; value: CellRef | null };
 
 export const MAX_INDENT = 8;
 

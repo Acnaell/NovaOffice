@@ -325,6 +325,42 @@ export const icons = {
       <path d="M16.5 11.5s1.5 1.8 1.5 2.8a1.5 1.5 0 0 1-3 0c0-1 1.5-2.8 1.5-2.8z" />
     </Icon>
   ),
+  table: (
+    <Icon>
+      <rect x="2.5" y="3.5" width="15" height="13" rx="1" />
+      <path d="M2.5 8h15M2.5 12.25h15M7.5 3.5v13M12.5 3.5v13" />
+    </Icon>
+  ),
+  rowAbove: (
+    <Icon>
+      <rect x="2.5" y="9" width="15" height="8" rx="1" />
+      <path d="M2.5 13h15M10 2.5v5M7.5 5h5" />
+    </Icon>
+  ),
+  rowBelow: (
+    <Icon>
+      <rect x="2.5" y="3" width="15" height="8" rx="1" />
+      <path d="M2.5 7h15M10 12.5v5M7.5 15h5" />
+    </Icon>
+  ),
+  colLeft: (
+    <Icon>
+      <rect x="9" y="2.5" width="8" height="15" rx="1" />
+      <path d="M13 2.5v15M2.5 10h5M5 7.5v5" />
+    </Icon>
+  ),
+  colRight: (
+    <Icon>
+      <rect x="3" y="2.5" width="8" height="15" rx="1" />
+      <path d="M7 2.5v15M12.5 10h5M15 7.5v5" />
+    </Icon>
+  ),
+  tableDelete: (
+    <Icon>
+      <rect x="2.5" y="3.5" width="12" height="11" rx="1" />
+      <path d="M2.5 9h12M8.5 3.5v11M13 13l4.5 4.5M17.5 13L13 17.5" />
+    </Icon>
+  ),
   pageBreak: (
     <Icon>
       <path d="M5 2.5h10v5H5z" />

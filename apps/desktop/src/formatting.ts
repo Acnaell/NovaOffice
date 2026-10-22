@@ -26,6 +26,7 @@ export const DEFAULT_ATTRS: ParaAttrs = {
   list: null,
   shading: null,
   pageBreakBefore: false,
+  cell: null,
 };
 
 /** Fundo escuro o bastante para o texto automático ficar branco, como no Word. */

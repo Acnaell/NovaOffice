@@ -14,8 +14,54 @@ pub fn export(doc: &TextDocument) -> String {
     // Contador de cada nível de lista numerada; zera quando a lista acaba.
     let mut counters = [0u32; 9];
     let mut previous_was_list = false;
-    for i in 0..doc.block_count() {
+    let mut i = 0;
+    while i < doc.block_count() {
         let attrs = doc.block_attrs(i).expect("índice dentro do documento");
+        // Tabela: todos os parágrafos dela viram uma tabela do GitHub (| a | b |).
+        if let Some(cell) = &attrs.cell {
+            let start = i;
+            let mut grid: Vec<Vec<String>> = Vec::new();
+            while i < doc.block_count() {
+                let Some(c) = doc.block_attrs(i).expect("índice").cell else {
+                    break;
+                };
+                if c.table != cell.table {
+                    break;
+                }
+                let (r, k) = (usize::from(c.row), usize::from(c.col));
+                if grid.len() <= r {
+                    grid.resize(r + 1, Vec::new());
+                }
+                if grid[r].len() <= k {
+                    grid[r].resize(k + 1, String::new());
+                }
+                let text = block(doc, i).trim().replace('|', "\\|");
+                let slot = &mut grid[r][k];
+                if !slot.is_empty() {
+                    slot.push_str("<br>");
+                }
+                slot.push_str(&text);
+                i += 1;
+            }
+            let cols = grid.iter().map(Vec::len).max().unwrap_or(1).max(1);
+            let row = |cells: &[String]| {
+                let mut line = String::from("|");
+                for k in 0..cols {
+                    line.push_str(&format!(" {} |", cells.get(k).map_or("", String::as_str)));
+                }
+                line
+            };
+            let mut table = vec![row(&grid[0])];
+            table.push(format!("|{}", " --- |".repeat(cols)));
+            table.extend(grid[1..].iter().map(|r| row(r)));
+            if start > 0 {
+                out.push_str("\n\n");
+            }
+            out.push_str(&table.join("\n"));
+            previous_was_list = false;
+            counters = [0; 9];
+            continue;
+        }
         let text = block(doc, i);
         let line = match attrs.list {
             Some(kind) => {
@@ -45,6 +91,7 @@ pub fn export(doc: &TextDocument) -> String {
         }
         previous_was_list = attrs.list.is_some();
         out.push_str(&line);
+        i += 1;
     }
     out
 }
@@ -158,7 +205,13 @@ fn parse(text: &str) -> Vec<Paragraph> {
         }
     };
 
-    for line in text.replace("\r\n", "\n").replace('\r', "\n").split('\n') {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    let mut tables = 0;
+    let mut next = 0;
+    while next < lines.len() {
+        let line = lines[next];
+        next += 1;
         if let Some(marker) = &fence {
             if line.trim_start().starts_with(marker.as_str()) {
                 fence = None;
@@ -176,6 +229,43 @@ fn parse(text: &str) -> Vec<Paragraph> {
         }
         if trimmed.is_empty() {
             flush(&mut out, &mut pending);
+            continue;
+        }
+        // Tabela do GitHub: linha com | seguida de | --- | --- |.
+        if trimmed.starts_with('|') && lines.get(next).is_some_and(|l| is_table_rule(l)) {
+            flush(&mut out, &mut pending);
+            list_indents.clear();
+            tables += 1;
+            let mut rows = vec![trimmed];
+            next += 1;
+            while let Some(l) = lines
+                .get(next)
+                .map(|l| l.trim())
+                .filter(|l| l.starts_with('|'))
+            {
+                rows.push(l);
+                next += 1;
+            }
+            for (r, row) in rows.iter().enumerate() {
+                for (c, cell) in table_cells(row).iter().enumerate() {
+                    let cell_ref = nova_domain_text::CellRef {
+                        table: format!("t{tables}"),
+                        row: (r as u16).min(nova_domain_text::MAX_TABLE_SIZE - 1),
+                        col: (c as u16).min(nova_domain_text::MAX_TABLE_SIZE - 1),
+                    };
+                    // "<br>" separa parágrafos dentro da célula.
+                    for part in cell.split("<br>") {
+                        out.push(Paragraph {
+                            style: BlockStyle::Paragraph,
+                            attrs: ParaAttrs {
+                                cell: Some(cell_ref.clone()),
+                                ..ParaAttrs::default()
+                            },
+                            spans: parse_inline(part.trim()),
+                        });
+                    }
+                }
+            }
             continue;
         }
         // Código indentado (fora de listas).
@@ -304,6 +394,34 @@ fn list_item(line: &str) -> Option<(ListKind, &str)> {
         }
     }
     None
+}
+
+/// `| --- | :---: |`: a linha que separa o cabeçalho de uma tabela.
+fn is_table_rule(line: &str) -> bool {
+    let t = line.trim();
+    t.contains('-') && t.contains('|') && t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' '))
+}
+
+/// Células de uma linha `| a | b |`, respeitando `\|`.
+fn table_cells(row: &str) -> Vec<String> {
+    let inner = row.trim().trim_start_matches('|');
+    let inner = inner
+        .strip_suffix('|')
+        .filter(|s| !s.ends_with('\\'))
+        .unwrap_or(inner);
+    let mut cells = vec![String::new()];
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&'|') => {
+                cells.last_mut().expect("uma célula").push('|');
+                chars.next();
+            }
+            '|' => cells.push(String::new()),
+            c => cells.last_mut().expect("uma célula").push(c),
+        }
+    }
+    cells.into_iter().map(|c| c.trim().to_string()).collect()
 }
 
 /// Ênfase e afins dentro de um parágrafo. Um marcador só conta se houver o de

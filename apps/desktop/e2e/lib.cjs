@@ -72,7 +72,18 @@ function makeHelpers(p) {
       }, [b1, o1, b2, o2]);
       await h.settle(60);
     },
-    async type(text) { await p.keyboard.type(text); await h.settle(); },
+    async type(text) { await p.keyboard.type(text); await h.idle(); },
+    /** Espera o documento parar de mudar (a fila de edições do app esvaziar). */
+    async idle(max = 3000) {
+      await h.settle(60);
+      let last = JSON.stringify(await core('snapshot'));
+      for (let waited = 0; waited < max; waited += 80) {
+        await p.waitForTimeout(80);
+        const now = JSON.stringify(await core('snapshot'));
+        if (now === last) return;
+        last = now;
+      }
+    },
     async press(keys) { for (const k of keys.split(' ')) await p.keyboard.press(k); await h.settle(); },
     /** Digita um marcador para descobrir onde o cursor está; devolve os textos. */
     async caretProbe() { await p.keyboard.type('§'); await h.settle(); return h.texts(); },

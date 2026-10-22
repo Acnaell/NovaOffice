@@ -14,22 +14,25 @@ function blockElement(root: HTMLElement, node: Node): HTMLElement | null {
 }
 
 export function posFromDom(root: HTMLElement, node: Node, offset: number): Pos | null {
-  if (node === root) {
-    // Seleção no próprio contêiner (por exemplo, Ctrl+A): antes do filho `offset`.
-    const blocks = root.querySelectorAll<HTMLElement>("[data-block]");
-    if (blocks.length === 0) return null;
-    if (offset >= blocks.length) {
-      const last = blocks[blocks.length - 1];
-      return { block: Number(last.dataset.block), offset: (last.textContent ?? "").length };
-    }
-    return { block: Number(blocks[offset].dataset.block), offset: 0 };
-  }
   const el = blockElement(root, node);
-  if (!el) return null;
-  const range = document.createRange();
-  range.setStart(el, 0);
-  range.setEnd(node, offset);
-  return { block: Number(el.dataset.block), offset: range.toString().length };
+  if (el) {
+    const range = document.createRange();
+    range.setStart(el, 0);
+    range.setEnd(node, offset);
+    return { block: Number(el.dataset.block), offset: range.toString().length };
+  }
+  // Fora de um parágrafo (no contêiner, numa tabela, linha ou célula, como no
+  // Ctrl+A ou num clique na borda da célula): o parágrafo antes do filho `offset`.
+  const blocks = Array.from(root.querySelectorAll<HTMLElement>("[data-block]"));
+  if (blocks.length === 0 || !root.contains(node)) return null;
+  const child = node.childNodes[offset];
+  if (child) {
+    const next = blocks.find((b) => b === child || child.contains(b) || !!(child.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
+    if (next) return { block: Number(next.dataset.block), offset: 0 };
+  }
+  const before = blocks.filter((b) => node.contains(b) || !!(node.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_PRECEDING));
+  const last = before[before.length - 1] ?? blocks[0];
+  return { block: Number(last.dataset.block), offset: (last.textContent ?? "").length };
 }
 
 export function posToDom(root: HTMLElement, pos: Pos): [Node, number] | null {

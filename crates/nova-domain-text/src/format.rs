@@ -349,6 +349,49 @@ pub struct ParaAttrs {
     /// Começa numa página nova (Inserir → Quebra de Página, Ctrl+Enter).
     #[serde(default)]
     pub page_break_before: bool,
+    /// Célula de tabela a que o parágrafo pertence. Uma tabela é a sequência
+    /// de parágrafos com o mesmo `table`, em ordem de linha e coluna; uma
+    /// célula pode ter vários parágrafos.
+    #[serde(default)]
+    pub cell: Option<CellRef>,
+}
+
+/// Posição de um parágrafo numa tabela.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellRef {
+    /// Identificador da tabela no documento (letras, dígitos, `-` e `_`).
+    pub table: String,
+    pub row: u16,
+    pub col: u16,
+}
+
+/// Maior número de linhas ou colunas de uma tabela.
+pub const MAX_TABLE_SIZE: u16 = 1000;
+
+impl CellRef {
+    fn is_valid(&self) -> bool {
+        (1..=32).contains(&self.table.len())
+            && self
+                .table
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            && self.row < MAX_TABLE_SIZE
+            && self.col < MAX_TABLE_SIZE
+    }
+
+    /// No CRDT: `"tabela:linha:coluna"`.
+    fn encode(&self) -> String {
+        format!("{}:{}:{}", self.table, self.row, self.col)
+    }
+
+    fn decode(value: &str) -> Option<CellRef> {
+        let mut parts = value.rsplitn(3, ':');
+        let col = parts.next()?.parse().ok()?;
+        let row = parts.next()?.parse().ok()?;
+        let table = parts.next()?.to_string();
+        let cell = CellRef { table, row, col };
+        cell.is_valid().then_some(cell)
+    }
 }
 
 /// Um atributo de parágrafo a mudar. No JSON: `"attr": "align", "value": "center"`;
@@ -364,6 +407,7 @@ pub enum ParaAttr {
     List(Option<ListKind>),
     Shading(Option<String>),
     PageBreakBefore(bool),
+    Cell(Option<CellRef>),
 }
 
 impl ParaAttr {
@@ -379,6 +423,9 @@ impl ParaAttr {
             ParaAttr::SpaceBefore(Some(pt)) | ParaAttr::SpaceAfter(Some(pt)) if *pt > 1584 => {
                 invalid(format!("espaçamento {pt} pt acima de 1584"))
             }
+            ParaAttr::Cell(Some(cell)) if !cell.is_valid() => invalid(format!(
+                "célula {cell:?}: id de 1 a 32 caracteres (letras, dígitos, - e _), linha e coluna até {MAX_TABLE_SIZE}"
+            )),
             ParaAttr::Shading(Some(c)) if !is_hex_color(c) => {
                 invalid(format!("sombreamento {c:?} não é #RRGGBB"))
             }
@@ -401,6 +448,7 @@ impl ParaAttr {
             ParaAttr::Shading(v) => ("shading", v.clone().map(AttrValue::Text)),
             ParaAttr::PageBreakBefore(false) => ("pageBreakBefore", None),
             ParaAttr::PageBreakBefore(true) => ("pageBreakBefore", Some(AttrValue::Bool(true))),
+            ParaAttr::Cell(v) => ("cell", v.as_ref().map(|c| AttrValue::Text(c.encode()))),
         };
         (key.to_string(), value)
     }
@@ -428,6 +476,10 @@ impl ParaAttrs {
                 _ => None,
             },
             page_break_before: matches!(map.get("pageBreakBefore"), Some(AttrValue::Bool(true))),
+            cell: match map.get("cell") {
+                Some(AttrValue::Text(v)) => CellRef::decode(v),
+                _ => None,
+            },
             shading: match map.get("shading") {
                 Some(AttrValue::Text(v)) if is_hex_color(v) => Some(v.clone()),
                 _ => None,

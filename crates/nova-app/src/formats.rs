@@ -152,4 +152,69 @@ mod tests {
         let doc = open(1, &PathBuf::from("a.txt"), b"ol\xE1").unwrap();
         assert_eq!(doc.to_plain_text(), "olá");
     }
+
+    /// Tabela 2×2 com uma célula de dois parágrafos e uma sombreada, entre parágrafos comuns.
+    fn com_tabela() -> TextDocument {
+        use nova_domain_text::{CellRef, ParaAttrs, Paragraph, Span};
+        let p = |text: &str, cell: Option<(u16, u16)>, shading: Option<&str>| Paragraph {
+            attrs: ParaAttrs {
+                cell: cell.map(|(row, col)| CellRef {
+                    table: "t1".into(),
+                    row,
+                    col,
+                }),
+                shading: shading.map(str::to_string),
+                ..ParaAttrs::default()
+            },
+            spans: vec![Span {
+                text: text.into(),
+                marks: vec![],
+            }],
+            ..Paragraph::default()
+        };
+        TextDocument::from_paragraphs(
+            1,
+            &[
+                p("antes", None, None),
+                p("Nome", Some((0, 0)), Some("#D9E2F3")),
+                p("Idade", Some((0, 1)), Some("#D9E2F3")),
+                p("Ana", Some((1, 0)), None),
+                p("30", Some((1, 1)), None),
+                p("anos", Some((1, 1)), None),
+                p("depois", None, None),
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn tabelas_vao_e_voltam() {
+        let doc = com_tabela();
+        for format in [Format::Docx, Format::Odt, Format::Nova] {
+            let bytes = save(&doc, format, "t");
+            let back = open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
+            assert_eq!(back.paragraphs(), doc.paragraphs(), "{format:?}");
+        }
+        let md = String::from_utf8(save(&doc, Format::Markdown, "t")).unwrap();
+        assert!(
+            md.contains("| Nome | Idade |\n| --- | --- |\n| Ana | 30<br>anos |"),
+            "{md}"
+        );
+        let back = open(2, Path::new("x.md"), md.as_bytes()).unwrap();
+        let texts: Vec<String> = back.paragraphs().iter().map(|p| p.text()).collect();
+        assert_eq!(
+            texts,
+            ["antes", "Nome", "Idade", "Ana", "30", "anos", "depois"]
+        );
+        assert_eq!(
+            back.paragraphs()[5]
+                .attrs
+                .cell
+                .as_ref()
+                .map(|c| (c.row, c.col)),
+            Some((1, 1))
+        );
+        let html = String::from_utf8(save(&doc, Format::Html, "t")).unwrap();
+        assert_eq!(html.matches("<td").count(), 4);
+    }
 }

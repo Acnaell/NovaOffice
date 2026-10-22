@@ -8,6 +8,19 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Tabelas** (Inserir → Tabela):
+  - grade de 10×8 para escolher o tamanho, como no Word;
+  - Tab e Shift+Tab andam entre as células, e Tab na última célula cria uma linha;
+  - Enter cria outro parágrafo na mesma célula;
+  - aba contextual **Layout da Tabela** com Inserir Acima, Abaixo, à Esquerda e à Direita, e
+    Excluir Linhas, Colunas e Tabela;
+  - Backspace e Delete não juntam células, e apagar uma seleção que atravessa células apaga só o texto;
+  - copiar e colar tabelas; colar dentro de uma célula põe o texto na célula.
+- Tabelas são lidas e gravadas em .docx (bordas da Grade da Tabela, sombreamento de célula, células
+  mescladas na horizontal lidas como célula única), .odt, .html e Markdown (tabelas do GitHub).
+
 ## [0.1.3] - 2026-10-22
 
 ### Adicionado

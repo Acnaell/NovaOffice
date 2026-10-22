@@ -7,6 +7,7 @@ import { fragmentHtml, fragmentOf, fragmentText, HIGHLIGHT_CSS, insertFragment, 
 import { posToDom, readSelection, writeSelection } from "./dom";
 import type { Match } from "./find";
 import { autoLink, autoList, changeIndent, isDark, linkOf, listMarkers } from "./formatting";
+import { moveToCell, tableGrid } from "./tables";
 import {
   blockText,
   deleteBackward,
@@ -173,7 +174,7 @@ export function Editor(props: Props) {
           break;
         case "deleteByCut":
         case "deleteContent":
-          edit((_doc, sel) => (isCollapsed(sel) ? null : deleteRange(...ordered(sel))));
+          edit((doc, sel) => (isCollapsed(sel) ? null : deleteRange(...ordered(sel), doc)));
           break;
         case "historyUndo":
           latest.current.onCommand("edit.undo");
@@ -234,7 +235,7 @@ export function Editor(props: Props) {
       e.clipboardData.setData("text/plain", fragmentText(fragment));
       e.clipboardData.setData("text/html", fragmentHtml(fragment));
       e.clipboardData.setData(NOVA_MIME, JSON.stringify(fragment));
-      if (cut) edit((_doc, sel) => deleteRange(...ordered(sel)));
+      if (cut) edit((doc, sel) => deleteRange(...ordered(sel), doc));
     };
 
     const onPaste = (e: ClipboardEvent) => {
@@ -299,6 +300,11 @@ export function Editor(props: Props) {
       if (e.key === "Tab" && !(e.ctrlKey || e.metaKey) && !e.altKey) {
         handled();
         const { view, selection } = latest.current;
+        // Na tabela, Tab vai para a próxima célula (e cria uma linha na última).
+        if (view.blocks[selection.focus.block]?.attrs.cell) {
+          edit((doc, sel) => moveToCell(doc, sel, e.shiftKey));
+          return;
+        }
         const [from, to] = ordered(selection);
         const inList = !!view.blocks[from.block]?.attrs.list;
         // Como no Word: Tab no início de um item de lista (ou com vários parágrafos
@@ -423,22 +429,53 @@ function Blocks({
   labels: Labels;
 }) {
   const markers = listMarkers(blocks);
-  return (
-    <>
-      {blocks.map((block, i) => (
-        // O parágrafo do cursor é sempre recriado depois de uma edição: é onde o
-        // navegador pode ter escrito (composição de acentos e IME).
-        <Block
-          key={i === caretBlock ? `${blockId(block)}-${revision}` : blockId(block)}
-          index={i}
-          block={block}
-          marker={markers[i]}
-          showMarks={showMarks}
-          labels={labels}
-        />
-      ))}
-    </>
+  // O parágrafo do cursor é sempre recriado depois de uma edição: é onde o
+  // navegador pode ter escrito (composição de acentos e IME).
+  const render = (i: number) => (
+    <Block
+      key={i === caretBlock ? `${blockId(blocks[i])}-${revision}` : blockId(blocks[i])}
+      index={i}
+      block={blocks[i]}
+      marker={markers[i]}
+      showMarks={showMarks}
+      labels={labels}
+    />
   );
+  const out: JSX.Element[] = [];
+  let i = 0;
+  while (i < blocks.length) {
+    const table = blocks[i].attrs.cell?.table;
+    if (!table) {
+      out.push(render(i));
+      i++;
+      continue;
+    }
+    let end = i + 1;
+    while (end < blocks.length && blocks[end].attrs.cell?.table === table) end++;
+    const grid = tableGrid({ blocks }, i, end);
+    out.push(
+      <table key={`table-${table}-${i}`} className="nova-table" data-table={table}>
+        <tbody>
+          {grid.map((row, r) => (
+            <tr key={r}>
+              {row.map((cell, c) => {
+                const shading = cell.length ? blocks[cell[0]].attrs.shading : null;
+                return cell.length ? (
+                  <td key={c} style={shading ? { background: shading, color: isDark(shading) ? "#fff" : undefined } : undefined}>
+                    {cell.map(render)}
+                  </td>
+                ) : (
+                  <td key={c} className="missing" contentEditable={false} />
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>,
+    );
+    i = end;
+  }
+  return <>{out}</>;
 }
 
 const Block = memo(function Block({
@@ -501,7 +538,8 @@ function paragraphStyle(attrs: ParaAttrs | undefined): CSSProperties | undefined
   if (attrs.lineSpacing !== null) style.lineHeight = String((attrs.lineSpacing / 100) * 1.15);
   if (attrs.spaceBefore !== null) style.marginTop = `${attrs.spaceBefore}pt`;
   if (attrs.spaceAfter !== null) style.marginBottom = `${attrs.spaceAfter}pt`;
-  if (attrs.shading) {
+  // Na tabela, o fundo é da célula (td).
+  if (attrs.shading && !attrs.cell) {
     style.background = attrs.shading;
     style.paddingInline = "4pt";
     // Cor "automática": o texto sem cor própria fica claro sobre fundo escuro.

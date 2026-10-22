@@ -142,6 +142,38 @@ export function DateTimeDialog({ onInsert, onClose }: { onInsert: (text: string)
   );
 }
 
+/** Grade do botão Tabela: passar o mouse escolhe linhas × colunas, como no Word. */
+export function TablePicker({ onPick, close }: { onPick: (rows: number, cols: number) => void; close: () => void }) {
+  const { t } = useI18n();
+  const [size, setSize] = useState<[number, number]>([0, 0]);
+  const ROWS = 8;
+  const COLS = 10;
+  return (
+    <div className="table-picker" role="grid" aria-label={t("insert.table")}>
+      <div className="table-picker-label">
+        {size[0] ? t("table.size", { rows: size[0], cols: size[1] }) : t("insert.table")}
+      </div>
+      <div className="table-picker-grid" onMouseLeave={() => setSize([0, 0])}>
+        {Array.from({ length: ROWS }, (_, r) =>
+          Array.from({ length: COLS }, (_, c) => (
+            <button
+              key={`${r}-${c}`}
+              className={r < size[0] && c < size[1] ? "on" : undefined}
+              aria-label={t("table.size", { rows: r + 1, cols: c + 1 })}
+              onMouseEnter={() => setSize([r + 1, c + 1])}
+              onFocus={() => setSize([r + 1, c + 1])}
+              onClick={() => {
+                onPick(r + 1, c + 1);
+                close();
+              }}
+            />
+          )),
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Os símbolos mais usados, como a grade do botão Símbolo do Word. */
 export const SYMBOLS = [
   "©", "®", "™", "§", "¶", "°", "±", "×", "÷", "≠",

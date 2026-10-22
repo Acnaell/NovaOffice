@@ -1839,3 +1839,84 @@ select {
     color: inherit;
   }
 }
+
+/* ---------- Tabelas ---------- */
+
+.page .nova-table {
+  width: 100%;
+  margin: 6pt 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.page .nova-table td {
+  padding: 2pt 5.4pt;
+  border: 1px solid #000;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+/* Dentro da célula, parágrafos sem o espaçamento entre parágrafos (Grade da Tabela do Word). */
+.page .nova-table td > .block {
+  margin-top: 0;
+  margin-bottom: 0;
+  line-height: 1.15;
+}
+
+.page .nova-table td.missing {
+  background: repeating-linear-gradient(135deg, transparent 0 6px, #eef1f4 6px 7px);
+}
+
+.popover.tables {
+  padding: 8px;
+}
+
+.table-picker-label {
+  margin: 0 2px 6px;
+  font-size: 12px;
+  color: var(--chrome-muted);
+}
+
+.table-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 18px);
+  gap: 3px;
+}
+
+.popover .table-picker-grid button {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--chrome-border);
+  border-radius: 2px;
+  background: var(--ribbon-bg);
+}
+
+.popover .table-picker-grid button.on {
+  border-color: var(--accent);
+  background: var(--button-active);
+}
+
+/* Aba contextual (Layout da Tabela), destacada como no Word. */
+.tab.tab-context {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+@media print {
+  .page .nova-table td.missing {
+    background: none;
+  }
+}
+
+/* Botão grande com menu (Tabela, Símbolo, Excluir): a seta fica pequena, embaixo do nome. */
+.big-button.menu-button {
+  gap: 2px;
+}
+
+.big-button.menu-button > svg:last-child {
+  width: 10px;
+  height: 10px;
+  margin-top: -2px;
+  color: var(--chrome-muted);
+}
