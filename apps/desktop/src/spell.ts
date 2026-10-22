@@ -114,6 +114,8 @@ export interface Spelling {
   all: Match[];
   /** Esquece os resultados e verifica tudo de novo (depois de adicionar ou ignorar). */
   recheck: () => void;
+  /** Todos os parágrafos já foram verificados (ou o corretor está desligado ou indisponível). */
+  ready: boolean;
 }
 
 export function useSpelling(view: DocView, selection: Selection, proofing: Proofing): Spelling {
@@ -147,6 +149,7 @@ export function useSpelling(view: DocView, selection: Selection, proofing: Proof
           // Sem núcleo (por exemplo, numa ponte de testes sem corretor), não insiste.
           if (!Array.isArray(results)) {
             failed.current = true;
+            setVersion((v) => v + 1);
             return;
           }
           pending.forEach(({ block, index }, i) => current.set(block, index, results[i] ?? []));
@@ -154,6 +157,7 @@ export function useSpelling(view: DocView, selection: Selection, proofing: Proof
         })
         .catch((error) => {
           failed.current = true;
+          setVersion((v) => v + 1);
           console.warn("corretor ortográfico indisponível:", error);
         });
     }, all.length > CHUNK ? 0 : DELAY_MS);
@@ -170,5 +174,10 @@ export function useSpelling(view: DocView, selection: Selection, proofing: Proof
     [view, proofing, version],
   );
   const painted = useMemo(() => hideTyping(all, selection), [all, selection]);
-  return { painted, all, recheck };
+  const ready = useMemo(
+    () => proofing === "off" || failed.current || cache.current.pending(view.blocks).length === 0,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [view, proofing, version],
+  );
+  return { painted, all, recheck, ready };
 }
