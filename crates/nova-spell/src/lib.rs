@@ -2,8 +2,15 @@
 //! dicionários Hunspell (VERO para pt-BR, SCOWL para en-US, RLA-ES para es),
 //! lidos pelo `spellbook`, uma implementação de Hunspell em Rust puro.
 //!
-//! `Speller` verifica palavras soltas (`check`, `suggest`).
+//! `Speller` verifica palavras soltas (`check`, `suggest`) e texto corrido
+//! (`misspelled`), que devolve intervalos em unidades UTF-16, como os offsets
+//! do `nova-domain-text`.
 
+mod words;
+
+pub use words::{words, Word};
+
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -153,6 +160,20 @@ impl Speller {
             }
         }
         out
+    }
+
+    /// Intervalos `(início, fim)` em unidades UTF-16 das palavras erradas de
+    /// `text`. Segue as regras do Word: ignora números, palavras com dígitos,
+    /// URLs, e-mails e palavras TODAS EM MAIÚSCULAS (veja `words`).
+    pub fn misspelled(&self, text: &str) -> Vec<(u32, u32)> {
+        // Num texto, as mesmas palavras se repetem muito; consultar o
+        // dicionário uma vez por palavra distinta deixa a verificação linear.
+        let mut known: HashMap<&str, bool> = HashMap::new();
+        words(text)
+            .into_iter()
+            .filter(|w| !*known.entry(w.text).or_insert_with(|| self.check(w.text)))
+            .map(|w| (w.start, w.end))
+            .collect()
     }
 }
 
