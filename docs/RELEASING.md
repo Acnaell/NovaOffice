@@ -31,6 +31,8 @@ O texto da release vem da seção da versão no `CHANGELOG.md`.
    git tag v0.2.0
    git push origin v0.2.0
    ```
+   Sem Git na linha de comando: depois do commit, abra **Actions → Release → Run workflow** no
+   GitHub e informe a versão (`v0.2.0`); o workflow cria a tag sozinho.
 6. Acompanhe em **Actions → Release**. Em 15 a 25 minutos a versão aparece em **Releases**.
 
 ## Regras

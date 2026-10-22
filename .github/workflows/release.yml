@@ -2,6 +2,8 @@ name: Release
 
 # Publica uma versão quando uma tag vX.Y.Z é enviada:
 #   git tag v0.1.0 && git push origin v0.1.0
+# ou pelo GitHub: Actions → Release → Run workflow, informando a versão (v0.1.0).
+# Se a tag ainda não existir, ela é criada no commit escolhido em "Use workflow from".
 # A release é criada como rascunho, recebe os arquivos de todas as plataformas
 # e só é publicada no fim, quando tudo compilou.
 on:
@@ -10,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag já existente para (re)publicar, ex.: v0.1.0"
+        description: "Versão a publicar, ex.: v0.1.0 (a tag é criada se não existir)"
         required: true
 
 permissions:
@@ -31,8 +33,16 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ env.TAG }}
+
+      - name: Criar a tag (Run workflow) e usar o código dela
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            git fetch --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+          git checkout --quiet "$TAG"
 
       - name: Tag deve bater com as versões do projeto
         run: |
