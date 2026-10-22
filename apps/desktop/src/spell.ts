@@ -12,7 +12,7 @@ import type { Match } from "./find";
 import { blockText, type Selection } from "./model";
 import type { BlockView, DocView, Pos } from "./types";
 
-export const SPELL_LANGUAGES = ["pt-BR", "en-US", "es"] as const;
+export const SPELL_LANGUAGES = ["pt-BR", "en-US", "es-ES"] as const;
 export type SpellLanguage = (typeof SPELL_LANGUAGES)[number];
 /** Idioma de revisão escolhido na barra de status; "off" desliga o corretor. */
 export type Proofing = SpellLanguage | "off";
@@ -29,11 +29,13 @@ const CHUNK = 200;
 /** Idioma de revisão inicial: o da interface. */
 export function defaultProofing(locale: string): SpellLanguage {
   if (locale.startsWith("en")) return "en-US";
-  if (locale.startsWith("es")) return "es";
+  if (locale.startsWith("es")) return "es-ES";
   return "pt-BR";
 }
 
 export function parseProofing(saved: string | null): Proofing | null {
+  // Versões anteriores gravavam só "es".
+  if (saved === "es") return "es-ES";
   return saved === "off" || SPELL_LANGUAGES.includes(saved as SpellLanguage) ? (saved as Proofing) : null;
 }
 

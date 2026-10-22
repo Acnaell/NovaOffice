@@ -54,6 +54,7 @@ import { DateTimeDialog, LinkDialog, MarginsDialog, type LinkRequest } from "./I
 import { deleteColumns, deleteRows, deleteTable, insertColumn, insertRow, insertTable } from "./tables";
 import { fileToBase64, insertImage, resizeImage, setImage, TEXT_WIDTH_PT } from "./images";
 import { defaultProofing, matchAt, matchText, parseProofing, SPELL_LANGUAGES, useSpelling, type Proofing } from "./spell";
+import { ReviewTab } from "./ReviewTab";
 import { SpellMenu } from "./SpellMenu";
 import { load, store } from "./storage";
 import { matchShortcut, profileFor } from "./shortcuts";
@@ -584,6 +585,12 @@ export default function App() {
     );
   };
 
+  const chooseProofing = (value: Proofing) => {
+    setProofingChoice(value);
+    store(PROOFING_KEY, value);
+    focusEditor();
+  };
+
   const rememberWord = (action: "add" | "ignore", word: string) => {
     closeSpellMenu();
     if (proofing === "off") return;
@@ -1070,6 +1077,7 @@ export default function App() {
         page={view.page}
         onPage={setPage}
         onCustomMargins={() => setMarginsDialog(true)}
+        review={<ReviewTab proofing={proofing} onProofing={chooseProofing} />}
       />
       <main className={`workspace${find ? " with-panel" : ""}`}>
         {find && (
@@ -1123,12 +1131,7 @@ export default function App() {
           aria-label={t("spell.language")}
           title={t("spell.language")}
           value={proofing}
-          onChange={(e) => {
-            const value = e.target.value as Proofing;
-            setProofingChoice(value);
-            store(PROOFING_KEY, value);
-            focusEditor();
-          }}
+          onChange={(e) => chooseProofing(e.target.value as Proofing)}
         >
           {SPELL_LANGUAGES.map((language) => (
             <option key={language} value={language}>

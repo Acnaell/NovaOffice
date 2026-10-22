@@ -18,13 +18,14 @@ describe("idioma de revisão", () => {
   it("segue o idioma da interface", () => {
     expect(defaultProofing("pt-BR")).toBe("pt-BR");
     expect(defaultProofing("en")).toBe("en-US");
-    expect(defaultProofing("es-MX")).toBe("es");
+    expect(defaultProofing("es-MX")).toBe("es-ES");
     expect(defaultProofing("fr")).toBe("pt-BR");
   });
 
   it("aceita só valores conhecidos do armazenamento", () => {
     expect(parseProofing("en-US")).toBe("en-US");
     expect(parseProofing("off")).toBe("off");
+    expect(parseProofing("es")).toBe("es-ES");
     expect(parseProofing("de-DE")).toBeNull();
     expect(parseProofing(null)).toBeNull();
   });
