@@ -158,7 +158,8 @@ impl Mark {
     }
 }
 
-fn is_hex_color(value: &str) -> bool {
+/// `#RRGGBB`, o formato das cores no modelo.
+pub fn is_hex_color(value: &str) -> bool {
     value.len() == 7 && value.starts_with('#') && value[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
@@ -317,6 +318,9 @@ pub struct ParaAttrs {
     pub space_before: Option<u16>,
     pub space_after: Option<u16>,
     pub list: Option<ListKind>,
+    /// Sombreamento (cor de fundo) do parágrafo, `#RRGGBB`, como `w:shd` do Word.
+    #[serde(default)]
+    pub shading: Option<String>,
 }
 
 /// Um atributo de parágrafo a mudar. No JSON: `"attr": "align", "value": "center"`;
@@ -330,6 +334,7 @@ pub enum ParaAttr {
     SpaceBefore(Option<u16>),
     SpaceAfter(Option<u16>),
     List(Option<ListKind>),
+    Shading(Option<String>),
 }
 
 impl ParaAttr {
@@ -344,6 +349,9 @@ impl ParaAttr {
             }
             ParaAttr::SpaceBefore(Some(pt)) | ParaAttr::SpaceAfter(Some(pt)) if *pt > 1584 => {
                 invalid(format!("espaçamento {pt} pt acima de 1584"))
+            }
+            ParaAttr::Shading(Some(c)) if !is_hex_color(c) => {
+                invalid(format!("sombreamento {c:?} não é #RRGGBB"))
             }
             _ => Ok(()),
         }
@@ -361,6 +369,7 @@ impl ParaAttr {
             ParaAttr::SpaceBefore(v) => ("spaceBefore", v.map(num)),
             ParaAttr::SpaceAfter(v) => ("spaceAfter", v.map(num)),
             ParaAttr::List(v) => ("list", v.map(|k| AttrValue::Text(k.as_str().into()))),
+            ParaAttr::Shading(v) => ("shading", v.clone().map(AttrValue::Text)),
         };
         (key.to_string(), value)
     }
@@ -385,6 +394,10 @@ impl ParaAttrs {
             list: match map.get("list") {
                 Some(AttrValue::Text(v)) if v == "bullet" => Some(ListKind::Bullet),
                 Some(AttrValue::Text(v)) if v == "number" => Some(ListKind::Number),
+                _ => None,
+            },
+            shading: match map.get("shading") {
+                Some(AttrValue::Text(v)) if is_hex_color(v) => Some(v.clone()),
                 _ => None,
             },
         }

@@ -539,6 +539,7 @@ fn alinhamento_recuo_espacamento_e_lista() {
             space_before: None,
             space_after: Some(12),
             list: Some(ListKind::Number),
+            shading: None,
         }
     );
     assert_eq!(doc.block_attrs(1).unwrap(), ParaAttrs::default());
@@ -724,6 +725,7 @@ fn montar_a_partir_de_paragrafos_e_ler_de_volta() {
                 list: Some(ListKind::Number),
                 indent: 1,
                 line_spacing: Some(150),
+                shading: Some("#1F3864".into()),
                 ..ParaAttrs::default()
             },
             spans: vec![
@@ -749,4 +751,30 @@ fn montar_a_partir_de_paragrafos_e_ler_de_volta() {
     assert_eq!(back[1].spans[1].text, "dois\u{b}três");
     assert_eq!(back[1].spans[1].marks, vec![Mark::Bold]);
     assert_eq!(back[2].text(), "");
+}
+
+#[test]
+fn sombreamento_aceita_so_cor_valida() {
+    let mut doc = TextDocument::new(1);
+    doc.execute(TextCommand::SetBlockAttr {
+        block: 0,
+        attr: ParaAttr::Shading(Some("#D9E2F3".into())),
+    })
+    .unwrap();
+    assert_eq!(
+        doc.block_attrs(0).unwrap().shading.as_deref(),
+        Some("#D9E2F3")
+    );
+    assert!(doc
+        .execute(TextCommand::SetBlockAttr {
+            block: 0,
+            attr: ParaAttr::Shading(Some("azul".into())),
+        })
+        .is_err());
+    doc.execute(TextCommand::SetBlockAttr {
+        block: 0,
+        attr: ParaAttr::Shading(None),
+    })
+    .unwrap();
+    assert_eq!(doc.block_attrs(0).unwrap().shading, None);
 }

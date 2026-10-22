@@ -121,3 +121,23 @@ mod tests {
         ));
     }
 }
+
+/// Fundo escuro o bastante para o texto automático ficar branco (luminância < 0,5), como no Word.
+pub fn is_dark(hex: &str) -> bool {
+    let channel = |i: usize| {
+        u8::from_str_radix(hex.get(i..i + 2).unwrap_or("ff"), 16)
+            .map_or(1.0, |v| f64::from(v) / 255.0)
+    };
+    0.299 * channel(1) + 0.587 * channel(3) + 0.114 * channel(5) < 0.5
+}
+
+#[cfg(test)]
+mod is_dark_tests {
+    #[test]
+    fn fundo_escuro_ou_claro() {
+        assert!(super::is_dark("#343541"));
+        assert!(super::is_dark("#1F3864"));
+        assert!(!super::is_dark("#D9E2F3"));
+        assert!(!super::is_dark("#FFFF00"));
+    }
+}

@@ -1706,3 +1706,8 @@ select {
     border: 0;
   }
 }
+
+/* Opção "Sem Cor" do sombreamento: quadrado riscado. */
+.swatch.none {
+  background: linear-gradient(to top right, transparent 45%, #c00000 45% 55%, transparent 55%), #fff;
+}

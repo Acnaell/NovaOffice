@@ -64,6 +64,8 @@ export interface ParaAttrs {
   spaceBefore: number | null;
   spaceAfter: number | null;
   list: ListKind | null;
+  /** Sombreamento (cor de fundo) do parágrafo, `#RRGGBB`. */
+  shading: string | null;
 }
 
 /** Um atributo a mudar, no formato do comando `block.setAttr`. */
@@ -73,7 +75,8 @@ export type ParaAttr =
   | { attr: "lineSpacing"; value: number | null }
   | { attr: "spaceBefore"; value: number | null }
   | { attr: "spaceAfter"; value: number | null }
-  | { attr: "list"; value: ListKind | null };
+  | { attr: "list"; value: ListKind | null }
+  | { attr: "shading"; value: string | null };
 
 export const MAX_INDENT = 8;
 

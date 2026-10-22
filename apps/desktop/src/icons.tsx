@@ -318,6 +318,13 @@ export const icons = {
       <path d="M5 7.5l5 5 5-5" />
     </Icon>
   ),
+  shading: (
+    <Icon>
+      <path d="M8.5 3l6 6-5.5 5.5a1 1 0 0 1-1.4 0L3 9.9a1 1 0 0 1 0-1.4z" />
+      <path d="M4 9h10" />
+      <path d="M16.5 11.5s1.5 1.8 1.5 2.8a1.5 1.5 0 0 1-3 0c0-1 1.5-2.8 1.5-2.8z" />
+    </Icon>
+  ),
   grid: (
     <Icon>
       <rect x="3" y="3" width="3.5" height="3.5" />

@@ -2,8 +2,10 @@
 //!
 //! Grava estilos (Normal, Título 1–6, Citação, Código), listas com
 //! marcadores e numeradas por nível, alinhamento, recuo, espaçamento e as
-//! marcas de caractere. Ao abrir, lê o mesmo conjunto; o que o Nova ainda não
-//! representa (tabelas, imagens, campos, notas) vira texto simples ou é ignorado.
+//! marcas de caractere, além do sombreamento. Ao abrir, aplica a formatação na
+//! ordem do Word: padrões do documento, estilo do parágrafo (e os que ele herda),
+//! estilo de caractere e formatação direta. O que o Nova ainda não representa
+//! (tabelas, imagens, campos, notas, bordas) vira texto simples ou é ignorado.
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
@@ -113,6 +115,12 @@ fn body_xml(paragraphs: &[Paragraph]) -> (String, Vec<Num>) {
             ));
         }
         previous_list = a.list;
+        if let Some(fill) = &a.shading {
+            ppr.push_str(&format!(
+                r#"<w:shd w:val="clear" w:color="auto" w:fill="{}"/>"#,
+                fill.trim_start_matches('#')
+            ));
+        }
         if a.line_spacing.is_some() || a.space_before.is_some() || a.space_after.is_some() {
             ppr.push_str("<w:spacing");
             if let Some(pt) = a.space_before {
@@ -337,14 +345,6 @@ fn attr(e: &BytesStart, name: &[u8]) -> Option<String> {
     })
 }
 
-/// `<w:b/>` liga; `<w:b w:val="0"/>` ou `false` desliga.
-fn toggle(e: &BytesStart) -> bool {
-    !matches!(
-        attr(e, b"val").as_deref(),
-        Some("0" | "false" | "off" | "none")
-    )
-}
-
 /// Estilo do Nova a partir do id e do nome de um estilo do Word.
 fn style_from(id: &str, name: &str) -> Option<BlockStyle> {
     let name = name.to_lowercase();
@@ -377,67 +377,226 @@ fn style_from(id: &str, name: &str) -> Option<BlockStyle> {
     None
 }
 
-#[derive(Default, Clone)]
-struct StyleInfo {
-    style: Option<BlockStyle>,
-    num: Option<(u32, u8)>,
+/// Um elemento de propriedade (`w:b`, `w:sz`, `w:jc`…) com os atributos pelo
+/// nome local. Os estilos guardam as propriedades assim e as reaplicam em cada
+/// parágrafo e trecho, na ordem do Word: padrões do documento, estilo do
+/// parágrafo (com os estilos em que se baseia), estilo de caractere e, por
+/// último, a formatação direta.
+#[derive(Debug, Clone)]
+struct Prop {
+    name: Vec<u8>,
+    attrs: Vec<(Vec<u8>, String)>,
 }
 
-/// Estilo sendo lido: id, nome, nível e numeração da lista herdada.
-type StyleInProgress = (String, String, Option<(u32, u8)>, Option<u32>);
+impl Prop {
+    fn from(e: &BytesStart) -> Prop {
+        Prop {
+            name: e.local_name().as_ref().to_vec(),
+            attrs: e
+                .attributes()
+                .flatten()
+                .map(|a| {
+                    (
+                        a.key.local_name().as_ref().to_vec(),
+                        a.unescape_value()
+                            .map(|v| v.into_owned())
+                            .unwrap_or_default(),
+                    )
+                })
+                .collect(),
+        }
+    }
 
-fn read_styles(xml: &str) -> HashMap<String, StyleInfo> {
-    let mut styles = HashMap::new();
+    fn get(&self, key: &[u8]) -> Option<&str> {
+        self.attrs
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    fn num<T: std::str::FromStr>(&self, key: &[u8]) -> Option<T> {
+        self.get(key).and_then(|v| v.parse().ok())
+    }
+
+    /// `<w:b/>` liga; `<w:b w:val="0"/>` ou `false` desliga.
+    fn on(&self) -> bool {
+        !matches!(self.get(b"val"), Some("0" | "false" | "off" | "none"))
+    }
+}
+
+/// Fontes do tema (`w:asciiTheme="minorHAnsi"` aponta para elas).
+#[derive(Default)]
+struct ThemeFonts {
+    major: Option<String>,
+    minor: Option<String>,
+}
+
+fn read_theme(xml: &str) -> ThemeFonts {
+    let mut fonts = ThemeFonts::default();
     let mut reader = Reader::from_str(xml);
-    let mut current: Option<StyleInProgress> = None;
     let mut buf = Vec::new();
+    let mut which: Option<bool> = None; // Some(true) = major
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => match e.local_name().as_ref() {
-                b"style" => {
-                    current = Some((
-                        attr(&e, b"styleId").unwrap_or_default(),
-                        String::new(),
-                        None,
-                        None,
-                    ))
-                }
-                b"name" => {
-                    if let Some(c) = current.as_mut() {
-                        c.1 = attr(&e, b"val").unwrap_or_default();
-                    }
-                }
-                b"ilvl" => {
-                    if let Some(c) = current.as_mut() {
-                        let lvl = attr(&e, b"val").and_then(|v| v.parse().ok()).unwrap_or(0);
-                        c.2 = Some((c.2.map_or(0, |n| n.0), lvl));
-                    }
-                }
-                b"numId" => {
-                    if let Some(c) = current.as_mut() {
-                        c.3 = attr(&e, b"val").and_then(|v| v.parse().ok());
+                b"majorFont" => which = Some(true),
+                b"minorFont" => which = Some(false),
+                b"latin" => {
+                    let face = attr(&e, b"typeface").filter(|f| !f.is_empty());
+                    match which {
+                        Some(true) if fonts.major.is_none() => fonts.major = face,
+                        Some(false) if fonts.minor.is_none() => fonts.minor = face,
+                        _ => {}
                     }
                 }
                 _ => {}
             },
-            Ok(Event::End(e)) if e.local_name().as_ref() == b"style" => {
-                if let Some((id, name, lvl, num_id)) = current.take() {
-                    let num = num_id.map(|n| (n, lvl.map_or(0, |l| l.1)));
-                    styles.insert(
-                        id.clone(),
-                        StyleInfo {
-                            style: style_from(&id, &name),
-                            num,
-                        },
-                    );
-                }
+            Ok(Event::End(e)) if matches!(e.local_name().as_ref(), b"majorFont" | b"minorFont") => {
+                which = None
             }
             Ok(Event::Eof) | Err(_) => break,
             _ => {}
         }
         buf.clear();
     }
-    styles
+    fonts
+}
+
+#[derive(Default, Clone)]
+struct StyleInfo {
+    /// Estilo do Nova equivalente (Título 1, Citação…); `None` para os demais.
+    style: Option<BlockStyle>,
+    num: Option<(u32, u8)>,
+    based_on: Option<String>,
+    rpr: Vec<Prop>,
+    ppr: Vec<Prop>,
+}
+
+/// Estilos do documento e, na chave vazia, os padrões (`w:docDefaults`).
+struct Styles {
+    by_id: HashMap<String, StyleInfo>,
+    defaults: StyleInfo,
+    /// Estilo dos parágrafos sem `w:pStyle` (o "Normal").
+    default_para: Option<String>,
+}
+
+impl Styles {
+    /// O estilo e os que ele herda, do mais básico ao próprio.
+    fn chain(&self, id: Option<&str>) -> Vec<&StyleInfo> {
+        let mut chain = Vec::new();
+        let mut next = id.map(str::to_string).or_else(|| self.default_para.clone());
+        while let Some(id) = next.take() {
+            let Some(info) = self.by_id.get(&id) else {
+                break;
+            };
+            if chain.len() >= 16 {
+                break; // herança circular num arquivo malformado
+            }
+            chain.push(info);
+            next = info.based_on.clone();
+        }
+        chain.reverse();
+        chain
+    }
+
+    fn info(&self, id: Option<&str>) -> StyleInfo {
+        let chain = self.chain(id);
+        StyleInfo {
+            style: chain.iter().rev().find_map(|s| s.style),
+            num: chain.iter().rev().find_map(|s| s.num),
+            ..StyleInfo::default()
+        }
+    }
+}
+
+fn read_styles(xml: &str) -> Styles {
+    let mut by_id = HashMap::new();
+    let mut defaults = StyleInfo::default();
+    let mut default_para = None;
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+    // Estilo sendo lido: id, nome, informações.
+    let mut current: Option<(String, String, StyleInfo)> = None;
+    let mut num_lvl: (Option<u32>, u8) = (None, 0);
+    let (mut in_defaults, mut in_rpr, mut in_ppr) = (false, false, false);
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(event @ (Event::Start(_) | Event::Empty(_))) => {
+                let (Event::Start(ref e) | Event::Empty(ref e)) = event else {
+                    unreachable!()
+                };
+                let empty = matches!(event, Event::Empty(_));
+                match e.local_name().as_ref() {
+                    b"docDefaults" if !empty => in_defaults = true,
+                    b"style" => {
+                        num_lvl = (None, 0);
+                        if attr(e, b"type").as_deref() == Some("paragraph")
+                            && matches!(attr(e, b"default").as_deref(), Some("1" | "true"))
+                        {
+                            default_para = attr(e, b"styleId");
+                        }
+                        current = Some((
+                            attr(e, b"styleId").unwrap_or_default(),
+                            String::new(),
+                            StyleInfo::default(),
+                        ));
+                    }
+                    b"name" if !in_rpr && !in_ppr => {
+                        if let Some(c) = current.as_mut() {
+                            c.1 = attr(e, b"val").unwrap_or_default();
+                        }
+                    }
+                    b"basedOn" => {
+                        if let Some(c) = current.as_mut() {
+                            c.2.based_on = attr(e, b"val");
+                        }
+                    }
+                    b"rPr" if !empty => in_rpr = true,
+                    b"pPr" if !empty => in_ppr = true,
+                    b"ilvl" if in_ppr => {
+                        num_lvl.1 = attr(e, b"val").and_then(|v| v.parse().ok()).unwrap_or(0)
+                    }
+                    b"numId" if in_ppr => num_lvl.0 = attr(e, b"val").and_then(|v| v.parse().ok()),
+                    _ if in_rpr || in_ppr => {
+                        let target = match current.as_mut() {
+                            Some(c) => Some(&mut c.2),
+                            None if in_defaults => Some(&mut defaults),
+                            None => None,
+                        };
+                        if let Some(t) = target {
+                            if in_rpr {
+                                t.rpr.push(Prop::from(e));
+                            } else {
+                                t.ppr.push(Prop::from(e));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(e)) => match e.local_name().as_ref() {
+                b"docDefaults" => in_defaults = false,
+                b"rPr" => in_rpr = false,
+                b"pPr" => in_ppr = false,
+                b"style" => {
+                    if let Some((id, name, mut info)) = current.take() {
+                        info.style = style_from(&id, &name);
+                        info.num = num_lvl.0.map(|n| (n, num_lvl.1));
+                        by_id.insert(id, info);
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Styles {
+        by_id,
+        defaults,
+        default_para,
+    }
 }
 
 /// numId → (nível → é marcador?).
@@ -487,7 +646,7 @@ fn read_numbering(xml: &str) -> HashMap<u32, Vec<bool>> {
         .collect()
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct RunProps {
     marks: Vec<Mark>,
     /// Texto elevado/rebaixado (`w:position`, como o LibreOffice grava sub/sobrescrito):
@@ -503,16 +662,149 @@ impl RunProps {
     fn unset(&mut self, key: &str) {
         self.marks.retain(|m| m.kind().key() != key);
     }
+    fn toggle(&mut self, on: bool, mark: Mark) {
+        if on {
+            self.set(mark)
+        } else {
+            self.unset(mark.kind().key())
+        }
+    }
+
+    /// Aplica uma propriedade de caractere (`w:rPr`).
+    fn apply(&mut self, p: &Prop, theme: &ThemeFonts) {
+        match p.name.as_slice() {
+            b"b" => self.toggle(p.on(), Mark::Bold),
+            b"i" => self.toggle(p.on(), Mark::Italic),
+            b"strike" | b"dstrike" => self.toggle(p.on(), Mark::Strike),
+            b"u" => self.toggle(p.on(), Mark::Underline),
+            b"rFonts" => {
+                let face = p
+                    .get(b"ascii")
+                    .or_else(|| p.get(b"hAnsi"))
+                    .map(str::to_string)
+                    .or_else(
+                        || match p.get(b"asciiTheme").or_else(|| p.get(b"hAnsiTheme"))? {
+                            t if t.starts_with("major") => theme.major.clone(),
+                            _ => theme.minor.clone(),
+                        },
+                    );
+                if let Some(value) = face.filter(|f| !f.is_empty()) {
+                    self.set(Mark::FontFamily { value });
+                }
+            }
+            b"position" => {
+                let v = p.num::<i32>(b"val").unwrap_or(0);
+                if v != 0 {
+                    let value = if v < 0 { "subscript" } else { "superscript" };
+                    self.set(Mark::VertAlign {
+                        value: value.to_string(),
+                    });
+                    self.unset("fontSize");
+                    self.positioned = true;
+                }
+            }
+            b"sz" if !self.positioned => {
+                if let Some(v) = p.num::<u16>(b"val").filter(|v| (2..=3276).contains(v)) {
+                    self.set(Mark::FontSize { half_points: v });
+                }
+            }
+            b"color" => match p.get(b"val") {
+                Some(v) if v.len() == 6 && v.chars().all(|c| c.is_ascii_hexdigit()) => {
+                    if v == "000000" {
+                        self.unset("color");
+                    } else {
+                        self.set(Mark::Color {
+                            value: format!("#{}", v.to_uppercase()),
+                        });
+                    }
+                }
+                // "auto": a cor que contrasta com o fundo, que é o padrão do Nova.
+                _ => self.unset("color"),
+            },
+            b"highlight" => match p.get(b"val") {
+                Some(v) if HIGHLIGHT_COLORS.contains(&v) => self.set(Mark::Highlight {
+                    value: v.to_string(),
+                }),
+                _ => self.unset("highlight"),
+            },
+            b"vertAlign" => match p.get(b"val") {
+                Some(v @ ("superscript" | "subscript")) => self.set(Mark::VertAlign {
+                    value: v.to_string(),
+                }),
+                _ => self.unset("vertAlign"),
+            },
+            _ => {}
+        }
+    }
 }
+
+/// Aplica uma propriedade de parágrafo (`w:pPr`).
+fn apply_para(attrs: &mut nova_domain_text::ParaAttrs, p: &Prop) {
+    match p.name.as_slice() {
+        b"jc" => {
+            attrs.align = match p.get(b"val") {
+                Some("center") => Align::Center,
+                Some("right" | "end") => Align::Right,
+                Some("both" | "distribute") => Align::Justify,
+                _ => Align::Left,
+            }
+        }
+        b"ind" => {
+            if let Some(left) = p.num::<i64>(b"left").or_else(|| p.num(b"start")) {
+                attrs.indent =
+                    ((left.max(0) as f64 / f64::from(INDENT_TWIPS)).round() as u8).min(MAX_INDENT);
+            }
+        }
+        b"spacing" => {
+            // Com "autospacing" ligado, o Word ignora o valor e usa o espaço automático (14 pt).
+            let auto = |k: &[u8]| matches!(p.get(k), Some("1" | "true" | "on"));
+            if let Some(b) = p.num::<u32>(b"before") {
+                attrs.space_before = Some((b / 20).min(1584) as u16);
+            }
+            if auto(b"beforeAutospacing") {
+                attrs.space_before = Some(14);
+            }
+            if let Some(a) = p.num::<u32>(b"after") {
+                attrs.space_after = Some((a / 20).min(1584) as u16);
+            }
+            if auto(b"afterAutospacing") {
+                attrs.space_after = Some(14);
+            }
+            if let (Some(l), None | Some("auto")) = (p.num::<u32>(b"line"), p.get(b"lineRule")) {
+                let percent = (l * 100 / 240).clamp(50, 500) as u16;
+                attrs.line_spacing = (percent != 100).then_some(percent);
+            }
+        }
+        b"shd" => {
+            attrs.shading = p
+                .get(b"fill")
+                .filter(|v| v.len() == 6 && v.chars().all(|c| c.is_ascii_hexdigit()))
+                .map(|v| format!("#{}", v.to_uppercase()))
+                .filter(|v| v != "#FFFFFF");
+        }
+        _ => {}
+    }
+}
+
+/// Valores que já são o padrão do Nova Text e não precisam virar marca.
+const DEFAULT_FONT: &str = "Calibri";
+const DEFAULT_HALF_POINTS: u16 = 22;
 
 fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
     let mut zip =
         ZipArchive::new(Cursor::new(bytes)).map_err(|e| invalid(format!("não é um .docx: {e}")))?;
     let document =
         part(&mut zip, "word/document.xml")?.ok_or_else(|| invalid("word/document.xml ausente"))?;
+    let theme = part(&mut zip, "word/theme/theme1.xml")?
+        .map(|x| read_theme(&x))
+        .unwrap_or_default();
     let styles = part(&mut zip, "word/styles.xml")?
         .map(|x| read_styles(&x))
-        .unwrap_or_default();
+        .unwrap_or(Styles {
+            by_id: HashMap::new(),
+            defaults: StyleInfo::default(),
+            default_para: None,
+        });
     let numbering = part(&mut zip, "word/numbering.xml")?
         .map(|x| read_numbering(&x))
         .unwrap_or_default();
@@ -523,10 +815,41 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
     let mut para: Option<Paragraph> = None;
     let mut para_num: Option<(u32, u8)> = None;
     let mut para_style: Option<String> = None;
+    // Formatação que todo trecho do parágrafo herda (padrões + estilo do parágrafo).
+    let mut para_run = RunProps::default();
     let mut run = RunProps::default();
     let (mut in_ppr, mut in_rpr, mut in_text) = (false, false, false);
+    // Sombreamento de célula de tabela: vale para os parágrafos dela até haver tabelas.
+    let mut cell_shading: Option<String> = None;
+    let (mut in_tcpr, mut tc_depth) = (false, 0u32);
     // Trechos que não entram no texto: apagados (controle de alterações), campos, desenhos.
     let mut skip_depth = 0u32;
+
+    // Herança do estilo do parágrafo: atributos e formatação dos trechos.
+    let start_style = |para: &mut Option<Paragraph>, para_run: &mut RunProps, id: Option<&str>| {
+        let p = para.get_or_insert_with(Paragraph::default);
+        *para_run = RunProps::default();
+        let chain = styles.chain(id);
+        // Estilos com equivalente no Nova (Título, Citação…) já têm a aparência e o
+        // espaçamento dele: deles só vale a fonte do documento.
+        let mapped = chain.iter().any(|s| s.style.is_some());
+        for prop in &styles.defaults.rpr {
+            if !(mapped && prop.name == b"sz") {
+                para_run.apply(prop, &theme);
+            }
+        }
+        if mapped {
+            return;
+        }
+        for s in &chain {
+            for prop in &s.ppr {
+                apply_para(&mut p.attrs, prop);
+            }
+            for prop in &s.rpr {
+                para_run.apply(prop, &theme);
+            }
+        }
+    };
 
     let push_text = |para: &mut Option<Paragraph>, run: &RunProps, text: &str| {
         let p = para.get_or_insert_with(Paragraph::default);
@@ -565,18 +888,45 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     {
                         skip_depth = 1
                     }
+                    b"tc" if !empty => {
+                        tc_depth += 1;
+                        cell_shading = None;
+                    }
+                    b"tcPr" if !empty => in_tcpr = true,
+                    b"shd" if in_tcpr => {
+                        let mut attrs = nova_domain_text::ParaAttrs::default();
+                        apply_para(&mut attrs, &Prop::from(e));
+                        cell_shading = attrs.shading;
+                    }
                     b"p" => {
                         para = Some(Paragraph::default());
                         para_num = None;
                         para_style = None;
+                        start_style(&mut para, &mut para_run, None);
+                        if tc_depth > 0 {
+                            if let Some(p) = para.as_mut() {
+                                p.attrs.shading = cell_shading.clone();
+                            }
+                        }
                         if empty {
                             out.push(para.take().unwrap_or_default());
                         }
                     }
                     b"pPr" if !empty => in_ppr = true,
                     b"rPr" if !empty => in_rpr = true,
-                    b"r" => run = RunProps::default(),
-                    b"pStyle" if in_ppr => para_style = attr(e, b"val"),
+                    b"r" => run = para_run.clone(),
+                    b"pStyle" if in_ppr && !in_rpr => {
+                        para_style = attr(e, b"val");
+                        // O pStyle vem primeiro no pPr: a formatação direta que segue o sobrepõe.
+                        let shading = para.as_ref().and_then(|p| p.attrs.shading.clone());
+                        para = Some(Paragraph::default());
+                        start_style(&mut para, &mut para_run, para_style.as_deref());
+                        if let (Some(p), Some(_)) = (para.as_mut(), &shading) {
+                            if p.attrs.shading.is_none() {
+                                p.attrs.shading = shading;
+                            }
+                        }
+                    }
                     b"ilvl" if in_ppr => {
                         let lvl = attr(e, b"val").and_then(|v| v.parse().ok()).unwrap_or(0);
                         para_num = Some((para_num.map_or(0, |n| n.0), lvl));
@@ -585,132 +935,35 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                         let id = attr(e, b"val").and_then(|v| v.parse().ok()).unwrap_or(0);
                         para_num = Some((id, para_num.map_or(0, |n| n.1)));
                     }
-                    b"jc" if in_ppr && !in_rpr => {
+                    // Propriedades do parágrafo (o rPr dentro do pPr é da marca de parágrafo).
+                    _ if in_ppr && !in_rpr => {
                         if let Some(p) = para.as_mut() {
-                            p.attrs.align = match attr(e, b"val").as_deref() {
-                                Some("center") => Align::Center,
-                                Some("right" | "end") => Align::Right,
-                                Some("both" | "distribute") => Align::Justify,
-                                _ => Align::Left,
-                            };
+                            apply_para(&mut p.attrs, &Prop::from(e));
                         }
                     }
-                    b"ind" if in_ppr && !in_rpr => {
-                        let left = attr(e, b"left")
-                            .or_else(|| attr(e, b"start"))
-                            .and_then(|v| v.parse::<i64>().ok());
-                        if let (Some(p), Some(left)) = (para.as_mut(), left) {
-                            p.attrs.indent =
-                                ((left.max(0) as f64 / f64::from(INDENT_TWIPS)).round() as u8)
-                                    .min(MAX_INDENT);
-                        }
-                    }
-                    b"spacing" if in_ppr && !in_rpr => {
-                        if let Some(p) = para.as_mut() {
-                            let num = |n: &[u8]| attr(e, n).and_then(|v| v.parse::<u32>().ok());
-                            if let Some(b) = num(b"before") {
-                                p.attrs.space_before = Some((b / 20).min(1584) as u16);
-                            }
-                            if let Some(a) = num(b"after") {
-                                p.attrs.space_after = Some((a / 20).min(1584) as u16);
-                            }
-                            let rule = attr(e, b"lineRule");
-                            if let (Some(l), None | Some("auto")) = (num(b"line"), rule.as_deref())
-                            {
-                                let percent = (l * 100 / 240).clamp(50, 500) as u16;
-                                if percent != 100 {
-                                    p.attrs.line_spacing = Some(percent);
+                    b"rStyle" if in_rpr && !in_ppr => {
+                        if let Some(id) = attr(e, b"val") {
+                            for s in styles.chain(Some(&id)) {
+                                for prop in &s.rpr {
+                                    run.apply(prop, &theme);
                                 }
                             }
                         }
                     }
-                    b"b" if in_rpr => {
-                        if toggle(e) {
-                            run.set(Mark::Bold)
-                        } else {
-                            run.unset("bold")
-                        }
-                    }
-                    b"i" if in_rpr => {
-                        if toggle(e) {
-                            run.set(Mark::Italic)
-                        } else {
-                            run.unset("italic")
-                        }
-                    }
-                    b"strike" | b"dstrike" if in_rpr => {
-                        if toggle(e) {
-                            run.set(Mark::Strike)
-                        } else {
-                            run.unset("strike")
-                        }
-                    }
-                    b"u" if in_rpr => {
-                        if toggle(e) {
-                            run.set(Mark::Underline)
-                        } else {
-                            run.unset("underline")
-                        }
-                    }
-                    b"rFonts" if in_rpr => {
-                        if let Some(f) = attr(e, b"ascii").or_else(|| attr(e, b"hAnsi")) {
-                            run.set(Mark::FontFamily { value: f });
-                        }
-                    }
-                    b"position" if in_rpr => {
-                        let v = attr(e, b"val")
-                            .and_then(|v| v.parse::<i32>().ok())
-                            .unwrap_or(0);
-                        if v != 0 {
-                            let value = if v < 0 { "subscript" } else { "superscript" };
-                            run.set(Mark::VertAlign {
-                                value: value.to_string(),
-                            });
-                            run.unset("fontSize");
-                            run.positioned = true;
-                        }
-                    }
-                    b"sz" if in_rpr && !run.positioned => {
-                        if let Some(v) = attr(e, b"val")
-                            .and_then(|v| v.parse::<u16>().ok())
-                            .filter(|v| (2..=3276).contains(v))
-                        {
-                            run.set(Mark::FontSize { half_points: v });
-                        }
-                    }
-                    b"color" if in_rpr => {
-                        if let Some(v) = attr(e, b"val")
-                            .filter(|v| v.len() == 6 && v.chars().all(|c| c.is_ascii_hexdigit()))
-                        {
-                            if v != "000000" {
-                                run.set(Mark::Color {
-                                    value: format!("#{}", v.to_uppercase()),
-                                });
-                            }
-                        }
-                    }
-                    b"highlight" if in_rpr => {
-                        if let Some(v) =
-                            attr(e, b"val").filter(|v| HIGHLIGHT_COLORS.contains(&v.as_str()))
-                        {
-                            run.set(Mark::Highlight { value: v });
-                        }
-                    }
-                    b"vertAlign" if in_rpr => match attr(e, b"val").as_deref() {
-                        Some(v @ ("superscript" | "subscript")) => run.set(Mark::VertAlign {
-                            value: v.to_string(),
-                        }),
-                        _ => run.unset("vertAlign"),
-                    },
+                    _ if in_rpr && !in_ppr => run.apply(&Prop::from(e), &theme),
                     b"t" if !empty => in_text = true,
                     b"tab" if !in_ppr => push_text(&mut para, &run, "\t"),
                     b"br" | b"cr" => {
                         if attr(e, b"type").as_deref() == Some("page") {
                             // Quebra de página vira parágrafo novo até o Nova ter páginas.
                             if let Some(p) = para.take() {
+                                let attrs = p.attrs.clone();
                                 out.push(p);
+                                para = Some(Paragraph {
+                                    attrs,
+                                    ..Paragraph::default()
+                                });
                             }
-                            para = Some(Paragraph::default());
                         } else {
                             push_text(&mut para, &run, "\u{b}");
                         }
@@ -733,13 +986,14 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                     b"t" => in_text = false,
                     b"pPr" => in_ppr = false,
                     b"rPr" => in_rpr = false,
+                    b"tcPr" => in_tcpr = false,
+                    b"tc" => {
+                        tc_depth = tc_depth.saturating_sub(1);
+                        cell_shading = None;
+                    }
                     b"p" => {
                         let mut p = para.take().unwrap_or_default();
-                        let info = para_style
-                            .as_ref()
-                            .and_then(|s| styles.get(s))
-                            .cloned()
-                            .unwrap_or_default();
+                        let info = styles.info(para_style.as_deref());
                         if let Some(style) = info.style {
                             p.style = style;
                         }
@@ -757,6 +1011,17 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
                                 });
                                 p.attrs.indent = lvl.min(MAX_INDENT);
                             }
+                        }
+                        // O que já é o padrão do Nova não vira marca.
+                        let plain = p.style == BlockStyle::Paragraph;
+                        for span in &mut p.spans {
+                            span.marks.retain(|m| match m {
+                                Mark::FontFamily { value } => value != DEFAULT_FONT,
+                                Mark::FontSize { half_points } => {
+                                    !(plain && *half_points == DEFAULT_HALF_POINTS)
+                                }
+                                _ => true,
+                            });
                         }
                         out.push(p);
                     }
@@ -983,6 +1248,100 @@ mod tests {
             (p[4].attrs.list, p[4].attrs.indent),
             (Some(ListKind::Number), 1)
         );
+    }
+
+    /// Como os documentos colados de páginas da Web no Word: estilo "Normal (Web)",
+    /// estilo de caractere "Forte", sombreamento escuro e fontes do tema.
+    #[test]
+    fn herda_formatacao_dos_estilos() {
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let opt = SimpleFileOptions::default();
+        let w = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+        zip.start_file("word/document.xml", opt).unwrap();
+        write!(zip, r#"<?xml version="1.0"?><w:document {w}><w:body>
+            <w:p><w:pPr><w:pStyle w:val="NormalWeb"/><w:shd w:val="clear" w:color="auto" w:fill="343541"/><w:spacing w:before="0" w:beforeAutospacing="0" w:after="300" w:afterAutospacing="0"/></w:pPr>
+              <w:r><w:rPr><w:rStyle w:val="Forte"/><w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI"/></w:rPr><w:t>Resumo</w:t></w:r></w:p>
+            <w:p><w:pPr><w:pStyle w:val="NormalWeb"/></w:pPr><w:r><w:t>web</w:t></w:r></w:p>
+            <w:p><w:r><w:t>normal</w:t></w:r></w:p>
+            <w:p><w:pPr><w:pStyle w:val="Destaque"/></w:pPr><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>sem negrito</w:t></w:r></w:p>
+            <w:tbl><w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:fill="D9E2F3"/></w:tcPr><w:p><w:r><w:t>célula</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+            </w:body></w:document>"#).unwrap();
+        zip.start_file("word/styles.xml", opt).unwrap();
+        write!(zip, r#"<w:styles {w}>
+            <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi"/><w:sz w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
+            <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:color w:val="1F3864"/></w:rPr></w:style>
+            <w:style w:type="paragraph" w:styleId="NormalWeb"><w:name w:val="Normal (Web)"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="100" w:beforeAutospacing="1" w:after="100" w:afterAutospacing="1" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/><w:color w:val="auto"/></w:rPr></w:style>
+            <w:style w:type="paragraph" w:styleId="Destaque"><w:name w:val="Destaque"/><w:basedOn w:val="Normal"/><w:pPr><w:jc w:val="center"/></w:pPr><w:rPr><w:b/></w:rPr></w:style>
+            <w:style w:type="character" w:styleId="Forte"><w:name w:val="Strong"/><w:rPr><w:b/></w:rPr></w:style>
+            </w:styles>"#).unwrap();
+        zip.start_file("word/theme/theme1.xml", opt).unwrap();
+        write!(zip, r#"<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:themeElements><a:fontScheme><a:majorFont><a:latin typeface="Aptos Display"/></a:majorFont><a:minorFont><a:latin typeface="Aptos"/></a:minorFont></a:fontScheme></a:themeElements></a:theme>"#).unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+
+        let p = read_paragraphs(&bytes).unwrap();
+        let segoe = Mark::FontFamily {
+            value: "Segoe UI".into(),
+        };
+        let size12 = Mark::FontSize { half_points: 24 };
+        // Estilo do parágrafo + estilo de caractere + formatação direta.
+        assert_eq!(p[0].spans[0].marks, vec![Mark::Bold, segoe, size12.clone()]);
+        assert_eq!(p[0].attrs.shading.as_deref(), Some("#343541"));
+        assert_eq!(
+            (p[0].attrs.space_before, p[0].attrs.space_after),
+            (Some(0), Some(15))
+        );
+        assert_eq!(p[0].attrs.line_spacing, None);
+        // Só o estilo: fonte e tamanho dele, cor "auto" desfaz a cor do Normal.
+        assert_eq!(
+            p[1].spans[0].marks,
+            vec![
+                Mark::FontFamily {
+                    value: "Times New Roman".into()
+                },
+                size12
+            ]
+        );
+        assert_eq!(p[1].attrs.space_before, Some(14), "autospacing do Word");
+        // Sem pStyle: o estilo padrão (Normal) e a fonte do tema.
+        assert_eq!(
+            p[2].spans[0].marks,
+            vec![
+                Mark::Color {
+                    value: "#1F3864".into()
+                },
+                Mark::FontFamily {
+                    value: "Aptos".into()
+                }
+            ]
+        );
+        assert_eq!(
+            p[2].attrs.space_after, None,
+            "padrões do documento ficam com os do Nova"
+        );
+        // Formatação direta desliga o negrito do estilo; o alinhamento vem do estilo.
+        assert!(!p[3].spans[0].marks.contains(&Mark::Bold));
+        assert_eq!(p[3].attrs.align, Align::Center);
+        // Célula sombreada: o parágrafo leva o sombreamento.
+        assert_eq!(p[4].attrs.shading.as_deref(), Some("#D9E2F3"));
+    }
+
+    #[test]
+    fn sombreamento_vai_e_volta() {
+        let mut doc = TextDocument::new(1);
+        doc.execute(TextCommand::InsertText {
+            block: 0,
+            offset: 0,
+            text: "fundo".into(),
+            marks: None,
+        })
+        .unwrap();
+        doc.execute(TextCommand::SetBlockAttr {
+            block: 0,
+            attr: ParaAttr::Shading(Some("#343541".into())),
+        })
+        .unwrap();
+        let back = import(2, &export(&doc)).unwrap();
+        assert_eq!(back.paragraphs(), doc.paragraphs());
     }
 
     #[test]

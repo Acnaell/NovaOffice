@@ -183,6 +183,12 @@ fn para_props(a: &ParaAttrs) -> String {
     if let Some(percent) = a.line_spacing {
         p.push_str(&format!(r#" fo:line-height="{percent}%""#));
     }
+    if let Some(color) = &a.shading {
+        p.push_str(&format!(
+            r#" fo:background-color="{}""#,
+            color.to_lowercase()
+        ));
+    }
     p
 }
 
@@ -522,6 +528,10 @@ fn apply_para_props(e: &BytesStart, s: &mut OdfStyle) {
     }
     if let Some(pt) = attr(e, b"margin-bottom").and_then(|v| length_pt(&v)) {
         a.space_after = Some(pt);
+    }
+    if let Some(bg) = attr(e, b"background-color") {
+        let hex = bg.to_uppercase();
+        a.shading = (nova_domain_text::is_hex_color(&hex) && hex != "#FFFFFF").then_some(hex);
     }
     if let Some(lh) = attr(e, b"line-height").filter(|v| v.ends_with('%')) {
         if let Ok(p) = lh.trim_end_matches('%').parse::<f64>() {
@@ -879,6 +889,10 @@ mod tests {
             TextCommand::SetBlockAttr {
                 block: 1,
                 attr: ParaAttr::SpaceAfter(Some(12)),
+            },
+            TextCommand::SetBlockAttr {
+                block: 5,
+                attr: ParaAttr::Shading(Some("#343541".into())),
             },
             TextCommand::SetBlockAttr {
                 block: 2,

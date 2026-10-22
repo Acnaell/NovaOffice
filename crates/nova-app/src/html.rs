@@ -86,6 +86,13 @@ fn paragraph_html(p: &Paragraph, tag: &str) -> String {
     if let Some(v) = p.attrs.space_after {
         css.push(format!("margin-bottom:{v}pt"));
     }
+    if let Some(bg) = &p.attrs.shading {
+        css.push(format!("background:{bg};padding:2pt 4pt"));
+        // Cor "automática" do Word: texto claro sobre fundo escuro.
+        if crate::is_dark(bg) {
+            css.push("color:#fff".to_string());
+        }
+    }
     let style = if css.is_empty() {
         String::new()
     } else {

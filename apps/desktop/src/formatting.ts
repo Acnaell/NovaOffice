@@ -24,7 +24,14 @@ export const DEFAULT_ATTRS: ParaAttrs = {
   spaceBefore: null,
   spaceAfter: null,
   list: null,
+  shading: null,
 };
+
+/** Fundo escuro o bastante para o texto automático ficar branco, como no Word. */
+export function isDark(hex: string): boolean {
+  const c = (i: number) => parseInt(hex.slice(i, i + 2), 16) / 255;
+  return 0.299 * c(1) + 0.587 * c(3) + 0.114 * c(5) < 0.5;
+}
 
 /** Fonte do corpo do texto quando nenhuma marca `fontFamily` foi aplicada. */
 export const DEFAULT_FONT = "Calibri";
