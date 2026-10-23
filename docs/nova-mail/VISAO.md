@@ -100,8 +100,9 @@ apps/desktop          novo módulo "mail" no mesmo app Tauri do hub
   obrigatório registrar o app no Microsoft Entra e usar OAuth2 com IMAP/SMTP.
 - **Um app só ou separado?** A proposta é um módulo dentro do app NovaOffice (hub), não um
   executável à parte. Fica para o ADR.
-- **Identidade visual:** a sétima forma da família e a cor do Nova Mail. Há três conceitos em
-  avaliação (envelope, funil e bandeja) e a cor rosa `#F07F9C` como proposta.
+- **Identidade visual:** a forma escolhida é o **funil**, um trapézio que se estreita para a direita:
+  várias contas convergindo numa caixa só. É a sétima forma da família. A cor ainda está em aberto;
+  a proposta é rosa `#F07F9C`.
 
 ## Roteiro
 
