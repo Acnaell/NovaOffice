@@ -2675,3 +2675,282 @@ select {
     display: none;
   }
 }
+
+/* ---------- Aba Exibir ---------- */
+
+/* Zoom: só o desenho do papel muda; a paginação mede em px do próprio papel. */
+.scroller .paper {
+  zoom: var(--zoom, 1);
+}
+
+/* Com zoom, o papel mantém a largura real (rola na horizontal) para as linhas não mudarem. */
+.scroller[data-zoomed] .paper {
+  max-width: none;
+}
+
+.view-checks {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 6px;
+}
+
+.view-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Barra de status: − porcentagem + */
+.zoom-control {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.zoom-step {
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.zoom-step:hover,
+.zoom-step:focus-visible {
+  background: var(--button-hover);
+}
+
+.zoom-level {
+  min-width: 58px;
+  padding: 1px 2px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.zoom-level:hover,
+.zoom-level:focus-visible {
+  border-color: var(--chrome-border);
+  background: var(--button-hover);
+}
+
+.zoom-level option {
+  background: var(--ribbon-bg);
+  color: var(--chrome-text);
+}
+
+/* Régua: presa no alto da área do documento, alinhada ao papel. */
+.ruler-track {
+  position: sticky;
+  top: -32px;
+  z-index: 2;
+  margin: -32px -16px 12px;
+  padding: 6px 16px 4px;
+  background: var(--workspace-bg);
+}
+
+.ruler {
+  position: relative;
+  max-width: none;
+  height: 18px;
+  margin: 0 auto;
+  border: 1px solid var(--chrome-border);
+  background: var(--page-bg);
+  color: var(--chrome-muted);
+  font-size: 9.5px;
+  overflow: hidden;
+}
+
+.ruler-margin {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--chrome-muted) 22%, var(--page-bg));
+}
+
+.ruler svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.ruler line {
+  stroke: currentColor;
+  stroke-width: 1;
+}
+
+.ruler text {
+  fill: currentColor;
+  font-family: inherit;
+}
+
+/* Painel de Navegação, à esquerda como no Word. */
+.nav-pane {
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  flex: none;
+  min-height: 0;
+  border-right: 1px solid var(--chrome-border);
+  background: var(--ribbon-bg);
+  color: var(--chrome-text);
+}
+
+.nav-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 8px 4px 14px;
+}
+
+.nav-pane-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.nav-pane-close {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--chrome-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.nav-pane-close:hover {
+  background: var(--button-hover);
+}
+
+.nav-pane-tab {
+  margin: 4px 14px 6px;
+  padding-bottom: 4px;
+  border-bottom: 2px solid var(--accent);
+  align-self: flex-start;
+  color: var(--accent-strong);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.nav-pane-empty {
+  margin: 8px 14px;
+  color: var(--chrome-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.nav-pane-list {
+  flex: 1;
+  margin: 0;
+  padding: 0 6px 12px;
+  overflow: auto;
+  list-style: none;
+}
+
+.nav-heading {
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  overflow: hidden;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nav-heading.level-1 {
+  font-weight: 600;
+}
+
+.nav-heading.level-2 {
+  padding-left: 22px;
+}
+
+.nav-heading.level-3 {
+  padding-left: 36px;
+  font-size: 12.5px;
+}
+
+.nav-heading:hover {
+  background: var(--button-hover);
+}
+
+.nav-heading[aria-current] {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--ribbon-bg));
+}
+
+/* Ir para um título deixa espaço para a régua acima dele. */
+.scroller .page > * {
+  scroll-margin-top: 40px;
+}
+
+/* Modo de Foco: só o documento, em tela inteira. */
+.app.focus-mode {
+  grid-template-rows: 1fr;
+}
+
+.app.focus-mode > .chrome,
+.app.focus-mode > .update-bar,
+.app.focus-mode > .statusbar,
+.app.focus-mode .nav-pane,
+.app.focus-mode .ruler-track {
+  display: none;
+}
+
+.focus-exit {
+  position: fixed;
+  top: 10px;
+  right: 18px;
+  z-index: 40;
+  padding: 5px 12px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 6px;
+  background: var(--ribbon-bg);
+  color: var(--chrome-muted);
+  font-size: 12px;
+  opacity: 0.35;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.focus-exit:hover,
+.focus-exit:focus-visible {
+  opacity: 1;
+}
+
+@media print {
+  .ruler-track,
+  .nav-pane,
+  .focus-exit {
+    display: none;
+  }
+
+  .scroller .paper {
+    zoom: 1;
+  }
+}
