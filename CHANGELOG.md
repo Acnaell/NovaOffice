@@ -39,6 +39,11 @@ A seção da versão é usada como texto da página de release no GitHub.
   "Baixar e instalar" baixa o instalador, confere o SHA-256, pergunta se salva o documento e instala;
   no macOS e no Linux, abre a página da release. Arquivo → Sobre mostra a versão, procura
   atualizações e liga ou desliga o aviso.
+- Aba Exibir como a do Word: zoom de 10% a 500% (− e + na barra de status, porcentagem com as
+  opções prontas, Ctrl + roda do mouse, 100%, Uma Página e Largura da Página) sem mudar a
+  paginação; régua horizontal com as margens da página; Painel de Navegação com os títulos
+  (Título 1 a 3), que leva o cursor ao título clicado; e Modo de Foco em tela inteira, só com o
+  documento (Esc volta).
 
 ## [0.1.6] - 2026-10-22
 
