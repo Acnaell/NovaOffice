@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_ATTRS } from "./formatting";
 import { caret } from "./model";
 import { defaultProofing, hideTyping, matchAt, matchText, parseProofing, SpellCache } from "./spell";
-import { DEFAULT_PAGE, type BlockView, type DocView } from "./types";
+import { DEFAULT_HEADER_FOOTER, DEFAULT_PAGE, type BlockView, type DocView } from "./types";
 
 const p = (text: string): BlockView => ({
   style: "paragraph",
@@ -11,7 +11,7 @@ const p = (text: string): BlockView => ({
 });
 
 function doc(...blocks: BlockView[]): DocView {
-  return { blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE };
+  return { blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER };
 }
 
 describe("idioma de revisão", () => {

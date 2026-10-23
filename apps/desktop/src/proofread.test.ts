@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ATTRS } from "./formatting";
 import { nextError, occurrenceKey } from "./proofread";
-import { DEFAULT_PAGE, type BlockView, type DocView } from "./types";
+import { DEFAULT_HEADER_FOOTER, DEFAULT_PAGE, type BlockView, type DocView } from "./types";
 
 const p = (text: string): BlockView => ({
   style: "paragraph",
@@ -18,6 +18,7 @@ const doc: DocView = {
   dirty: false,
   format: null,
   page: DEFAULT_PAGE,
+  headerFooter: DEFAULT_HEADER_FOOTER,
 };
 
 // "otro" (0:10-14) e "errro" (1:8-13)

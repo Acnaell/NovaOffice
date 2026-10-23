@@ -543,6 +543,7 @@ fn alinhamento_recuo_espacamento_e_lista() {
             page_break_before: false,
             cell: None,
             image: None,
+            toc: None,
         }
     );
     assert_eq!(doc.block_attrs(1).unwrap(), ParaAttrs::default());
@@ -965,4 +966,66 @@ fn pagina_e_margens() {
     let json = r#"{"type":"page.set","page":{"width":12240,"height":15840,"marginTop":1440,"marginBottom":1440,"marginLeft":1440,"marginRight":1440}}"#;
     doc.execute(serde_json::from_str(json).unwrap()).unwrap();
     assert_eq!(doc.page_setup().width, 12240);
+}
+
+#[test]
+fn cabecalho_e_rodape() {
+    let mut doc = TextDocument::new(1);
+    assert_eq!(doc.header_footer(), HeadersFooters::default());
+    let value = HeadersFooters {
+        header: HeaderFooter {
+            text: "Relatório final".into(),
+            align: Align::Center,
+        },
+        footer: HeaderFooter {
+            text: "Página {PAGE} de {NUMPAGES}".into(),
+            align: Align::Right,
+        },
+        different_first: true,
+    };
+    doc.execute(TextCommand::SetHeaderFooter {
+        value: value.clone(),
+    })
+    .unwrap();
+    assert_eq!(doc.header_footer(), value);
+    doc.execute(TextCommand::Undo).unwrap();
+    assert_eq!(doc.header_footer(), HeadersFooters::default());
+    let json = r#"{"type":"headerFooter.set","value":{"header":{"text":"{PAGE}","align":"right"},"footer":{"text":"","align":"left"},"differentFirst":false}}"#;
+    doc.execute(serde_json::from_str(json).unwrap()).unwrap();
+    assert_eq!(doc.header_footer().header.text, "{PAGE}");
+    let bad = HeadersFooters {
+        header: HeaderFooter {
+            text: "duas\nlinhas".into(),
+            align: Align::Left,
+        },
+        ..HeadersFooters::default()
+    };
+    assert!(doc
+        .execute(TextCommand::SetHeaderFooter { value: bad })
+        .is_err());
+}
+
+#[test]
+fn sumario_vai_ao_crdt_e_volta() {
+    use crate::format::TocEntry;
+    let mut doc = TextDocument::from_plain_text(1, "Sumário\nIntrodução");
+    let entry = TocEntry { level: 2, page: 14 };
+    doc.execute(TextCommand::SetBlockAttr {
+        block: 1,
+        attr: ParaAttr::Toc(Some(entry)),
+    })
+    .unwrap();
+    assert_eq!(doc.block_attrs(1).unwrap().toc, Some(entry));
+    // Nível acima de 6 é recusado.
+    assert!(doc
+        .execute(TextCommand::SetBlockAttr {
+            block: 0,
+            attr: ParaAttr::Toc(Some(TocEntry { level: 7, page: 1 })),
+        })
+        .is_err());
+    // No JSON da interface.
+    let json = serde_json::to_value(doc.block_attrs(1).unwrap()).unwrap();
+    assert_eq!(json["toc"], serde_json::json!({"level": 2, "page": 14}));
+    doc.execute(TextCommand::Undo).unwrap();
+    assert_eq!(doc.block_attrs(1).unwrap().toc, None);
 }

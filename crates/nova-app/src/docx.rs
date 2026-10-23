@@ -46,7 +46,45 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         .enumerate()
         .map(|(i, (_, mime, _))| format!("media/image{}.{}", i + 1, crate::media::extension(mime)))
         .collect();
-    let files: [(&str, String); 8] = [
+    // Cabeçalho e rodapé: partes próprias, referenciadas no w:sectPr.
+    let hf = doc.header_footer();
+    let mut body = body;
+    let mut extra_rels = String::new();
+    let mut extra_types = String::new();
+    let mut extra_files: Vec<(&str, String)> = Vec::new();
+    let mut refs = String::new();
+    for (kind, part, value) in [
+        ("header", "header1.xml", &hf.header),
+        ("footer", "footer1.xml", &hf.footer),
+    ] {
+        if value.text.is_empty() {
+            continue;
+        }
+        let tag = if kind == "header" { "hdr" } else { "ftr" };
+        let id = if kind == "header" { "rIdHdr" } else { "rIdFtr" };
+        extra_files.push((
+            if kind == "header" {
+                "word/header1.xml"
+            } else {
+                "word/footer1.xml"
+            },
+            header_footer_xml(tag, value),
+        ));
+        extra_rels.push_str(&format!(
+            r#"<Relationship Id="{id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}" Target="{part}"/>"#
+        ));
+        extra_types.push_str(&format!(
+            r#"<Override PartName="/word/{part}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml"/>"#
+        ));
+        refs.push_str(&format!(
+            r#"<w:{kind}Reference w:type="default" r:id="{id}"/>"#
+        ));
+    }
+    body = body.replacen("<w:sectPr>", &format!("<w:sectPr>{refs}"), 1);
+    if hf.different_first {
+        body = body.replacen("</w:sectPr>", "<w:titlePg/></w:sectPr>", 1);
+    }
+    let mut files: Vec<(&str, String)> = vec![
         ("[Content_Types].xml", CONTENT_TYPES.to_string()),
         ("_rels/.rels", ROOT_RELS.to_string()),
         ("docProps/app.xml", APP_XML.to_string()),
@@ -59,6 +97,19 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         ("word/styles.xml", STYLES_XML.to_string()),
         ("word/numbering.xml", numbering_xml(&nums)),
     ];
+    files.extend(extra_files);
+    for (name, content) in files.iter_mut() {
+        if *name == "word/_rels/document.xml.rels" {
+            *content = content.replacen(
+                "</Relationships>",
+                &format!("{extra_rels}</Relationships>"),
+                1,
+            );
+        }
+        if *name == "[Content_Types].xml" {
+            *content = content.replacen("</Types>", &format!("{extra_types}</Types>"), 1);
+        }
+    }
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     for (name, content) in files {
@@ -73,6 +124,160 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         zip.write_all(data).expect("zip em memória");
     }
     zip.finish().expect("zip em memória").into_inner()
+}
+
+/// `w:hdr`/`w:ftr` com um parágrafo: texto, quebras de linha e os campos PAGE e NUMPAGES.
+fn header_footer_xml(tag: &str, value: &nova_domain_text::HeaderFooter) -> String {
+    let mut out = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{tag} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:p>"#
+    );
+    let jc = match value.align {
+        Align::Center => "center",
+        Align::Right => "right",
+        Align::Justify => "both",
+        Align::Left => "",
+    };
+    if !jc.is_empty() {
+        out.push_str(&format!(r#"<w:pPr><w:jc w:val="{jc}"/></w:pPr>"#));
+    }
+    let mut rest = value.text.as_str();
+    while !rest.is_empty() {
+        let next = [
+            nova_domain_text::PAGE_FIELD,
+            nova_domain_text::NUMPAGES_FIELD,
+        ]
+        .iter()
+        .filter_map(|f| rest.find(f).map(|i| (i, *f)))
+        .min();
+        let (text, field) = match next {
+            Some((i, f)) => (&rest[..i], Some(f)),
+            None => (rest, None),
+        };
+        for (n, line) in text.split('\u{b}').enumerate() {
+            if n > 0 {
+                out.push_str("<w:r><w:br/></w:r>");
+            }
+            if !line.is_empty() {
+                out.push_str(&format!(
+                    r#"<w:r><w:t xml:space="preserve">{}</w:t></w:r>"#,
+                    esc(line)
+                ));
+            }
+        }
+        match field {
+            Some(f) => {
+                let instr = if f == nova_domain_text::PAGE_FIELD {
+                    "PAGE"
+                } else {
+                    "NUMPAGES"
+                };
+                out.push_str(&format!(
+                    r#"<w:fldSimple w:instr=" {instr} \* MERGEFORMAT "><w:r><w:t>1</w:t></w:r></w:fldSimple>"#
+                ));
+                rest = &rest[text.len() + f.len()..];
+            }
+            None => rest = "",
+        }
+    }
+    out.push_str(&format!("</w:p></w:{tag}>"));
+    out
+}
+
+/// Texto de um `w:hdr`/`w:ftr`: parágrafos unidos por quebra de linha, campos
+/// PAGE e NUMPAGES (simples ou complexos) viram `{PAGE}` e `{NUMPAGES}`.
+fn read_header_footer(xml: &str) -> nova_domain_text::HeaderFooter {
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+    let mut text = String::new();
+    let mut align: Option<Align> = None;
+    let (mut in_t, mut in_instr, mut paragraphs) = (false, false, 0);
+    // Campo complexo: 0 = fora, 1 = lendo a instrução, 2 = resultado (ignorado).
+    let mut field = 0;
+    let mut instr = String::new();
+    let mut simple_depth = 0u32;
+    let field_token = |instr: &str| {
+        let upper = instr.trim().to_uppercase();
+        if upper.starts_with("NUMPAGES") {
+            Some(nova_domain_text::NUMPAGES_FIELD)
+        } else if upper.starts_with("PAGE") {
+            Some(nova_domain_text::PAGE_FIELD)
+        } else {
+            None
+        }
+    };
+    loop {
+        match reader.read_event_into(&mut buf) {
+            // <w:fldSimple …/> sem resultado: só o campo.
+            Ok(Event::Empty(e)) if e.local_name().as_ref() == b"fldSimple" => {
+                if let Some(token) = attr(&e, b"instr").as_deref().and_then(field_token) {
+                    text.push_str(token);
+                }
+            }
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => match e.local_name().as_ref() {
+                b"p" => {
+                    if paragraphs > 0 && !text.is_empty() {
+                        text.push('\u{b}');
+                    }
+                    paragraphs += 1;
+                }
+                b"jc" if align.is_none() => {
+                    align = Some(match attr(&e, b"val").as_deref() {
+                        Some("center") => Align::Center,
+                        Some("right" | "end") => Align::Right,
+                        Some("both") => Align::Justify,
+                        _ => Align::Left,
+                    })
+                }
+                b"fldSimple" => {
+                    if let Some(token) = attr(&e, b"instr").as_deref().and_then(field_token) {
+                        text.push_str(token);
+                    }
+                    simple_depth += 1;
+                }
+                b"fldChar" => match attr(&e, b"fldCharType").as_deref() {
+                    Some("begin") => {
+                        field = 1;
+                        instr.clear();
+                    }
+                    Some("separate") => {
+                        if let Some(token) = field_token(&instr) {
+                            text.push_str(token);
+                        }
+                        field = 2;
+                    }
+                    Some("end") => field = 0,
+                    _ => {}
+                },
+                b"instrText" => in_instr = true,
+                b"t" => in_t = true,
+                b"tab" => text.push('\t'),
+                b"br" => text.push('\u{b}'),
+                _ => {}
+            },
+            Ok(Event::Text(t)) => {
+                let value = t.unescape().map(|v| v.into_owned()).unwrap_or_default();
+                if in_instr {
+                    instr.push_str(&value);
+                } else if in_t && field == 0 && simple_depth == 0 {
+                    text.push_str(&value);
+                }
+            }
+            Ok(Event::End(e)) => match e.local_name().as_ref() {
+                b"t" => in_t = false,
+                b"instrText" => in_instr = false,
+                b"fldSimple" => simple_depth = simple_depth.saturating_sub(1),
+                _ => {}
+            },
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let text: String = text.chars().take(1000).collect();
+    nova_domain_text::HeaderFooter {
+        text: text.trim_end_matches('\u{b}').to_string(),
+        align: align.unwrap_or_default(),
+    }
 }
 
 /// Pontos → EMU (unidade do DrawingML).
@@ -287,14 +492,26 @@ fn body_xml(
     let mut previous_list: Option<ListKind> = None;
     let mut current_number_id = 0;
     let mut table = TableWriter::new(paragraphs);
-    for p in paragraphs {
+    // Sumário: as entradas ficam dentro de um campo TOC, como no Word.
+    let text_width = page
+        .width
+        .saturating_sub(page.margin_left + page.margin_right)
+        .max(1440);
+    let mut toc_open = false;
+    for (index, p) in paragraphs.iter().enumerate() {
         table.before(&mut out, p);
         out.push_str("<w:p>");
         let mut ppr = String::new();
-        if let Some(id) = style_id(p.style) {
-            ppr.push_str(&format!(r#"<w:pStyle w:val="{id}"/>"#));
-        }
         let a = &p.attrs;
+        match a.toc {
+            Some(entry) if entry.level == 0 => ppr.push_str(r#"<w:pStyle w:val="TOCHeading"/>"#),
+            Some(entry) => ppr.push_str(&format!(r#"<w:pStyle w:val="TOC{}"/>"#, entry.level)),
+            None => {
+                if let Some(id) = style_id(p.style) {
+                    ppr.push_str(&format!(r#"<w:pStyle w:val="{id}"/>"#));
+                }
+            }
+        }
         if a.page_break_before {
             ppr.push_str("<w:pageBreakBefore/>");
         }
@@ -338,6 +555,11 @@ fn body_xml(
             }
             ppr.push_str("/>");
         }
+        if a.toc.is_some_and(|t| t.level > 0) {
+            ppr.push_str(&format!(
+                r#"<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{text_width}"/></w:tabs>"#
+            ));
+        }
         if a.list.is_none() && a.indent > 0 {
             ppr.push_str(&format!(
                 r#"<w:ind w:left="{}"/>"#,
@@ -354,6 +576,11 @@ fn body_xml(
             out.push_str("<w:pPr>");
             out.push_str(&ppr);
             out.push_str("</w:pPr>");
+        }
+        let toc_entry = a.toc.filter(|t| t.level > 0);
+        if toc_entry.is_some() && !toc_open {
+            out.push_str(TOC_FIELD_BEGIN);
+            toc_open = true;
         }
         if let Some(image) = &p.attrs.image {
             if let Some(index) = images.iter().position(|(id, ..)| *id == image.id) {
@@ -382,6 +609,19 @@ fn body_xml(
         if open_link.is_some() {
             out.push_str("</w:hyperlink>");
         }
+        if let Some(entry) = toc_entry {
+            out.push_str(&format!(
+                "<w:r><w:tab/></w:r><w:r><w:t>{}</w:t></w:r>",
+                entry.page.max(1)
+            ));
+        }
+        let next_is_entry = paragraphs
+            .get(index + 1)
+            .is_some_and(|n| n.attrs.toc.is_some_and(|t| t.level > 0));
+        if toc_open && !next_is_entry {
+            out.push_str(r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#);
+            toc_open = false;
+        }
         out.push_str("</w:p>");
     }
     if table.finish(&mut out) {
@@ -399,6 +639,9 @@ fn body_xml(
     ));
     (out, nums, links)
 }
+
+/// Início do campo do Sumário (títulos 1 a 3, com links), antes do resultado.
+const TOC_FIELD_BEGIN: &str = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>"#;
 
 /// Um `w:r`, com as propriedades na ordem que o esquema do Word exige.
 fn run_xml(out: &mut String, span: &Span) {
@@ -546,18 +789,21 @@ const CORE_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?
 
 /// Estilos com os nomes internos do Word ("heading 1"…), que ele traduz para
 /// "Título 1" na interface em português. Tamanhos iguais aos do Nova Text.
-const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:uiPriority w:val="39"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style></w:styles>"#;
+const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:uiPriority w:val="39"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOCHeading"><w:name w:val="TOC Heading"/><w:basedOn w:val="Heading1"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:qFormat/><w:pPr><w:outlineLvl w:val="9"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC2"><w:name w:val="toc 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="220"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC3"><w:name w:val="toc 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="440"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC4"><w:name w:val="toc 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="660"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC5"><w:name w:val="toc 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="880"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC6"><w:name w:val="toc 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="1100"/></w:pPr></w:style></w:styles>"#;
 
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media, page) = read_document(bytes)?;
+    let (paragraphs, media, page, header_footer) = read_document(bytes)?;
     let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
         doc.put_media(&id, &mime, &data)?;
     }
     if let Some(page) = page.filter(|p| p.validate().is_ok()) {
         doc.load_page_setup(page)?;
+    }
+    if header_footer != Default::default() && header_footer.validate().is_ok() {
+        doc.load_header_footer(header_footer)?;
     }
     Ok(doc)
 }
@@ -629,6 +875,44 @@ fn style_from(id: &str, name: &str) -> Option<BlockStyle> {
         return Some(BlockStyle::Code);
     }
     None
+}
+
+/// Nível de Sumário de um estilo pelo nome interno do Word ("toc 1" a "toc 9",
+/// "TOC Heading" = 0). Níveis acima de 6 ficam no 6.
+fn toc_level(name: &str) -> Option<u8> {
+    let name = name.to_lowercase();
+    if name == "toc heading" {
+        return Some(0);
+    }
+    let level: u8 = name.strip_prefix("toc ")?.trim().parse().ok()?;
+    (level >= 1).then(|| level.min(nova_domain_text::MAX_TOC_LEVEL))
+}
+
+/// Tira o número de página do fim de uma entrada de sumário ("Introdução\t3").
+pub(crate) fn take_toc_page(p: &mut Paragraph) -> u16 {
+    let text = p.text();
+    let Some(tab) = text.rfind('\t') else {
+        return 0;
+    };
+    let tail = text[tab + 1..].trim();
+    if tail.chars().count() > 12 {
+        return 0;
+    }
+    let page = tail.parse().unwrap_or(0);
+    // Corta os trechos no tab (o tab e o número saem).
+    let mut left = tab;
+    p.spans.retain_mut(|span| {
+        if left == 0 {
+            return false;
+        }
+        if span.text.len() > left {
+            span.text.truncate(left);
+        }
+        left -= span.text.len();
+        true
+    });
+    p.spans.retain(|span| !span.text.is_empty());
+    page
 }
 
 /// Um elemento de propriedade (`w:b`, `w:sz`, `w:jc`…) com os atributos pelo
@@ -720,6 +1004,8 @@ fn read_theme(xml: &str) -> ThemeFonts {
 struct StyleInfo {
     /// Estilo do Nova equivalente (Título 1, Citação…); `None` para os demais.
     style: Option<BlockStyle>,
+    /// Estilo de Sumário ("toc 1"… e "TOC Heading" = 0).
+    toc: Option<u8>,
     num: Option<(u32, u8)>,
     based_on: Option<String>,
     rpr: Vec<Prop>,
@@ -758,6 +1044,7 @@ impl Styles {
         StyleInfo {
             style: chain.iter().rev().find_map(|s| s.style),
             num: chain.iter().rev().find_map(|s| s.num),
+            toc: chain.last().and_then(|s| s.toc),
             ..StyleInfo::default()
         }
     }
@@ -835,6 +1122,7 @@ fn read_styles(xml: &str) -> Styles {
                 b"style" => {
                     if let Some((id, name, mut info)) = current.take() {
                         info.style = style_from(&id, &name);
+                        info.toc = toc_level(&name);
                         info.num = num_lvl.0.map(|n| (n, num_lvl.1));
                         by_id.insert(id, info);
                     }
@@ -851,6 +1139,11 @@ fn read_styles(xml: &str) -> Styles {
         defaults,
         default_para,
     }
+}
+
+/// `<w:titlePg/>` liga; `w:val="0"` desliga.
+fn toggle_on(e: &BytesStart) -> bool {
+    !matches!(attr(e, b"val").as_deref(), Some("0" | "false" | "off"))
 }
 
 /// Parágrafo dentro de uma célula: a célula e o sombreamento dela.
@@ -1095,6 +1388,7 @@ type Document = (
     Vec<Paragraph>,
     Vec<Media>,
     Option<nova_domain_text::PageSetup>,
+    nova_domain_text::HeadersFooters,
 );
 
 fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
@@ -1129,6 +1423,11 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         })
         .collect();
     let mut media: Vec<Media> = Vec::new();
+    // Cabeçalho e rodapé "default" e "Primeira Página Diferente" (do último w:sectPr).
+    let header_rels = read_rels(&rels, "/header");
+    let footer_rels = read_rels(&rels, "/footer");
+    let mut header_footer = nova_domain_text::HeadersFooters::default();
+    let mut hf_parts: Vec<(bool, String)> = Vec::new();
     // Página: a do último w:sectPr (o do corpo do documento).
     let mut page: Option<nova_domain_text::PageSetup> = None;
     // Imagem sendo lida (w:drawing): profundidade, tamanho em EMU e relação.
@@ -1189,6 +1488,10 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         let info = styles.info(para_style);
         if let Some(style) = info.style {
             p.style = style;
+        }
+        if let Some(level) = info.toc {
+            let page = if level > 0 { take_toc_page(&mut p) } else { 0 };
+            p.attrs.toc = Some(nova_domain_text::TocEntry { level, page });
         }
         // Lista: a do parágrafo, ou a herdada do estilo (Lista com Marcadores…).
         if let Some((num_id, lvl)) = para_num.or(info.num) {
@@ -1267,6 +1570,17 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                     continue;
                 }
                 match name {
+                    b"headerReference" | b"footerReference"
+                        if attr(e, b"type").as_deref().unwrap_or("default") == "default" =>
+                    {
+                        let header = name == b"headerReference";
+                        let rels = if header { &header_rels } else { &footer_rels };
+                        if let Some(target) = attr(e, b"id").and_then(|id| rels.get(&id).cloned()) {
+                            hf_parts.retain(|(h, _)| *h != header);
+                            hf_parts.push((header, target));
+                        }
+                    }
+                    b"titlePg" => header_footer.different_first = toggle_on(e),
                     b"pgSz" => {
                         let n = |k: &[u8]| attr(e, k).and_then(|v| v.parse::<u32>().ok());
                         if let (Some(w), Some(h)) = (n(b"w"), n(b"h")) {
@@ -1548,7 +1862,21 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         out.push(Paragraph::default());
     }
     normalize(&mut out);
-    Ok((out, media, page))
+    for (header, target) in hf_parts {
+        let path = match target.strip_prefix('/') {
+            Some(absolute) => absolute.to_string(),
+            None => format!("word/{target}"),
+        };
+        if let Some(xml) = part(&mut zip, &path)? {
+            let value = read_header_footer(&xml);
+            if header {
+                header_footer.header = value;
+            } else {
+                header_footer.footer = value;
+            }
+        }
+    }
+    Ok((out, media, page, header_footer))
 }
 
 /// Cores que o Word e o LibreOffice dão aos links.

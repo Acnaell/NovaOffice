@@ -1895,6 +1895,55 @@ select {
   }
 }
 
+/* ---------- Sumário ---------- */
+
+/* Título do sumário: como o "Título do Sumário" do Word. */
+.page .toc-title {
+  font-size: 16pt;
+  font-weight: bold;
+  color: #2f5496;
+  margin: 12pt 0 6pt;
+}
+
+/* Entrada: texto, pontilhado até a margem e o número da página do título
+   (calculado na paginação, em data-page). O pontilhado é o fundo da última
+   linha; o texto e o número o cobrem com o branco do papel. */
+.page .toc-entry {
+  position: relative;
+  padding-right: 2.4em;
+  margin-bottom: 5pt;
+  background-image: radial-gradient(circle, #555 0.7px, transparent 0.95px);
+  background-size: 5px 3px;
+  background-repeat: repeat-x;
+  background-position: left bottom 0.3em;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.page .toc-entry > span {
+  position: relative;
+  z-index: 1;
+  background: var(--page-bg);
+  padding-right: 0.3em;
+}
+
+.page .toc-entry::after {
+  content: attr(data-page);
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  min-width: 2.4em;
+  padding-left: 0.3em;
+  text-align: right;
+  background: var(--page-bg);
+}
+
+.page .toc-2 { margin-left: 1.1em; }
+.page .toc-3 { margin-left: 2.2em; }
+.page .toc-4 { margin-left: 3.3em; }
+.page .toc-5 { margin-left: 4.4em; }
+.page .toc-6 { margin-left: 5.5em; }
+
 /* ---------- Tabelas ---------- */
 
 .page .nova-table {
@@ -2516,6 +2565,112 @@ select {
 
 @media print {
   .update-bar {
+    display: none;
+  }
+}
+
+/* ---------- Cabeçalho e rodapé ---------- */
+
+.hf-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hf {
+  position: absolute;
+  min-height: 1.4em;
+  color: var(--page-text);
+  font: 11pt/1.3 "Calibri", "Carlito", "Segoe UI", sans-serif;
+  white-space: pre-wrap;
+  pointer-events: auto;
+  cursor: default;
+}
+
+/* Como no Word: o cabeçalho começa a 1,25 cm da borda de cima e o rodapé termina a 1,25 cm da de baixo. */
+.hf-header {
+  padding-bottom: 2px;
+}
+
+.hf-footer {
+  transform: translateY(-100%);
+  padding-top: 2px;
+}
+
+/* Durante a edição: área marcada com linha tracejada e o nome, e o texto do corpo esmaecido. */
+.hf.editing {
+  border-color: #6f8fb4;
+  border-style: dashed;
+  border-width: 0;
+}
+
+.hf-header.editing {
+  border-bottom-width: 1px;
+}
+
+.hf-footer.editing {
+  border-top-width: 1px;
+}
+
+.hf-tag {
+  position: absolute;
+  left: 0;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #dbe7f5;
+  color: #2b4c74;
+  font: 10px "Segoe UI", system-ui, sans-serif;
+}
+
+.hf-header .hf-tag {
+  top: 100%;
+  margin-top: 2px;
+}
+
+.hf-footer .hf-tag {
+  bottom: 100%;
+  margin-bottom: 2px;
+}
+
+.hf-note {
+  color: #8a96a3;
+  font-style: italic;
+  font-size: 9pt;
+}
+
+.paper.hf-mode .page {
+  opacity: 0.45;
+}
+
+.paper.hf-mode .hf:not(.editing) {
+  opacity: 0.45;
+}
+
+.hf-editor {
+  min-height: 1.3em;
+  outline: none;
+  caret-color: var(--page-text);
+}
+
+.hf-field {
+  padding: 0 2px;
+  border-radius: 2px;
+  background: #e3e8ee;
+  color: #3c4a58;
+  user-select: all;
+}
+
+.check-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+@media print {
+  .hf-layer {
     display: none;
   }
 }

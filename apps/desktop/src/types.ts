@@ -73,6 +73,15 @@ export interface ParaAttrs {
   cell: CellRef | null;
   /** Imagem do parágrafo (alinhada com o texto); o arquivo vem de `api.media`. */
   image: ImageRef | null;
+  /** Parágrafo do Sumário (título = nível 0); o texto é o do título do documento. */
+  toc: TocEntry | null;
+}
+
+export interface TocEntry {
+  /** 0 = título do sumário; 1 a 6 = nível do título. */
+  level: number;
+  /** Página da última atualização (a tela mostra a calculada na hora). */
+  page: number;
 }
 
 export interface ImageRef {
@@ -99,7 +108,8 @@ export type ParaAttr =
   | { attr: "shading"; value: string | null }
   | { attr: "pageBreakBefore"; value: boolean }
   | { attr: "cell"; value: CellRef | null }
-  | { attr: "image"; value: ImageRef | null };
+  | { attr: "image"; value: ImageRef | null }
+  | { attr: "toc"; value: TocEntry | null };
 
 export const MAX_INDENT = 8;
 
@@ -123,7 +133,27 @@ export interface DocView {
   dirty: boolean;
   /** Papel e margens (aba Layout). */
   page: PageSetup;
+  headerFooter: HeadersFooters;
 }
+
+/** Texto de cabeçalho/rodapé: `{PAGE}` e `{NUMPAGES}` são os campos de número e total de páginas. */
+export interface HeaderFooter {
+  text: string;
+  align: Align;
+}
+
+export interface HeadersFooters {
+  header: HeaderFooter;
+  footer: HeaderFooter;
+  /** "Primeira Página Diferente": nada na primeira página. */
+  differentFirst: boolean;
+}
+
+export const DEFAULT_HEADER_FOOTER: HeadersFooters = {
+  header: { text: "", align: "left" },
+  footer: { text: "", align: "left" },
+  differentFirst: false,
+};
 
 /** Página em twips (1/1440 de polegada), como no Word. */
 export interface PageSetup {
@@ -155,6 +185,7 @@ export type TextCommand =
   | { type: "block.insert"; index: number; text: string; style?: BlockStyle }
   | { type: "block.remove"; block: number }
   | { type: "page.set"; page: PageSetup }
+  | { type: "headerFooter.set"; value: HeadersFooters }
   | { type: "block.setStyle"; block: number; style: BlockStyle }
   | ({ type: "block.setAttr"; block: number } & ParaAttr)
   | { type: "history.undo" }
@@ -174,6 +205,7 @@ export interface ViewPatch {
   title: string;
   dirty: boolean;
   page?: PageSetup;
+  headerFooter?: HeadersFooters;
 }
 
 export interface DispatchResult {
@@ -187,7 +219,7 @@ export function applyPatch(view: DocView, patch: ViewPatch): DocView | null {
   blocks.splice(patch.start, patch.deleteCount, ...patch.blocks);
   if (blocks.length !== patch.blockCount) return null;
   const { canUndo, canRedo, path, title, dirty, format } = patch;
-  return { blocks, canUndo, canRedo, path, title, dirty, format, page: patch.page ?? view.page };
+  return { blocks, canUndo, canRedo, path, title, dirty, format, page: patch.page ?? view.page, headerFooter: patch.headerFooter ?? view.headerFooter };
 }
 
 export interface FormatInfo {

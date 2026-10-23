@@ -297,4 +297,71 @@ mod tests {
             assert!(!back.can_undo(), "{format:?}: abrir não entra no desfazer");
         }
     }
+
+    #[test]
+    fn cabecalho_e_rodape_vao_e_voltam() {
+        use nova_domain_text::{Align, HeaderFooter, HeadersFooters, TextCommand};
+        let mut doc = TextDocument::from_plain_text(1, "corpo");
+        let value = HeadersFooters {
+            header: HeaderFooter {
+                text: "Universidade  Federal\u{b}Relatório".into(),
+                align: Align::Center,
+            },
+            footer: HeaderFooter {
+                text: "Página {PAGE} de {NUMPAGES}".into(),
+                align: Align::Right,
+            },
+            different_first: true,
+        };
+        doc.execute(TextCommand::SetHeaderFooter {
+            value: value.clone(),
+        })
+        .unwrap();
+        for format in [Format::Docx, Format::Odt, Format::Nova] {
+            let bytes = save(&doc, format, "t");
+            let back = open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
+            assert_eq!(back.header_footer(), value, "{format:?}");
+            assert!(!back.can_undo(), "{format:?}");
+        }
+    }
+
+    #[test]
+    fn sumario_vai_e_volta() {
+        use nova_domain_text::{BlockStyle, Paragraph, Span, TocEntry};
+        let para = |text: &str, style: BlockStyle, toc: Option<TocEntry>| {
+            let mut p = Paragraph {
+                style,
+                spans: vec![Span {
+                    text: text.into(),
+                    marks: vec![],
+                }],
+                ..Paragraph::default()
+            };
+            p.attrs.toc = toc;
+            p
+        };
+        let entry = |level, page| Some(TocEntry { level, page });
+        let paragraphs = vec![
+            para("Sumário", BlockStyle::Paragraph, entry(0, 0)),
+            para("Introdução", BlockStyle::Paragraph, entry(1, 2)),
+            para("Objetivos", BlockStyle::Paragraph, entry(2, 3)),
+            para("Conclusão", BlockStyle::Paragraph, entry(1, 7)),
+            para("Introdução", BlockStyle::Heading1, None),
+        ];
+        let doc = TextDocument::from_paragraphs(1, &paragraphs).unwrap();
+        for format in [Format::Docx, Format::Odt, Format::Nova] {
+            let bytes = save(&doc, format, "t");
+            let back = open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
+            let got: Vec<(String, Option<TocEntry>)> = back
+                .paragraphs()
+                .iter()
+                .map(|p| (p.text(), p.attrs.toc))
+                .collect();
+            let want: Vec<(String, Option<TocEntry>)> =
+                paragraphs.iter().map(|p| (p.text(), p.attrs.toc)).collect();
+            assert_eq!(got, want, "{format:?}");
+        }
+        let xml = String::from_utf8_lossy(&save(&doc, Format::Docx, "t")).to_string();
+        assert!(!xml.is_empty());
+    }
 }

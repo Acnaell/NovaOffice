@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ATTRS } from "./formatting";
 import { caret } from "./model";
-import { DEFAULT_PAGE, type BlockView, type DocView } from "./types";
+import { DEFAULT_HEADER_FOOTER, DEFAULT_PAGE, type BlockView, type DocView } from "./types";
 import { countedTexts, textStats } from "./wordcount";
 
 const p = (text: string): BlockView => ({
@@ -19,6 +19,7 @@ const doc = (...texts: string[]): DocView => ({
   dirty: false,
   format: null,
   page: DEFAULT_PAGE,
+  headerFooter: DEFAULT_HEADER_FOOTER,
 });
 
 describe("textStats", () => {

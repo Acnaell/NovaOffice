@@ -22,6 +22,7 @@ pub struct DocView {
     pub dirty: bool,
     /// Papel e margens (aba Layout).
     pub page: nova_domain_text::PageSetup,
+    pub header_footer: nova_domain_text::HeadersFooters,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +56,7 @@ pub struct ViewPatch {
     pub title: String,
     pub dirty: bool,
     pub page: nova_domain_text::PageSetup,
+    pub header_footer: nova_domain_text::HeadersFooters,
 }
 
 /// Faixa de parágrafos alterada, no documento atual: `[start, end)`. Cresce a
@@ -129,7 +131,10 @@ fn dirty_range(events: &[TextEvent]) -> Option<(u32, u32)> {
                 dirty.changed(from.block);
             }
             // Desfazer, refazer e mudar a página devolvem a visão inteira.
-            TextEvent::Undone | TextEvent::Redone | TextEvent::PageSet { .. } => return None,
+            TextEvent::Undone
+            | TextEvent::Redone
+            | TextEvent::PageSet { .. }
+            | TextEvent::HeaderFooterSet { .. } => return None,
         }
     }
     Some(dirty.0.unwrap_or((0, 0)))
@@ -217,6 +222,7 @@ impl Editor {
             title: view.title,
             dirty: view.dirty,
             page: view.page,
+            header_footer: view.header_footer,
         }
     }
 
@@ -241,6 +247,7 @@ impl Editor {
             title: title_of(self.path.as_deref()),
             dirty: self.dirty,
             page: doc.page_setup(),
+            header_footer: doc.header_footer(),
         }
     }
 

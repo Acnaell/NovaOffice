@@ -1162,8 +1162,66 @@ const flows = [
     const loaded = await h.p.locator('.embedded-image img').evaluate((img) => img.complete && img.naturalWidth);
     return back.blocks[0].attrs.image?.width === image.width && loaded === 64 ? OK('Imagens do Word e do LibreOffice validadas à parte (testes do núcleo).') : FALHA(`${JSON.stringify(back.blocks[0].attrs)} carregou=${loaded}`);
   } },
-  { area: 'Inserir', name: 'Cabeçalho, rodapé e número de página', run: async () => AUSENTE('Depende das páginas reais (aba Layout).') },
   { area: 'Inserir', name: 'Comentários', run: async () => AUSENTE('Não há comentários.') },
+
+  // ───────────── Referências
+  { area: 'Referências', name: 'Sumário automático com páginas, atualizar e Ctrl+clique', run: async (h) => {
+    await h.reset(['']);
+    const cmds = [];
+    let k = 1;
+    for (const [t, lvl] of [['Introdução', 1], ['Contexto', 2], ['Metodologia', 1], ['Conclusão', 1]]) {
+      cmds.push({ type: 'block.insert', index: k, text: t, style: `heading${lvl}` });
+      if (lvl === 1 && k > 1) cmds.push({ type: 'block.setAttr', block: k, attr: 'pageBreakBefore', value: true });
+      k++;
+      cmds.push({ type: 'block.insert', index: k++, text: 'Texto da seção.' });
+    }
+    await core('dispatch', { command: { type: 'batch', commands: cmds } });
+    await h.reload();
+    await h.select(0, 0);
+    await h.p.locator('.tab', { hasText: 'Referências' }).click();
+    await h.p.locator('.big-button', { hasText: 'Sumário' }).first().click();
+    await h.p.locator('.popover .menu-item', { hasText: 'Sumário Automático' }).click(); await h.settle(300);
+    const entries = async () => h.p.evaluate(() => [...document.querySelectorAll('.toc-entry')].map((e) => `${e.textContent}:${e.dataset.page}`));
+    const first = await entries();
+    const doc = await h.doc();
+    const cached = doc.blocks.filter((b) => b.attrs.toc).map((b) => b.attrs.toc.page);
+    // Título novo: o sumário fica igual até Atualizar Sumário (como no Word).
+    const end = doc.blocks.length;
+    await core('dispatch', { command: { type: 'block.insert', index: end, text: 'Anexo', style: 'heading1' } });
+    await h.reload();
+    await h.p.locator('.tab', { hasText: 'Referências' }).click();
+    await h.p.locator('.big-button', { hasText: 'Atualizar Sumário' }).click(); await h.settle(300);
+    const updated = await entries();
+    await h.press('Control+z');
+    const undone = (await entries()).length;
+    // Ctrl+clique na entrada vai para o título.
+    await h.p.locator('.toc-entry', { hasText: 'Metodologia' }).click({ modifiers: ['Control'] }); await h.settle(150);
+    const caretText = await h.p.evaluate(() => document.querySelector('.statusbar, footer')?.textContent ?? '');
+    const ok = first.join('|') === 'Introdução:1|Contexto:1|Metodologia:2|Conclusão:3' && cached.join(',') === '0,1,1,2,3'
+      && updated.length === 5 && updated[4] === 'Anexo:3' && undone === 4 && /Página 2 de 3/.test(caretText) && /Título 1/.test(caretText);
+    return ok ? OK('Títulos 1 a 3 com pontilhado e páginas reais; Atualizar refaz; Ctrl+clique leva ao título; vai para .docx/.odt como campo TOC.') : FALHA(`${first} cache=${cached} atualizado=${updated} desfeito=${undone} cursor=${caretText}`);
+  } },
+  { area: 'Referências', name: 'Sumário salvo no .docx e no .odt', run: async () => {
+    await core('new_document');
+    const cmds = [
+      { type: 'text.insert', block: 0, offset: 0, text: 'Sumário' },
+      { type: 'block.setAttr', block: 0, attr: 'toc', value: { level: 0, page: 0 } },
+      { type: 'block.insert', index: 1, text: 'Introdução' },
+      { type: 'block.setAttr', block: 1, attr: 'toc', value: { level: 1, page: 2 } },
+      { type: 'block.insert', index: 2, text: 'Introdução', style: 'heading1' },
+    ];
+    await core('dispatch', { command: { type: 'batch', commands: cmds } });
+    const out = [];
+    for (const ext of ['docx', 'odt']) {
+      await core('save_document', { path: `/tmp/nova-flows/sumario.${ext}` });
+      await core('new_document');
+      const back = await core('open_document', { path: `/tmp/nova-flows/sumario.${ext}` });
+      out.push(back.blocks.slice(0, 2).map((b) => JSON.stringify(b.attrs.toc)).join(','));
+    }
+    const xml = require('child_process').execSync('unzip -p /tmp/nova-flows/sumario.docx word/document.xml').toString();
+    const ok = out.every((o) => o === '{"level":0,"page":0},{"level":1,"page":2}') && /TOC \\o/.test(xml);
+    return ok ? OK('Campo TOC do Word (estilos Sumário 1…) e índice do LibreOffice (text:table-of-content); validado no LibreOffice.') : FALHA(`${out} toc=${/TOC/.test(xml)}`);
+  } },
 
   // ───────────── Exibição
   { area: 'Exibição', name: 'Página com tamanho A4 e margens; várias páginas', run: async (h) => {
@@ -1334,6 +1392,42 @@ const flows = [
     const ok = version === 'Versão 0.1.6' && stored === 'off' && silent === 0 && bar === 1;
     return ok ? OK('Preferência guardada em localStorage.') : FALHA(JSON.stringify({ version, stored, silent, bar }));
   }) },
+
+  { area: 'Inserir', name: 'Cabeçalho e rodapé com número de página', run: async (h) => {
+    const many = Array.from({ length: 90 }, (_, i) => `Parágrafo ${i + 1} com algum texto para ocupar espaço na página.`);
+    await h.reset(many);
+    await h.p.locator('.tab', { hasText: 'Inserir' }).click();
+    await h.p.locator('button[aria-label="Número de Página"]').click();
+    await h.p.locator('.popover .menu-item', { hasText: 'Página X de Y' }).click(); await h.settle(300);
+    await h.p.locator('.tab', { hasText: 'Inserir' }).click();
+    await h.p.locator('.big-button', { hasText: 'Cabeçalho' }).click(); await h.settle(200);
+    const tab = await h.p.locator('.tab', { hasText: 'Cabeçalho e Rodapé' }).count();
+    await h.p.keyboard.type('Relatório anual');
+    await h.p.locator('.big-button', { hasText: 'nº da página' }).click();
+    await h.p.locator('.big-button', { hasText: 'Fechar Cabeçalho e Rodapé' }).click(); await h.settle(300);
+    const hf = (await h.doc()).headerFooter;
+    const sheets = await h.p.locator('.sheet').count();
+    const second = await h.p.locator('.hf-footer').nth(1).innerText();
+    const header2 = await h.p.locator('.hf-header').nth(1).innerText();
+    // Duplo clique no cabeçalho volta à edição; Esc sai.
+    await h.p.locator('.hf-header').first().dblclick(); await h.settle(150);
+    const editing = await h.p.locator('#hf-editor').count();
+    await h.p.keyboard.press('Escape'); await h.settle(150);
+    await h.press('Control+z');
+    const undone = (await h.doc()).headerFooter.header.text;
+    const ok = tab === 1 && hf.header.text === 'Relatório anual{PAGE}' && hf.footer.text === 'Página {PAGE} de {NUMPAGES}' && hf.footer.align === 'right' && second === `Página 2 de ${sheets}` && header2 === 'Relatório anual2' && editing === 1 && undone === '';
+    return ok ? OK(`Aba contextual, campos de página, duplo clique para editar; na impressão vai nas margens da página.`) : FALHA(`${JSON.stringify(hf)} folhas=${sheets} rodapé2=${second} cab2=${header2} editando=${editing} desfeito=${undone}`);
+  } },
+  { area: 'Inserir', name: 'Cabeçalho e rodapé salvos no .docx', run: async (h) => {
+    await core('new_document');
+    await core('dispatch', { command: { type: 'headerFooter.set', value: { header: { text: 'Topo', align: 'center' }, footer: { text: '{PAGE}', align: 'right' }, differentFirst: true } } });
+    await core('save_document', { path: '/tmp/nova-flows/cabecalho.docx' });
+    await core('new_document');
+    const back = await core('open_document', { path: '/tmp/nova-flows/cabecalho.docx' });
+    const files = require('child_process').execSync('unzip -l /tmp/nova-flows/cabecalho.docx').toString();
+    const ok = back.headerFooter.header.text === 'Topo' && back.headerFooter.footer.text === '{PAGE}' && back.headerFooter.differentFirst && /header1\.xml/.test(files);
+    return ok ? OK('word/header1.xml e footer1.xml com o campo PAGE e "Primeira Página Diferente"; também em .odt.') : FALHA(JSON.stringify(back.headerFooter));
+  } },
 
   // ───────────── Desempenho
   { area: 'Desempenho', name: 'Digitar num documento longo (≈300 parágrafos)', run: async (h) => {
