@@ -32,6 +32,45 @@ Cada aplicativo tem sua forma e sua cor no símbolo da NovaOffice.
   </tr>
 </table>
 
+## Nova Text hoje
+
+Capturas da versão atual. O documento de exemplo usa Sumário automático, tabela, cabeçalho e rodapé.
+
+<p align="center">
+  <img src="docs/images/nova-text/documento.png" alt="Nova Text com um trabalho acadêmico: título, Sumário automático com pontilhado e números de página" width="880">
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/nova-text/inicio.png" alt="Tela inicial da NovaOffice com os aplicativos e o documento em branco"><br><sub><b>Tela inicial:</b> os aplicativos da suíte, novo documento e recentes.</sub></td>
+    <td width="50%"><img src="docs/images/nova-text/tabela-cabecalho.png" alt="Página com cabeçalho, títulos, parágrafos e uma tabela"><br><sub><b>Páginas reais:</b> cabeçalho e rodapé, tabelas e a aba Inserir.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/nova-text/revisao.png" alt="Painel Ortografia com uma palavra errada sublinhada e sugestões"><br><sub><b>Revisão:</b> corretor ortográfico em português com o painel Ortografia (F7).</sub></td>
+    <td width="50%"><img src="docs/images/nova-text/escuro.png" alt="Nova Text no tema escuro"><br><sub><b>Tema escuro:</b> a interface escurece e a página continua branca, como papel.</sub></td>
+  </tr>
+</table>
+
+## Próximos aplicativos (conceitos)
+
+Imagens conceituais de como os outros aplicativos devem ficar, no mesmo visual do Nova Text.
+Ainda não existem: servem para guiar o desenho e a discussão.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/conceitos/nova-sheets.png" alt="Conceito do Nova Sheets: planilha de orçamento com gráfico de colunas"><br><sub><b>Nova Sheets:</b> planilhas, fórmulas e gráficos.</sub></td>
+    <td width="50%"><img src="docs/images/conceitos/nova-slides.png" alt="Conceito do Nova Slides: slide com tópicos e gráfico, miniaturas à esquerda"><br><sub><b>Nova Slides:</b> apresentações com miniaturas e anotações.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/conceitos/nova-draw.png" alt="Conceito do Nova Draw: fluxograma com formas e painel de propriedades"><br><sub><b>Nova Draw:</b> desenho vetorial e diagramas.</sub></td>
+    <td width="50%"><img src="docs/images/conceitos/nova-base.png" alt="Conceito do Nova Base: tabela de clientes em folha de dados"><br><sub><b>Nova Base:</b> banco de dados com tabelas, consultas, formulários e relatórios.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/conceitos/nova-math.png" alt="Conceito do Nova Math: fórmula de Bhaskara e integral de Gauss"><br><sub><b>Nova Math:</b> editor de fórmulas com a sintaxe do LibreOffice Math.</sub></td>
+    <td width="50%"><img src="docs/images/conceitos/nova-mail.png" alt="Conceito do Nova Mail: caixa de entrada unificada com três contas"><br><sub><b>Nova Mail:</b> uma caixa de entrada para Gmail, Outlook e outras contas (<a href="docs/nova-mail/VISAO.md">visão</a>).</sub></td>
+  </tr>
+</table>
+
 ## Baixar
 
 Os instaladores ficam na página de [Releases](https://github.com/Acnaell/novaoffice/releases/latest).
