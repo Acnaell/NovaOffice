@@ -51,6 +51,7 @@ import {
 import { Ribbon, type RibbonCommand } from "./Ribbon";
 import { SaveChangesDialog, type SaveChoice } from "./SaveDialog";
 import { DateTimeDialog, LinkDialog, MarginsDialog, type LinkRequest } from "./Insert";
+import { insertFieldAtCaret, NUMPAGES_FIELD, PAGE_FIELD, type Part } from "./headerfooter";
 import { deleteColumns, deleteRows, deleteTable, insertColumn, insertRow, insertTable } from "./tables";
 import { fileToBase64, insertImage, resizeImage, setImage, TEXT_WIDTH_PT } from "./images";
 import { defaultProofing, matchAt, matchText, parseProofing, SPELL_LANGUAGES, useSpelling, type Proofing } from "./spell";
@@ -64,7 +65,7 @@ import { SpellMenu } from "./SpellMenu";
 import { load, store } from "./storage";
 import { matchShortcut, profileFor } from "./shortcuts";
 import { useTheme } from "./theme";
-import { applyPatch, DEFAULT_PAGE, type BlockStyle, type PageSetup, type DocView, type FileFormat, type Recent, type RecoveryInfo, type HighlightColor, type Mark, type MarkKind, type ParaAttr, type TextCommand, type ToggleMark } from "./types";
+import { applyPatch, DEFAULT_HEADER_FOOTER, DEFAULT_PAGE, type HeadersFooters, type BlockStyle, type PageSetup, type DocView, type FileFormat, type Recent, type RecoveryInfo, type HighlightColor, type Mark, type MarkKind, type ParaAttr, type TextCommand, type ToggleMark } from "./types";
 import { AboutPage, ReleaseNotesDialog, UpdateBar, useUpdates } from "./UpdateBar";
 import { updateApi } from "./update";
 
@@ -86,7 +87,7 @@ const PARAGRAPH_SPACE = 12;
 /** Intervalo da recuperação automática (o Word usa 10 min; aqui é mais curto). */
 const AUTOSAVE_MS = 60_000;
 
-const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false, format: null, page: DEFAULT_PAGE };
+const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER };
 
 /** Idioma de revisão escolhido na barra de status (sem escolha, segue o da interface). */
 const PROOFING_KEY = "nova.proofing";
@@ -457,6 +458,64 @@ export default function App() {
     });
 
   /** Aba Layout: papel, margens e orientação (um passo de desfazer). */
+  // ---------- Cabeçalho e rodapé ----------
+
+  // Durante a edição, o texto fica num rascunho; vai para o documento ao sair
+  // (ou ao usar um botão da aba), num passo de desfazer.
+  const [hfEditing, setHfEditing] = useState<{ part: Part; page: number } | null>(null);
+  const [hfDraft, setHfDraft] = useState<HeadersFooters | null>(null);
+  const hfDraftRef = useRef(hfDraft);
+  hfDraftRef.current = hfDraft;
+
+  const commitHeaderFooter = useCallback(
+    (value: HeadersFooters | null = hfDraftRef.current) => {
+      const current = stateRef.current;
+      if (!value || !current || JSON.stringify(value) === JSON.stringify(current.view.headerFooter)) return;
+      runCommand({ type: "headerFooter.set", value });
+    },
+    [runCommand],
+  );
+
+  const editHeaderFooter = useCallback(
+    (part: Part, page = 0) => {
+      const base = hfDraftRef.current ?? stateRef.current?.view.headerFooter ?? DEFAULT_HEADER_FOOTER;
+      commitHeaderFooter(base);
+      setHfDraft(base);
+      // Com "Primeira Página Diferente", edita a segunda página (a primeira fica vazia).
+      setHfEditing({ part, page: base.differentFirst && page === 0 && pageInfo.pages > 1 ? 1 : page });
+    },
+    [commitHeaderFooter, pageInfo.pages],
+  );
+
+  const closeHeaderFooter = useCallback(() => {
+    commitHeaderFooter();
+    setHfEditing(null);
+    setHfDraft(null);
+    setTimeout(focusEditor, 0);
+  }, [commitHeaderFooter, focusEditor]);
+
+  /** Muda o rascunho (ou, fora da edição, o documento direto). */
+  const updateHeaderFooter = (change: (hf: HeadersFooters) => HeadersFooters) => {
+    const base = hfDraftRef.current ?? stateRef.current?.view.headerFooter ?? DEFAULT_HEADER_FOOTER;
+    const next = change(base);
+    if (hfEditing) {
+      setHfDraft(next);
+      commitHeaderFooter(next);
+    } else {
+      commitHeaderFooter(next);
+    }
+  };
+
+  /** Inserir → Número de Página: posição pronta (no cabeçalho ou no rodapé). */
+  const pageNumberAt = (part: Part, align: "left" | "center" | "right", xOfY = false) =>
+    updateHeaderFooter((hf) => ({ ...hf, [part]: { text: xOfY ? t("hf.pageXofYText") : PAGE_FIELD, align } }));
+
+  const removePageNumbers = () =>
+    updateHeaderFooter((hf) => {
+      const strip = (text: string) => text.split(PAGE_FIELD).join("").split(NUMPAGES_FIELD).join("").replace(/^(Página|Page)\s*(de|of)?\s*$/i, "").trim();
+      return { ...hf, header: { ...hf.header, text: strip(hf.header.text) }, footer: { ...hf.footer, text: strip(hf.footer.text) } };
+    });
+
   const setPage = useCallback(
     (page: PageSetup) => {
       focusEditor();
@@ -1192,6 +1251,20 @@ export default function App() {
         }}
         inTable={!!view.blocks[selection.focus.block]?.attrs.cell}
         onImage={!!view.blocks[selection.focus.block]?.attrs.image}
+        hfEditing={hfEditing?.part ?? null}
+        headerFooter={hfDraft ?? view.headerFooter}
+        onEditHeaderFooter={(part) => editHeaderFooter(part)}
+        onCloseHeaderFooter={closeHeaderFooter}
+        onPageNumber={pageNumberAt}
+        onRemovePageNumbers={removePageNumbers}
+        onHeaderFooterAlign={(align) => hfEditing && updateHeaderFooter((hf) => ({ ...hf, [hfEditing.part]: { ...hf[hfEditing.part], align } }))}
+        onDifferentFirst={() => {
+          const on = !(hfDraftRef.current ?? view.headerFooter).differentFirst;
+          updateHeaderFooter((hf) => ({ ...hf, differentFirst: on }));
+          // A primeira página fica vazia: a edição passa para a segunda.
+          if (on && hfEditing?.page === 0 && pageInfo.pages > 1) setHfEditing({ ...hfEditing, page: 1 });
+        }}
+        onInsertField={(field) => insertFieldAtCaret(field, t(field === PAGE_FIELD ? "hf.pageField" : "hf.pagesField"))}
         page={view.page}
         onPage={setPage}
         onCustomMargins={() => setMarginsDialog(true)}
@@ -1230,6 +1303,11 @@ export default function App() {
             onPointerUp={onPointerUp}
             onOpenLink={openLink}
             onPageInfo={(info) => setPageInfo((p) => (p.pages === info.pages && p.current === info.current ? p : info))}
+            headerFooter={hfDraft ?? view.headerFooter}
+            hfEditing={hfEditing}
+            onHfEdit={editHeaderFooter}
+            onHfChange={(part, value) => setHfDraft((d) => ({ ...(d ?? view.headerFooter), [part]: value }))}
+            onHfClose={closeHeaderFooter}
             onPasteImage={pasteImage}
             onEscape={() => {
               if (painter) setPainter(null);

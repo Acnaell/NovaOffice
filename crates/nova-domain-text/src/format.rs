@@ -290,7 +290,7 @@ pub enum Align {
 }
 
 impl Align {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Align::Left => "left",
             Align::Center => "center",
@@ -299,7 +299,7 @@ impl Align {
         }
     }
 
-    fn parse(value: &str) -> Align {
+    pub(crate) fn parse(value: &str) -> Align {
         match value {
             "center" => Align::Center,
             "right" => Align::Right,

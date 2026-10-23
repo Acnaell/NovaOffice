@@ -325,6 +325,26 @@ export const icons = {
       <path d="M16.5 11.5s1.5 1.8 1.5 2.8a1.5 1.5 0 0 1-3 0c0-1 1.5-2.8 1.5-2.8z" />
     </Icon>
   ),
+  header: (
+    <Icon>
+      <path d="M4.5 2.5h11v15h-11z" />
+      <path d="M6.5 5h7" strokeWidth="2.5" />
+      <path d="M6.5 9h7M6.5 11.5h7M6.5 14h5" opacity="0.5" />
+    </Icon>
+  ),
+  footer: (
+    <Icon>
+      <path d="M4.5 2.5h11v15h-11z" />
+      <path d="M6.5 15h7" strokeWidth="2.5" />
+      <path d="M6.5 6h7M6.5 8.5h7M6.5 11h5" opacity="0.5" />
+    </Icon>
+  ),
+  pageNumber: (
+    <Icon>
+      <path d="M4.5 2.5h11v15h-11z" />
+      <path d="M11 11.5h1.5v4M11 15.5h3" />
+    </Icon>
+  ),
   margins: (
     <Icon>
       <path d="M4.5 2.5h11v15h-11z" />

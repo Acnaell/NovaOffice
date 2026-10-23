@@ -11,6 +11,7 @@ import type { Match } from "./find";
 import { autoLink, autoList, changeIndent, isDark, linkOf, listMarkers } from "./formatting";
 import { moveToCell, tableGrid } from "./tables";
 import { paginate, unpaginate, type PageInfo } from "./paginate";
+import { HeaderFooterLayer, splitFields, type Part } from "./headerfooter";
 import {
   blockText,
   deleteBackward,
@@ -29,7 +30,7 @@ import {
 } from "./model";
 import { useI18n } from "./i18n";
 import { matchShortcut, type CommandId, type Profile } from "./shortcuts";
-import type { BlockView, DocView, ImageRef, Mark, ParaAttrs, Pos } from "./types";
+import type { BlockView, DocView, HeaderFooter, HeadersFooters, ImageRef, Mark, ParaAttrs, Pos } from "./types";
 
 export type EditFn = (doc: DocView, sel: Selection) => Edit | null;
 
@@ -61,7 +62,36 @@ interface Props {
   onPasteImage: (file: File) => void;
   /** Página do cursor e total de páginas, para a barra de status. */
   onPageInfo: (info: PageInfo) => void;
+  /** Cabeçalho e rodapé mostrados (o rascunho, durante a edição). */
+  headerFooter: HeadersFooters;
+  hfEditing: { part: Part; page: number } | null;
+  onHfEdit: (part: Part, page: number) => void;
+  onHfChange: (part: Part, value: HeaderFooter) => void;
+  onHfClose: () => void;
 }
+
+/** Distância do cabeçalho e do rodapé à borda do papel: 1,25 cm (708 twips), o padrão do Word. */
+const HEADER_DISTANCE = 708;
+
+/**
+ * Cabeçalho e rodapé na impressão: caixas de margem do @page (Chromium/WebView2),
+ * com os contadores de página do CSS no lugar dos campos.
+ */
+function printBoxes(hf: HeadersFooters, blank = false): string {
+  const box = (part: "top" | "bottom", value: HeaderFooter) => {
+    const where = value.align === "center" ? "center" : value.align === "right" ? "right" : "left";
+    const content = blank
+      ? "none"
+      : splitFields(value.text)
+          .map((p) => (p.field === "{PAGE}" ? "counter(page)" : p.field ? "counter(pages)" : cssString(p.text!)))
+          .join(" ") || "none";
+    return `@${part}-${where} { content: ${content}; white-space: pre-wrap; font: 11pt Calibri, Carlito, sans-serif; vertical-align: ${part === "top" ? "bottom" : "top"}; }`;
+  };
+  return `${hf.header.text ? box("top", hf.header) : ""} ${hf.footer.text ? box("bottom", hf.footer) : ""}`;
+}
+
+/** Texto como string do CSS: aspas e barras escapadas, quebra de linha como \A. */
+const cssString = (text: string) => `"${text.replace(/[\\"]/g, (c) => `\\${c}`).replace(/\u000B/g, "\\A ")}"`;
 
 /** Intervalo entre as folhas na tela, em px. */
 const SHEET_GAP = 24;
@@ -130,8 +160,10 @@ export function Editor(props: Props) {
       document.head.appendChild(style);
     }
     const pt = (twips: number) => `${twips / 20}pt`;
-    style.textContent = `@page { size: ${pt(page.width)} ${pt(page.height)}; margin: ${pt(page.marginTop)} ${pt(page.marginRight)} ${pt(page.marginBottom)} ${pt(page.marginLeft)}; }`;
-  }, [page]);
+    style.textContent = `@page { size: ${pt(page.width)} ${pt(page.height)}; margin: ${pt(page.marginTop)} ${pt(page.marginRight)} ${pt(page.marginBottom)} ${pt(page.marginLeft)}; ${printBoxes(props.headerFooter)} }${
+      props.headerFooter.differentFirst ? ` @page :first { ${printBoxes(props.headerFooter, true)} }` : ""
+    }`;
+  }, [page, props.headerFooter]);
 
   // Imagem com o cursor no parágrafo dela: contorno e alça de tamanho.
   useLayoutEffect(() => {
@@ -490,7 +522,7 @@ export function Editor(props: Props) {
   }, []);
 
   return (
-    <div className="paper" style={{ width: `${px(page.width)}px` }}>
+    <div className={`paper${props.hfEditing ? " hf-mode" : ""}`} style={{ width: `${px(page.width)}px` }}>
       <div className="sheets" aria-hidden="true">
         {Array.from({ length: pages }, (_, k) => (
           <div key={k} className="sheet" style={{ top: `${k * (px(page.height) + SHEET_GAP)}px`, height: `${px(page.height)}px` }} />
@@ -518,6 +550,19 @@ export function Editor(props: Props) {
         labels={labels}
       />
     </div>
+      <HeaderFooterLayer
+        value={props.headerFooter}
+        pages={pages}
+        pageHeight={px(page.height)}
+        gap={SHEET_GAP}
+        distance={px(HEADER_DISTANCE)}
+        marginLeft={px(page.marginLeft)}
+        marginRight={px(page.marginRight)}
+        editing={props.hfEditing}
+        onEdit={props.onHfEdit}
+        onChange={props.onHfChange}
+        onClose={props.onHfClose}
+      />
     </div>
   );
 }

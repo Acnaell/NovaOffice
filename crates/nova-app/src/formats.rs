@@ -297,4 +297,31 @@ mod tests {
             assert!(!back.can_undo(), "{format:?}: abrir não entra no desfazer");
         }
     }
+
+    #[test]
+    fn cabecalho_e_rodape_vao_e_voltam() {
+        use nova_domain_text::{Align, HeaderFooter, HeadersFooters, TextCommand};
+        let mut doc = TextDocument::from_plain_text(1, "corpo");
+        let value = HeadersFooters {
+            header: HeaderFooter {
+                text: "Universidade  Federal\u{b}Relatório".into(),
+                align: Align::Center,
+            },
+            footer: HeaderFooter {
+                text: "Página {PAGE} de {NUMPAGES}".into(),
+                align: Align::Right,
+            },
+            different_first: true,
+        };
+        doc.execute(TextCommand::SetHeaderFooter {
+            value: value.clone(),
+        })
+        .unwrap();
+        for format in [Format::Docx, Format::Odt, Format::Nova] {
+            let bytes = save(&doc, format, "t");
+            let back = open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
+            assert_eq!(back.header_footer(), value, "{format:?}");
+            assert!(!back.can_undo(), "{format:?}");
+        }
+    }
 }

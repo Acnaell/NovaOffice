@@ -966,3 +966,40 @@ fn pagina_e_margens() {
     doc.execute(serde_json::from_str(json).unwrap()).unwrap();
     assert_eq!(doc.page_setup().width, 12240);
 }
+
+#[test]
+fn cabecalho_e_rodape() {
+    let mut doc = TextDocument::new(1);
+    assert_eq!(doc.header_footer(), HeadersFooters::default());
+    let value = HeadersFooters {
+        header: HeaderFooter {
+            text: "Relatório final".into(),
+            align: Align::Center,
+        },
+        footer: HeaderFooter {
+            text: "Página {PAGE} de {NUMPAGES}".into(),
+            align: Align::Right,
+        },
+        different_first: true,
+    };
+    doc.execute(TextCommand::SetHeaderFooter {
+        value: value.clone(),
+    })
+    .unwrap();
+    assert_eq!(doc.header_footer(), value);
+    doc.execute(TextCommand::Undo).unwrap();
+    assert_eq!(doc.header_footer(), HeadersFooters::default());
+    let json = r#"{"type":"headerFooter.set","value":{"header":{"text":"{PAGE}","align":"right"},"footer":{"text":"","align":"left"},"differentFirst":false}}"#;
+    doc.execute(serde_json::from_str(json).unwrap()).unwrap();
+    assert_eq!(doc.header_footer().header.text, "{PAGE}");
+    let bad = HeadersFooters {
+        header: HeaderFooter {
+            text: "duas\nlinhas".into(),
+            align: Align::Left,
+        },
+        ..HeadersFooters::default()
+    };
+    assert!(doc
+        .execute(TextCommand::SetHeaderFooter { value: bad })
+        .is_err());
+}

@@ -46,7 +46,45 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         .enumerate()
         .map(|(i, (_, mime, _))| format!("media/image{}.{}", i + 1, crate::media::extension(mime)))
         .collect();
-    let files: [(&str, String); 8] = [
+    // Cabeçalho e rodapé: partes próprias, referenciadas no w:sectPr.
+    let hf = doc.header_footer();
+    let mut body = body;
+    let mut extra_rels = String::new();
+    let mut extra_types = String::new();
+    let mut extra_files: Vec<(&str, String)> = Vec::new();
+    let mut refs = String::new();
+    for (kind, part, value) in [
+        ("header", "header1.xml", &hf.header),
+        ("footer", "footer1.xml", &hf.footer),
+    ] {
+        if value.text.is_empty() {
+            continue;
+        }
+        let tag = if kind == "header" { "hdr" } else { "ftr" };
+        let id = if kind == "header" { "rIdHdr" } else { "rIdFtr" };
+        extra_files.push((
+            if kind == "header" {
+                "word/header1.xml"
+            } else {
+                "word/footer1.xml"
+            },
+            header_footer_xml(tag, value),
+        ));
+        extra_rels.push_str(&format!(
+            r#"<Relationship Id="{id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}" Target="{part}"/>"#
+        ));
+        extra_types.push_str(&format!(
+            r#"<Override PartName="/word/{part}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml"/>"#
+        ));
+        refs.push_str(&format!(
+            r#"<w:{kind}Reference w:type="default" r:id="{id}"/>"#
+        ));
+    }
+    body = body.replacen("<w:sectPr>", &format!("<w:sectPr>{refs}"), 1);
+    if hf.different_first {
+        body = body.replacen("</w:sectPr>", "<w:titlePg/></w:sectPr>", 1);
+    }
+    let mut files: Vec<(&str, String)> = vec![
         ("[Content_Types].xml", CONTENT_TYPES.to_string()),
         ("_rels/.rels", ROOT_RELS.to_string()),
         ("docProps/app.xml", APP_XML.to_string()),
@@ -59,6 +97,19 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         ("word/styles.xml", STYLES_XML.to_string()),
         ("word/numbering.xml", numbering_xml(&nums)),
     ];
+    files.extend(extra_files);
+    for (name, content) in files.iter_mut() {
+        if *name == "word/_rels/document.xml.rels" {
+            *content = content.replacen(
+                "</Relationships>",
+                &format!("{extra_rels}</Relationships>"),
+                1,
+            );
+        }
+        if *name == "[Content_Types].xml" {
+            *content = content.replacen("</Types>", &format!("{extra_types}</Types>"), 1);
+        }
+    }
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     for (name, content) in files {
@@ -73,6 +124,160 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         zip.write_all(data).expect("zip em memória");
     }
     zip.finish().expect("zip em memória").into_inner()
+}
+
+/// `w:hdr`/`w:ftr` com um parágrafo: texto, quebras de linha e os campos PAGE e NUMPAGES.
+fn header_footer_xml(tag: &str, value: &nova_domain_text::HeaderFooter) -> String {
+    let mut out = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{tag} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:p>"#
+    );
+    let jc = match value.align {
+        Align::Center => "center",
+        Align::Right => "right",
+        Align::Justify => "both",
+        Align::Left => "",
+    };
+    if !jc.is_empty() {
+        out.push_str(&format!(r#"<w:pPr><w:jc w:val="{jc}"/></w:pPr>"#));
+    }
+    let mut rest = value.text.as_str();
+    while !rest.is_empty() {
+        let next = [
+            nova_domain_text::PAGE_FIELD,
+            nova_domain_text::NUMPAGES_FIELD,
+        ]
+        .iter()
+        .filter_map(|f| rest.find(f).map(|i| (i, *f)))
+        .min();
+        let (text, field) = match next {
+            Some((i, f)) => (&rest[..i], Some(f)),
+            None => (rest, None),
+        };
+        for (n, line) in text.split('\u{b}').enumerate() {
+            if n > 0 {
+                out.push_str("<w:r><w:br/></w:r>");
+            }
+            if !line.is_empty() {
+                out.push_str(&format!(
+                    r#"<w:r><w:t xml:space="preserve">{}</w:t></w:r>"#,
+                    esc(line)
+                ));
+            }
+        }
+        match field {
+            Some(f) => {
+                let instr = if f == nova_domain_text::PAGE_FIELD {
+                    "PAGE"
+                } else {
+                    "NUMPAGES"
+                };
+                out.push_str(&format!(
+                    r#"<w:fldSimple w:instr=" {instr} \* MERGEFORMAT "><w:r><w:t>1</w:t></w:r></w:fldSimple>"#
+                ));
+                rest = &rest[text.len() + f.len()..];
+            }
+            None => rest = "",
+        }
+    }
+    out.push_str(&format!("</w:p></w:{tag}>"));
+    out
+}
+
+/// Texto de um `w:hdr`/`w:ftr`: parágrafos unidos por quebra de linha, campos
+/// PAGE e NUMPAGES (simples ou complexos) viram `{PAGE}` e `{NUMPAGES}`.
+fn read_header_footer(xml: &str) -> nova_domain_text::HeaderFooter {
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+    let mut text = String::new();
+    let mut align: Option<Align> = None;
+    let (mut in_t, mut in_instr, mut paragraphs) = (false, false, 0);
+    // Campo complexo: 0 = fora, 1 = lendo a instrução, 2 = resultado (ignorado).
+    let mut field = 0;
+    let mut instr = String::new();
+    let mut simple_depth = 0u32;
+    let field_token = |instr: &str| {
+        let upper = instr.trim().to_uppercase();
+        if upper.starts_with("NUMPAGES") {
+            Some(nova_domain_text::NUMPAGES_FIELD)
+        } else if upper.starts_with("PAGE") {
+            Some(nova_domain_text::PAGE_FIELD)
+        } else {
+            None
+        }
+    };
+    loop {
+        match reader.read_event_into(&mut buf) {
+            // <w:fldSimple …/> sem resultado: só o campo.
+            Ok(Event::Empty(e)) if e.local_name().as_ref() == b"fldSimple" => {
+                if let Some(token) = attr(&e, b"instr").as_deref().and_then(field_token) {
+                    text.push_str(token);
+                }
+            }
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => match e.local_name().as_ref() {
+                b"p" => {
+                    if paragraphs > 0 && !text.is_empty() {
+                        text.push('\u{b}');
+                    }
+                    paragraphs += 1;
+                }
+                b"jc" if align.is_none() => {
+                    align = Some(match attr(&e, b"val").as_deref() {
+                        Some("center") => Align::Center,
+                        Some("right" | "end") => Align::Right,
+                        Some("both") => Align::Justify,
+                        _ => Align::Left,
+                    })
+                }
+                b"fldSimple" => {
+                    if let Some(token) = attr(&e, b"instr").as_deref().and_then(field_token) {
+                        text.push_str(token);
+                    }
+                    simple_depth += 1;
+                }
+                b"fldChar" => match attr(&e, b"fldCharType").as_deref() {
+                    Some("begin") => {
+                        field = 1;
+                        instr.clear();
+                    }
+                    Some("separate") => {
+                        if let Some(token) = field_token(&instr) {
+                            text.push_str(token);
+                        }
+                        field = 2;
+                    }
+                    Some("end") => field = 0,
+                    _ => {}
+                },
+                b"instrText" => in_instr = true,
+                b"t" => in_t = true,
+                b"tab" => text.push('\t'),
+                b"br" => text.push('\u{b}'),
+                _ => {}
+            },
+            Ok(Event::Text(t)) => {
+                let value = t.unescape().map(|v| v.into_owned()).unwrap_or_default();
+                if in_instr {
+                    instr.push_str(&value);
+                } else if in_t && field == 0 && simple_depth == 0 {
+                    text.push_str(&value);
+                }
+            }
+            Ok(Event::End(e)) => match e.local_name().as_ref() {
+                b"t" => in_t = false,
+                b"instrText" => in_instr = false,
+                b"fldSimple" => simple_depth = simple_depth.saturating_sub(1),
+                _ => {}
+            },
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let text: String = text.chars().take(1000).collect();
+    nova_domain_text::HeaderFooter {
+        text: text.trim_end_matches('\u{b}').to_string(),
+        align: align.unwrap_or_default(),
+    }
 }
 
 /// Pontos → EMU (unidade do DrawingML).
@@ -551,13 +756,16 @@ const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media, page) = read_document(bytes)?;
+    let (paragraphs, media, page, header_footer) = read_document(bytes)?;
     let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
         doc.put_media(&id, &mime, &data)?;
     }
     if let Some(page) = page.filter(|p| p.validate().is_ok()) {
         doc.load_page_setup(page)?;
+    }
+    if header_footer != Default::default() && header_footer.validate().is_ok() {
+        doc.load_header_footer(header_footer)?;
     }
     Ok(doc)
 }
@@ -853,6 +1061,11 @@ fn read_styles(xml: &str) -> Styles {
     }
 }
 
+/// `<w:titlePg/>` liga; `w:val="0"` desliga.
+fn toggle_on(e: &BytesStart) -> bool {
+    !matches!(attr(e, b"val").as_deref(), Some("0" | "false" | "off"))
+}
+
 /// Parágrafo dentro de uma célula: a célula e o sombreamento dela.
 fn place_in_cell(
     p: &mut Paragraph,
@@ -1095,6 +1308,7 @@ type Document = (
     Vec<Paragraph>,
     Vec<Media>,
     Option<nova_domain_text::PageSetup>,
+    nova_domain_text::HeadersFooters,
 );
 
 fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
@@ -1129,6 +1343,11 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         })
         .collect();
     let mut media: Vec<Media> = Vec::new();
+    // Cabeçalho e rodapé "default" e "Primeira Página Diferente" (do último w:sectPr).
+    let header_rels = read_rels(&rels, "/header");
+    let footer_rels = read_rels(&rels, "/footer");
+    let mut header_footer = nova_domain_text::HeadersFooters::default();
+    let mut hf_parts: Vec<(bool, String)> = Vec::new();
     // Página: a do último w:sectPr (o do corpo do documento).
     let mut page: Option<nova_domain_text::PageSetup> = None;
     // Imagem sendo lida (w:drawing): profundidade, tamanho em EMU e relação.
@@ -1267,6 +1486,17 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                     continue;
                 }
                 match name {
+                    b"headerReference" | b"footerReference"
+                        if attr(e, b"type").as_deref().unwrap_or("default") == "default" =>
+                    {
+                        let header = name == b"headerReference";
+                        let rels = if header { &header_rels } else { &footer_rels };
+                        if let Some(target) = attr(e, b"id").and_then(|id| rels.get(&id).cloned()) {
+                            hf_parts.retain(|(h, _)| *h != header);
+                            hf_parts.push((header, target));
+                        }
+                    }
+                    b"titlePg" => header_footer.different_first = toggle_on(e),
                     b"pgSz" => {
                         let n = |k: &[u8]| attr(e, k).and_then(|v| v.parse::<u32>().ok());
                         if let (Some(w), Some(h)) = (n(b"w"), n(b"h")) {
@@ -1548,7 +1778,21 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         out.push(Paragraph::default());
     }
     normalize(&mut out);
-    Ok((out, media, page))
+    for (header, target) in hf_parts {
+        let path = match target.strip_prefix('/') {
+            Some(absolute) => absolute.to_string(),
+            None => format!("word/{target}"),
+        };
+        if let Some(xml) = part(&mut zip, &path)? {
+            let value = read_header_footer(&xml);
+            if header {
+                header_footer.header = value;
+            } else {
+                header_footer.footer = value;
+            }
+        }
+    }
+    Ok((out, media, page, header_footer))
 }
 
 /// Cores que o Word e o LibreOffice dão aos links.

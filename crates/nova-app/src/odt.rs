@@ -60,7 +60,10 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
     for (name, body) in [
         ("META-INF/manifest.xml", manifest),
         ("meta.xml", META.to_string()),
-        ("styles.xml", styles_xml(doc.page_setup())),
+        (
+            "styles.xml",
+            styles_xml(doc.page_setup(), &doc.header_footer()),
+        ),
         ("content.xml", content),
     ] {
         zip.start_file(name, deflated).expect("zip em memória");
@@ -75,15 +78,78 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
 }
 
 /// Estilos fixos mais a página (papel e margens) do documento.
-fn styles_xml(page: nova_domain_text::PageSetup) -> String {
+fn styles_xml(page: nova_domain_text::PageSetup, hf: &nova_domain_text::HeadersFooters) -> String {
     let cm = |twips: u32| format!("{:.3}cm", f64::from(twips) / 1440.0 * 2.54);
     let orientation = if page.width > page.height {
         "landscape"
     } else {
         "portrait"
     };
+    let align = |a: Align| match a {
+        Align::Left => "start",
+        Align::Center => "center",
+        Align::Right => "end",
+        Align::Justify => "justify",
+    };
+    // Cabeçalho e rodapé no estilo de página: campos de número e total de páginas.
+    let mut styles = String::new();
+    let mut master = String::new();
+    let mut layout_extra = String::new();
+    for (tag, name, value) in [("header", "MP1", &hf.header), ("footer", "MP2", &hf.footer)] {
+        if value.text.is_empty() {
+            continue;
+        }
+        styles.push_str(&format!(
+            r#"<style:style style:name="{name}" style:family="paragraph"><style:paragraph-properties fo:text-align="{}"/></style:style>"#,
+            align(value.align)
+        ));
+        let margin = if tag == "header" {
+            "fo:margin-bottom"
+        } else {
+            "fo:margin-top"
+        };
+        layout_extra.push_str(&format!(
+            r#"<style:{tag}-style><style:header-footer-properties fo:min-height="0cm" {margin}="0.3cm"/></style:{tag}-style>"#
+        ));
+        let mut body = String::new();
+        let mut rest = value.text.as_str();
+        while !rest.is_empty() {
+            let next = [
+                nova_domain_text::PAGE_FIELD,
+                nova_domain_text::NUMPAGES_FIELD,
+            ]
+            .iter()
+            .filter_map(|f| rest.find(f).map(|i| (i, *f)))
+            .min();
+            let (text, field) = match next {
+                Some((i, f)) => (&rest[..i], Some(f)),
+                None => (rest, None),
+            };
+            body.push_str(&odf_text(text, body.is_empty()));
+            match field {
+                Some(f) => {
+                    body.push_str(if f == nova_domain_text::PAGE_FIELD {
+                        r#"<text:page-number text:select-page="current">1</text:page-number>"#
+                    } else {
+                        "<text:page-count>1</text:page-count>"
+                    });
+                    rest = &rest[text.len() + f.len()..];
+                }
+                None => rest = "",
+            }
+        }
+        master.push_str(&format!(
+            r#"<style:{tag}><text:p text:style-name="{name}">{body}</text:p></style:{tag}>"#
+        ));
+        if hf.different_first {
+            // Primeira página com cabeçalho/rodapé vazio (um parágrafo vazio, como o LibreOffice grava).
+            master.push_str(&format!(
+                r#"<style:{tag}-first><text:p text:style-name="{name}"/></style:{tag}-first>"#
+            ));
+        }
+    }
     let layout = format!(
-        r#"<office:automatic-styles><style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="{}" fo:page-height="{}" style:print-orientation="{orientation}" fo:margin-top="{}" fo:margin-bottom="{}" fo:margin-left="{}" fo:margin-right="{}"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"/></office:master-styles></office:document-styles>"#,
+        r#"<office:automatic-styles>{styles}<style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="{}" fo:page-height="{}" style:print-orientation="{orientation}" fo:margin-top="{}" fo:margin-bottom="{}" fo:margin-left="{}" fo:margin-right="{}"/>{layout_extra}</style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1">{master}</style:master-page></office:master-styles></office:document-styles>"#,
         cm(page.width),
         cm(page.height),
         cm(page.margin_top),
@@ -92,6 +158,140 @@ fn styles_xml(page: nova_domain_text::PageSetup) -> String {
         cm(page.margin_right)
     );
     STYLES.replacen("</office:document-styles>", &layout, 1)
+}
+
+/// Cabeçalho e rodapé do primeiro estilo de página mestre do styles.xml.
+fn read_header_footer(
+    xml: &str,
+    styles: &HashMap<String, OdfStyle>,
+) -> nova_domain_text::HeadersFooters {
+    let mut out = nova_domain_text::HeadersFooters::default();
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+    // Parte sendo lida: Some(true) = cabeçalho, Some(false) = rodapé.
+    let mut part: Option<bool> = None;
+    let mut first_part = false;
+    let mut in_master = false;
+    let mut paragraphs = 0;
+    while let Ok(event) = reader.read_event_into(&mut buf) {
+        match event {
+            Event::Start(ref e) | Event::Empty(ref e) => {
+                let empty = matches!(event, Event::Empty(_));
+                match e.local_name().as_ref() {
+                    b"master-page" if !in_master && !empty => in_master = true,
+                    b"header" | b"footer" if in_master && !empty && part.is_none() => {
+                        part = Some(e.local_name().as_ref() == b"header");
+                        paragraphs = 0;
+                    }
+                    b"header-first" | b"footer-first" if in_master => {
+                        first_part = !empty;
+                        out.different_first = true;
+                    }
+                    b"p" | b"h" if part.is_some() && !first_part => {
+                        let header = part == Some(true);
+                        let target = if header {
+                            &mut out.header
+                        } else {
+                            &mut out.footer
+                        };
+                        if paragraphs == 0 {
+                            if let Some(name) = attr(e, b"style-name") {
+                                target.align = resolve(&name, styles).1.align;
+                            }
+                        } else if !target.text.is_empty() {
+                            target.text.push('\u{b}');
+                        }
+                        paragraphs += 1;
+                    }
+                    b"page-number" if part.is_some() && !first_part => {
+                        let target = if part == Some(true) {
+                            &mut out.header
+                        } else {
+                            &mut out.footer
+                        };
+                        target.text.push_str(nova_domain_text::PAGE_FIELD);
+                        if !empty {
+                            part_skip(&mut reader);
+                        }
+                    }
+                    b"page-count" if part.is_some() && !first_part => {
+                        let target = if part == Some(true) {
+                            &mut out.header
+                        } else {
+                            &mut out.footer
+                        };
+                        target.text.push_str(nova_domain_text::NUMPAGES_FIELD);
+                        if !empty {
+                            part_skip(&mut reader);
+                        }
+                    }
+                    b"s" if part.is_some() && !first_part => {
+                        let n: usize = attr(e, b"c").and_then(|v| v.parse().ok()).unwrap_or(1);
+                        let target = if part == Some(true) {
+                            &mut out.header
+                        } else {
+                            &mut out.footer
+                        };
+                        target.text.push_str(&" ".repeat(n.min(100)));
+                    }
+                    b"tab" if part.is_some() && !first_part => {
+                        let target = if part == Some(true) {
+                            &mut out.header
+                        } else {
+                            &mut out.footer
+                        };
+                        target.text.push('\t');
+                    }
+                    b"line-break" if part.is_some() && !first_part => {
+                        let target = if part == Some(true) {
+                            &mut out.header
+                        } else {
+                            &mut out.footer
+                        };
+                        target.text.push('\u{b}');
+                    }
+                    _ => {}
+                }
+            }
+            Event::Text(t) if part.is_some() && !first_part => {
+                let value = t.unescape().map(|v| v.into_owned()).unwrap_or_default();
+                let target = if part == Some(true) {
+                    &mut out.header
+                } else {
+                    &mut out.footer
+                };
+                target.text.push_str(&value);
+            }
+            Event::End(e) => match e.local_name().as_ref() {
+                b"header" | b"footer" => part = None,
+                b"header-first" | b"footer-first" => first_part = false,
+                b"master-page" if in_master => break,
+                _ => {}
+            },
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    for hf in [&mut out.header, &mut out.footer] {
+        hf.text = hf.text.trim_matches('\u{b}').chars().take(1000).collect();
+    }
+    out
+}
+
+/// Pula até o fim do elemento aberto (o valor de um campo).
+fn part_skip(reader: &mut Reader<&[u8]>) {
+    let mut depth = 1;
+    let mut buf = Vec::new();
+    while depth > 0 {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(_)) => depth += 1,
+            Ok(Event::End(_)) => depth -= 1,
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
 }
 
 /// Página do styles.xml: a do primeiro `style:page-layout-properties`.
@@ -553,13 +753,16 @@ const STYLES: &str = r##"<?xml version="1.0" encoding="UTF-8"?><office:document-
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media, page) = read_document(bytes)?;
+    let (paragraphs, media, page, header_footer) = read_document(bytes)?;
     let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
         doc.put_media(&id, &mime, &data)?;
     }
     if let Some(page) = page.filter(|p| p.validate().is_ok()) {
         doc.load_page_setup(page)?;
+    }
+    if header_footer != Default::default() && header_footer.validate().is_ok() {
+        doc.load_header_footer(header_footer)?;
     }
     Ok(doc)
 }
@@ -856,6 +1059,7 @@ type Document = (
     Vec<Paragraph>,
     Vec<crate::docx::Media>,
     Option<nova_domain_text::PageSetup>,
+    nova_domain_text::HeadersFooters,
 );
 
 fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
@@ -899,9 +1103,11 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     let mut styles = HashMap::new();
     let mut lists = HashMap::new();
     let mut page = None;
+    let mut header_footer = nova_domain_text::HeadersFooters::default();
     if let Some(s) = read("styles.xml")? {
         read_styles(&s, &mut styles, &mut lists);
         page = read_page(&s);
+        header_footer = read_header_footer(&s, &styles);
     }
     read_styles(&content, &mut styles, &mut lists);
 
@@ -1190,7 +1396,7 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         out.push(Paragraph::default());
     }
     crate::docx::normalize(&mut out);
-    Ok((out, media, page))
+    Ok((out, media, page, header_footer))
 }
 
 #[cfg(test)]

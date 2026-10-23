@@ -22,7 +22,8 @@ import { LOCALES, useI18n, type Locale, type MessageKey } from "./i18n";
 import { BrandMark, icons } from "./icons";
 import { withShortcut, type CommandId, type Profile } from "./shortcuts";
 import { THEME_MODES, type ThemeMode } from "./theme";
-import type { Align, BlockStyle, FileFormat, HighlightColor, ListKind, PageSetup } from "./types";
+import type { Align, BlockStyle, FileFormat, HeadersFooters, HighlightColor, ListKind, PageSetup } from "./types";
+import type { Part } from "./headerfooter";
 import { isLandscape, MARGIN_PRESETS, marginsOf, PAPER_SIZES, paperOf, toCm, withMargins, withOrientation, withPaper } from "./layout";
 
 /** Comandos da faixa: os com atalho e os que só existem como botão. */
@@ -62,7 +63,7 @@ const GALLERY: BlockStyle[] = ["paragraph", "heading1", "heading2", "heading3", 
 
 /** "Arquivo" não é uma aba de comandos: abre a tela Arquivo, como no Word. */
 /** "table" é a aba contextual Layout da Tabela, que só aparece com o cursor numa tabela. */
-type Tab = "home" | "insert" | "layout" | "review" | "view" | "table" | "picture";
+type Tab = "home" | "insert" | "layout" | "review" | "view" | "table" | "picture" | "headerFooter";
 const TABS: ("file" | Tab)[] = ["file", "home", "insert", "layout", "review", "view"];
 
 /** Marcas que aparecem pressionadas na faixa de opções. */
@@ -116,6 +117,16 @@ export interface RibbonProps {
   page: PageSetup;
   onPage: (page: PageSetup) => void;
   onCustomMargins: () => void;
+  /** Editando o cabeçalho ou o rodapé: mostra a aba Cabeçalho e Rodapé. */
+  hfEditing: Part | null;
+  headerFooter: HeadersFooters;
+  onEditHeaderFooter: (part: Part) => void;
+  onCloseHeaderFooter: () => void;
+  onPageNumber: (part: Part, align: "left" | "center" | "right", xOfY?: boolean) => void;
+  onRemovePageNumbers: () => void;
+  onHeaderFooterAlign: (align: Align) => void;
+  onDifferentFirst: () => void;
+  onInsertField: (field: string) => void;
   /** Conteúdo da aba Revisão (ReviewTab.tsx). */
   review: ReactNode;
 }
@@ -128,8 +139,12 @@ export function Ribbon(props: RibbonProps) {
   const [tab, setTab] = useState<Tab>("home");
   // Saindo da tabela, a aba Layout da Tabela some e volta a Página Inicial.
   useEffect(() => {
-    if ((!props.inTable && tab === "table") || (!props.onImage && tab === "picture")) setTab("home");
+    if ((!props.inTable && tab === "table") || (!props.onImage && tab === "picture") || (!props.hfEditing && tab === "headerFooter")) setTab("home");
   }, [props.inTable, props.onImage, tab]);
+  // Entrando no cabeçalho/rodapé, a aba dele abre sozinha, como no Word.
+  useEffect(() => {
+    if (props.hfEditing) setTab("headerFooter");
+  }, [props.hfEditing]);
   const [collapsed, setCollapsed] = useState(false);
 
   const label = (command: CommandId) => t(`cmd.${command}` as MessageKey);
@@ -380,6 +395,78 @@ export function Ribbon(props: RibbonProps) {
     </>
   );
 
+  const pageNumberMenu = (
+    <MenuButton label={t("hf.pageNumber")} className="big-button" menuClass="layout-menu" render={(close) => (
+      <>
+        <div className="menu-heading">{t("hf.topOfPage")}</div>
+        {(["left", "center", "right"] as const).map((a) => (
+          <MenuItem key={`t${a}`} onSelect={() => { close(); props.onPageNumber("header", a); }}>{t(`hf.${a}`)}</MenuItem>
+        ))}
+        <div className="menu-heading">{t("hf.bottomOfPage")}</div>
+        {(["left", "center", "right"] as const).map((a) => (
+          <MenuItem key={`b${a}`} onSelect={() => { close(); props.onPageNumber("footer", a); }}>{t(`hf.${a}`)}</MenuItem>
+        ))}
+        <MenuItem onSelect={() => { close(); props.onPageNumber("footer", "right", true); }}>{t("hf.pageXofY")}</MenuItem>
+        <div className="menu-sep" />
+        <MenuItem onSelect={() => { close(); props.onRemovePageNumbers(); }}>{t("hf.removeNumbers")}</MenuItem>
+      </>
+    )}>
+      {icons.pageNumber}
+      <span>{t("hf.pageNumber")}</span>
+    </MenuButton>
+  );
+
+  const editingPart = props.hfEditing ? props.headerFooter[props.hfEditing] : null;
+  const headerFooterTab = (
+    <>
+      <Group label={t("group.headerFooter")}>
+        {pageNumberMenu}
+      </Group>
+      <Group label={t("group.insert")}>
+        <button className="big-button" onMouseDown={keepFocus} onClick={() => props.onInsertField("{PAGE}")}>
+          {icons.pageNumber}
+          <span>{t("hf.pageField")}</span>
+        </button>
+        <button className="big-button" onMouseDown={keepFocus} onClick={() => props.onInsertField("{NUMPAGES}")}>
+          {icons.pageNumber}
+          <span>{t("hf.pagesField")}</span>
+        </button>
+      </Group>
+      <Group label={t("group.navigation")}>
+        <button className="big-button" onMouseDown={keepFocus} onClick={() => props.onEditHeaderFooter(props.hfEditing === "header" ? "footer" : "header")}>
+          {props.hfEditing === "header" ? icons.footer : icons.header}
+          <span>{t(props.hfEditing === "header" ? "hf.goFooter" : "hf.goHeader")}</span>
+        </button>
+      </Group>
+      <Group label={t("group.options")}>
+        <label className="check-option">
+          <input type="checkbox" checked={props.headerFooter.differentFirst} onChange={props.onDifferentFirst} />
+          {t("hf.differentFirst")}
+        </label>
+      </Group>
+      <Group label={t("group.position")}>
+        {(["left", "center", "right"] as const).map((a) => (
+          <button
+            key={a}
+            className="icon-button"
+            aria-pressed={editingPart?.align === a}
+            onMouseDown={keepFocus}
+            onClick={() => props.onHeaderFooterAlign(a)}
+            title={t(a === "left" ? "image.left" : a === "center" ? "image.center" : "image.right")}
+          >
+            {a === "left" ? icons.alignLeft : a === "center" ? icons.alignCenter : icons.alignRight}
+          </button>
+        ))}
+      </Group>
+      <Group label={t("group.close")}>
+        <button className="big-button" onMouseDown={keepFocus} onClick={props.onCloseHeaderFooter}>
+          {icons.closeDoc}
+          <span>{t("hf.close")}</span>
+        </button>
+      </Group>
+    </>
+  );
+
   const insert = (
     <>
       <Group label={t("group.pages")}>
@@ -393,6 +480,17 @@ export function Ribbon(props: RibbonProps) {
           {icons.table}
           <span>{t("insert.table")}</span>
         </MenuButton>
+      </Group>
+      <Group label={t("group.headerFooter")}>
+        <button className="big-button" onMouseDown={keepFocus} onClick={() => props.onEditHeaderFooter("header")}>
+          {icons.header}
+          <span>{t("hf.header")}</span>
+        </button>
+        <button className="big-button" onMouseDown={keepFocus} onClick={() => props.onEditHeaderFooter("footer")}>
+          {icons.footer}
+          <span>{t("hf.footer")}</span>
+        </button>
+        {pageNumberMenu}
       </Group>
       <Group label={t("group.links")}>
         {big("insert.link", icons.link, t("cmd.insert.link"), tip("insert.link"))}
@@ -509,6 +607,7 @@ export function Ribbon(props: RibbonProps) {
     home,
     insert,
     layout,
+    headerFooter: headerFooterTab,
     table: tableLayout,
     picture: pictureFormat,
     review: props.review,
@@ -567,7 +666,12 @@ export function Ribbon(props: RibbonProps) {
       </div>
       <div className="ribbon">
         <div className="tabs" role="tablist" aria-label={t("ribbon.label")}>
-          {[...TABS, ...(props.inTable ? (["table"] as const) : []), ...(props.onImage ? (["picture"] as const) : [])].map((id) => (
+          {[
+            ...TABS,
+            ...(props.inTable ? (["table"] as const) : []),
+            ...(props.onImage ? (["picture"] as const) : []),
+            ...(props.hfEditing ? (["headerFooter"] as const) : []),
+          ].map((id) => (
             <button
               key={id}
               role="tab"
@@ -575,7 +679,7 @@ export function Ribbon(props: RibbonProps) {
               aria-selected={id === "file" ? false : tab === id}
               aria-controls={id === "file" ? undefined : "ribbon-panel"}
               aria-haspopup={id === "file" ? "dialog" : undefined}
-              className={id === "file" ? "tab tab-file" : id === "table" || id === "picture" ? "tab tab-context" : "tab"}
+              className={id === "file" ? "tab tab-file" : id === "table" || id === "picture" || id === "headerFooter" ? "tab tab-context" : "tab"}
               onMouseDown={keepFocus}
               onClick={() => {
                 if (id === "file") return props.onBackstage("home");
@@ -599,7 +703,7 @@ export function Ribbon(props: RibbonProps) {
         </div>
         {!collapsed && (
           <div className="panel" role="tabpanel" id="ribbon-panel" aria-labelledby={`tab-${tab}`}>
-            {panels[(tab === "table" && !props.inTable) || (tab === "picture" && !props.onImage) ? "home" : tab]}
+            {panels[(tab === "table" && !props.inTable) || (tab === "picture" && !props.onImage) || (tab === "headerFooter" && !props.hfEditing) ? "home" : tab]}
           </div>
         )}
       </div>

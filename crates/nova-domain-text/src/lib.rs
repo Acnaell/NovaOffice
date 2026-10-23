@@ -108,6 +108,80 @@ impl PageSetup {
     }
 }
 
+/// Texto de um cabeçalho ou rodapé, com o alinhamento. `{PAGE}` vira o número
+/// da página e `{NUMPAGES}` o total de páginas, como os campos PAGE e NUMPAGES do Word.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderFooter {
+    pub text: String,
+    pub align: Align,
+}
+
+/// Cabeçalho e rodapé do documento (um para todas as páginas, opcionalmente
+/// sem nada na primeira, como "Primeira Página Diferente" no Word).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeadersFooters {
+    pub header: HeaderFooter,
+    pub footer: HeaderFooter,
+    pub different_first: bool,
+}
+
+/// Campo do número da página e do total de páginas no texto do cabeçalho/rodapé.
+pub const PAGE_FIELD: &str = "{PAGE}";
+pub const NUMPAGES_FIELD: &str = "{NUMPAGES}";
+
+impl HeadersFooters {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        for hf in [&self.header, &self.footer] {
+            if hf.text.chars().count() > 1000 || hf.text.contains(['\n', '\r']) {
+                return Err(DomainError::InvalidAttr(
+                    "cabeçalho/rodapé: até 1000 caracteres numa linha (use U+000B para quebrar)"
+                        .into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn to_settings(&self) -> Vec<(String, Option<AttrValue>)> {
+        let text = |v: &str| (!v.is_empty()).then(|| AttrValue::Text(v.to_string()));
+        let align = |a: Align| (a != Align::Left).then(|| AttrValue::Text(a.as_str().into()));
+        vec![
+            ("headerText".into(), text(&self.header.text)),
+            ("headerAlign".into(), align(self.header.align)),
+            ("footerText".into(), text(&self.footer.text)),
+            ("footerAlign".into(), align(self.footer.align)),
+            (
+                "differentFirst".into(),
+                self.different_first.then_some(AttrValue::Bool(true)),
+            ),
+        ]
+    }
+
+    fn from_settings(map: &AttrMap) -> HeadersFooters {
+        let text = |k: &str| match map.get(k) {
+            Some(AttrValue::Text(v)) => v.clone(),
+            _ => String::new(),
+        };
+        let align = |k: &str| match map.get(k) {
+            Some(AttrValue::Text(v)) => Align::parse(v),
+            _ => Align::Left,
+        };
+        HeadersFooters {
+            header: HeaderFooter {
+                text: text("headerText"),
+                align: align("headerAlign"),
+            },
+            footer: HeaderFooter {
+                text: text("footerText"),
+                align: align("footerAlign"),
+            },
+            different_first: matches!(map.get("differentFirst"), Some(AttrValue::Bool(true))),
+        }
+    }
+}
+
 /// Tipos de imagem aceitos (os que o Word, o LibreOffice e o navegador abrem).
 pub const MEDIA_TYPES: &[&str] = &[
     "image/png",
@@ -188,6 +262,9 @@ pub enum TextCommand {
         #[serde(flatten)]
         attr: ParaAttr,
     },
+    /// Cabeçalho e rodapé: `{"type":"headerFooter.set","value":{…}}`.
+    #[serde(rename = "headerFooter.set")]
+    SetHeaderFooter { value: HeadersFooters },
     /// Tamanho do papel e margens (aba Layout): `{"type":"page.set","page":{…}}`.
     #[serde(rename = "page.set")]
     SetPage { page: PageSetup },
@@ -262,6 +339,9 @@ pub enum TextEvent {
     Redone,
     PageSet {
         page: PageSetup,
+    },
+    HeaderFooterSet {
+        value: HeadersFooters,
     },
 }
 
@@ -581,6 +661,11 @@ impl TextDocument {
                 self.replica.set_block_attrs(block, &[attr.to_change()])?;
                 TextEvent::BlockAttrSet { block, attr }
             }
+            TextCommand::SetHeaderFooter { value } => {
+                value.validate()?;
+                self.replica.set_settings(&value.to_settings());
+                TextEvent::HeaderFooterSet { value }
+            }
             TextCommand::SetPage { page } => {
                 page.validate()?;
                 self.replica.set_settings(&page.to_settings());
@@ -662,6 +747,19 @@ impl TextDocument {
     pub fn load_page_setup(&mut self, page: PageSetup) -> Result<(), DomainError> {
         page.validate()?;
         self.replica.set_settings(&page.to_settings());
+        self.replica.clear_history();
+        Ok(())
+    }
+
+    /// Cabeçalho e rodapé.
+    pub fn header_footer(&self) -> HeadersFooters {
+        HeadersFooters::from_settings(&self.replica.settings())
+    }
+
+    /// Define cabeçalho e rodapé ao abrir um arquivo, sem entrar no desfazer.
+    pub fn load_header_footer(&mut self, value: HeadersFooters) -> Result<(), DomainError> {
+        value.validate()?;
+        self.replica.set_settings(&value.to_settings());
         self.replica.clear_history();
         Ok(())
     }

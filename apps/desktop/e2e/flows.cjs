@@ -1162,7 +1162,6 @@ const flows = [
     const loaded = await h.p.locator('.embedded-image img').evaluate((img) => img.complete && img.naturalWidth);
     return back.blocks[0].attrs.image?.width === image.width && loaded === 64 ? OK('Imagens do Word e do LibreOffice validadas à parte (testes do núcleo).') : FALHA(`${JSON.stringify(back.blocks[0].attrs)} carregou=${loaded}`);
   } },
-  { area: 'Inserir', name: 'Cabeçalho, rodapé e número de página', run: async () => AUSENTE('Depende das páginas reais (aba Layout).') },
   { area: 'Inserir', name: 'Comentários', run: async () => AUSENTE('Não há comentários.') },
 
   // ───────────── Exibição
@@ -1334,6 +1333,42 @@ const flows = [
     const ok = version === 'Versão 0.1.6' && stored === 'off' && silent === 0 && bar === 1;
     return ok ? OK('Preferência guardada em localStorage.') : FALHA(JSON.stringify({ version, stored, silent, bar }));
   }) },
+
+  { area: 'Inserir', name: 'Cabeçalho e rodapé com número de página', run: async (h) => {
+    const many = Array.from({ length: 90 }, (_, i) => `Parágrafo ${i + 1} com algum texto para ocupar espaço na página.`);
+    await h.reset(many);
+    await h.p.locator('.tab', { hasText: 'Inserir' }).click();
+    await h.p.locator('button[aria-label="Número de Página"]').click();
+    await h.p.locator('.popover .menu-item', { hasText: 'Página X de Y' }).click(); await h.settle(300);
+    await h.p.locator('.tab', { hasText: 'Inserir' }).click();
+    await h.p.locator('.big-button', { hasText: 'Cabeçalho' }).click(); await h.settle(200);
+    const tab = await h.p.locator('.tab', { hasText: 'Cabeçalho e Rodapé' }).count();
+    await h.p.keyboard.type('Relatório anual');
+    await h.p.locator('.big-button', { hasText: 'nº da página' }).click();
+    await h.p.locator('.big-button', { hasText: 'Fechar Cabeçalho e Rodapé' }).click(); await h.settle(300);
+    const hf = (await h.doc()).headerFooter;
+    const sheets = await h.p.locator('.sheet').count();
+    const second = await h.p.locator('.hf-footer').nth(1).innerText();
+    const header2 = await h.p.locator('.hf-header').nth(1).innerText();
+    // Duplo clique no cabeçalho volta à edição; Esc sai.
+    await h.p.locator('.hf-header').first().dblclick(); await h.settle(150);
+    const editing = await h.p.locator('#hf-editor').count();
+    await h.p.keyboard.press('Escape'); await h.settle(150);
+    await h.press('Control+z');
+    const undone = (await h.doc()).headerFooter.header.text;
+    const ok = tab === 1 && hf.header.text === 'Relatório anual{PAGE}' && hf.footer.text === 'Página {PAGE} de {NUMPAGES}' && hf.footer.align === 'right' && second === `Página 2 de ${sheets}` && header2 === 'Relatório anual2' && editing === 1 && undone === '';
+    return ok ? OK(`Aba contextual, campos de página, duplo clique para editar; na impressão vai nas margens da página.`) : FALHA(`${JSON.stringify(hf)} folhas=${sheets} rodapé2=${second} cab2=${header2} editando=${editing} desfeito=${undone}`);
+  } },
+  { area: 'Inserir', name: 'Cabeçalho e rodapé salvos no .docx', run: async (h) => {
+    await core('new_document');
+    await core('dispatch', { command: { type: 'headerFooter.set', value: { header: { text: 'Topo', align: 'center' }, footer: { text: '{PAGE}', align: 'right' }, differentFirst: true } } });
+    await core('save_document', { path: '/tmp/nova-flows/cabecalho.docx' });
+    await core('new_document');
+    const back = await core('open_document', { path: '/tmp/nova-flows/cabecalho.docx' });
+    const files = require('child_process').execSync('unzip -l /tmp/nova-flows/cabecalho.docx').toString();
+    const ok = back.headerFooter.header.text === 'Topo' && back.headerFooter.footer.text === '{PAGE}' && back.headerFooter.differentFirst && /header1\.xml/.test(files);
+    return ok ? OK('word/header1.xml e footer1.xml com o campo PAGE e "Primeira Página Diferente"; também em .odt.') : FALHA(JSON.stringify(back.headerFooter));
+  } },
 
   // ───────────── Desempenho
   { area: 'Desempenho', name: 'Digitar num documento longo (≈300 parágrafos)', run: async (h) => {
