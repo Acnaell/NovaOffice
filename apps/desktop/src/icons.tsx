@@ -462,4 +462,16 @@ export const icons = {
       <path d="M11 6.5L7.5 10l3.5 3.5M7.5 10h6" />
     </Icon>
   ),
+  download: (
+    <Icon>
+      <path d="M10 3v9.5M6 8.5l4 4 4-4" />
+      <path d="M3.5 13.5v3h13v-3" />
+    </Icon>
+  ),
+  info: (
+    <Icon>
+      <circle cx="10" cy="10" r="7.5" />
+      <path d="M10 9v5M10 6.2v.1" />
+    </Icon>
+  ),
 } satisfies Record<string, ReactNode>;

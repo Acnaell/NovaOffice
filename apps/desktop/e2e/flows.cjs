@@ -7,6 +7,28 @@ const PARCIAL = (obs) => ({ status: 'parcial', obs });
 const FALHA = (obs) => ({ status: 'falha', obs });
 const AUSENTE = (obs) => ({ status: 'ausente', obs });
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+/** Resposta de releases/latest do GitHub para o tauri-mock.js (vale depois de recarregar). */
+const release = (tag, { prerelease = false } = {}) => JSON.stringify({
+  tag_name: tag,
+  html_url: `https://github.com/Acnaell/NovaOffice/releases/tag/${tag}`,
+  draft: false,
+  prerelease,
+  body: `## O que mudou\r\n* Aba **Exibir** com zoom by @Acnaell in https://github.com/Acnaell/NovaOffice/pull/12\r\n* Painel de Navegação\r\n\r\n**Full Changelog**: https://github.com/Acnaell/NovaOffice/compare/v0.1.6...${tag}`,
+  assets: [`NovaOffice_${tag.slice(1)}_x64-setup.exe`, `NovaOffice_${tag.slice(1)}_x64-setup.exe.sha256`].map((name) => ({
+    name, size: 4200000, browser_download_url: `https://github.com/Acnaell/NovaOffice/releases/download/${tag}/${name}`,
+  })),
+});
+/** Abre o app com a release simulada (e opções do mock); `fn` roda e o mock volta ao normal. */
+const withRelease = async (h, mock, fn) => {
+  await h.p.evaluate((m) => { for (const [k, v] of Object.entries(m)) sessionStorage.setItem(k, v); }, mock);
+  try {
+    return await fn();
+  } finally {
+    await h.p.evaluate(() => { ['mock.release', 'mock.windows', 'mock.download'].forEach((k) => sessionStorage.removeItem(k)); localStorage.removeItem('nova.update.notify'); });
+    await h.reload();
+  }
+};
+const updateBar = (h) => h.p.locator('.update-bar');
 /** Textos sublinhados pelo corretor, depois de ele ter tempo de responder. */
 const underlined = async (h, wait = 700) => {
   await h.settle(wait);
@@ -1219,6 +1241,99 @@ const flows = [
     const ok = back.page.width === 16838 && back.page.marginLeft === 1701 && /w:orient="landscape"/.test(xml);
     return ok ? OK('w:pgSz e w:pgMar como no Word.') : FALHA(JSON.stringify(back.page));
   } },
+
+  // ───────────── Atualização (resposta do GitHub simulada no tauri-mock.js)
+  { area: 'Atualização', name: 'Aviso de versão nova ao abrir o app, com as Novidades', run: async (h) => withRelease(h, { 'mock.release': release('v0.2.0') }, async () => {
+    await h.reload();
+    await updateBar(h).waitFor({ timeout: 5000 });
+    const text = await updateBar(h).innerText();
+    await updateBar(h).getByRole('button', { name: 'Novidades' }).click();
+    const notes = h.p.locator('.release-notes');
+    await notes.waitFor();
+    const title = await notes.locator('h2').innerText();
+    const heading = await notes.locator('h3').innerText();
+    const items = await notes.locator('li').count();
+    const bold = await notes.locator('li strong').first().innerText();
+    await notes.locator('a', { hasText: '/pull/12' }).click();
+    const opened = await h.p.evaluate(() => window.__opened);
+    await h.press('Escape');
+    const closed = (await notes.count()) === 0;
+    await updateBar(h).getByRole('button', { name: 'Depois' }).click();
+    const gone = (await updateBar(h).count()) === 0;
+    const ok = /Nova versão 0\.2\.0 disponível — Novidades · Baixar e instalar · Depois/.test(text.replace(/\s+/g, ' ')) && title === 'Novidades da versão 0.2.0' && heading === 'O que mudou' && items === 2 && bold === 'Exibir' && opened === 'https://github.com/Acnaell/NovaOffice/pull/12' && closed && gone;
+    return ok ? OK('Faixa abaixo da faixa de opções; notas em Markdown numa caixa; links no navegador.') : FALHA(JSON.stringify({ text, title, heading, items, bold, opened, closed, gone }));
+  }) },
+  { area: 'Atualização', name: 'Mesma versão ou pré-lançamento: sem aviso', run: async (h) => {
+    const same = await withRelease(h, { 'mock.release': release('v0.1.6') }, async () => {
+      await h.reload(); await h.settle(400);
+      return updateBar(h).count();
+    });
+    const pre = await withRelease(h, { 'mock.release': release('v0.3.0-beta.1', { prerelease: true }) }, async () => {
+      await h.reload(); await h.settle(400);
+      const calls = await h.p.evaluate(() => window.__calls.filter((c) => c.cmd === 'check_update').length);
+      return { bar: await updateBar(h).count(), calls };
+    });
+    const ok = same === 0 && pre.bar === 0 && pre.calls === 1;
+    return ok ? OK('Consulta ao abrir; 0.1.6 e 0.3.0-beta.1 não aparecem.') : FALHA(JSON.stringify({ same, pre }));
+  } },
+  { area: 'Atualização', name: 'Baixar e instalar (Windows): progresso, "Salvar alterações?" e instalador', run: async (h) => withRelease(h, { 'mock.release': release('v0.2.0') }, async () => {
+    await h.reset(['']);
+    await h.type('rascunho');
+    await updateBar(h).getByRole('button', { name: 'Baixar e instalar' }).click();
+    await h.p.locator('.update-progress').waitFor({ timeout: 3000 });
+    const progress = await updateBar(h).innerText();
+    // Cancelar: não instala, e a faixa oferece instalar depois.
+    await h.p.locator('.modal[role="alertdialog"]').waitFor({ timeout: 5000 });
+    await h.p.getByRole('button', { name: 'Cancelar' }).click(); await h.settle(200);
+    const afterCancel = await h.p.evaluate(() => window.__installed);
+    const ready = await updateBar(h).innerText();
+    await updateBar(h).getByRole('button', { name: 'Instalar agora' }).click();
+    await h.p.locator('.modal[role="alertdialog"]').waitFor({ timeout: 3000 });
+    await h.p.getByRole('button', { name: 'Não Salvar' }).click(); await h.settle(200);
+    const installed = await h.p.evaluate(() => window.__installed);
+    const ok = /Baixando a versão 0\.2\.0… \d+%/.test(progress) && afterCancel === 0 && /baixada e conferida/.test(ready) && installed === 1;
+    return ok ? OK('Download com barra, pergunta antes de fechar e roda o instalador (/P no app).') : FALHA(JSON.stringify({ progress, afterCancel, ready, installed }));
+  }) },
+  { area: 'Atualização', name: 'Instalador que não confere (SHA-256) não é instalado', run: async (h) => withRelease(h, { 'mock.release': release('v0.2.0'), 'mock.download': 'fail' }, async () => {
+    await h.reload();
+    await updateBar(h).getByRole('button', { name: 'Baixar e instalar' }).click();
+    await h.p.locator('.update-error').waitFor({ timeout: 5000 });
+    const text = await updateBar(h).innerText();
+    const installed = await h.p.evaluate(() => window.__installed);
+    const ok = /Não foi possível atualizar: .*não confere/.test(text) && /Tentar de novo/.test(text) && installed === 0;
+    return ok ? OK() : FALHA(JSON.stringify({ text, installed }));
+  }) },
+  { area: 'Atualização', name: 'macOS e Linux: Baixar abre a página da release', run: async (h) => withRelease(h, { 'mock.release': release('v0.2.0'), 'mock.windows': '0' }, async () => {
+    await h.reload();
+    await updateBar(h).getByRole('button', { name: 'Baixar e instalar' }).click(); await h.settle();
+    const opened = await h.p.evaluate(() => window.__opened);
+    const downloads = await h.p.evaluate(() => window.__calls.filter((c) => c.cmd === 'download_update').length);
+    const ok = opened === 'https://github.com/Acnaell/NovaOffice/releases/tag/v0.2.0' && downloads === 0;
+    return ok ? OK() : FALHA(JSON.stringify({ opened, downloads }));
+  }) },
+  { area: 'Atualização', name: 'Arquivo → Sobre: versão, Procurar atualizações e Avisar sobre atualizações', run: async (h) => withRelease(h, { 'mock.release': release('v0.1.6') }, async () => {
+    await h.reload();
+    await h.p.locator('.tab-file').click();
+    await h.p.locator('.bs-nav', { hasText: 'Sobre' }).click();
+    const version = await h.p.locator('.about-version').innerText();
+    await h.p.locator('.bs-big', { hasText: 'Procurar atualizações' }).click();
+    await h.p.locator('.about-result', { hasText: 'mais recente' }).waitFor({ timeout: 3000 });
+    // Agora sai a 0.2.0, e o usuário desliga o aviso: ao abrir de novo, nem consulta.
+    await h.p.locator('.about-notify input').uncheck();
+    const stored = await h.p.evaluate(() => localStorage.getItem('nova.update.notify'));
+    await h.p.evaluate((r) => sessionStorage.setItem('mock.release', r), release('v0.2.0'));
+    await h.reload(); await h.settle(300);
+    const silent = await h.p.evaluate(() => window.__calls.filter((c) => c.cmd === 'check_update').length);
+    // Procurar à mão ainda funciona e mostra a faixa.
+    await h.p.locator('.tab-file').click();
+    await h.p.locator('.bs-nav', { hasText: 'Sobre' }).click();
+    await h.p.locator('.bs-big', { hasText: 'Procurar atualizações' }).click();
+    await h.p.locator('.about-found').waitFor({ timeout: 3000 });
+    await h.press('Escape');
+    const bar = await updateBar(h).count();
+    const ok = version === 'Versão 0.1.6' && stored === 'off' && silent === 0 && bar === 1;
+    return ok ? OK('Preferência guardada em localStorage.') : FALHA(JSON.stringify({ version, stored, silent, bar }));
+  }) },
 
   // ───────────── Desempenho
   { area: 'Desempenho', name: 'Digitar num documento longo (≈300 parágrafos)', run: async (h) => {

@@ -9,6 +9,10 @@ mod editor;
 mod spell;
 #[path = "../../../src-tauri/src/store.rs"]
 mod store;
+// Só a análise da release: a rede fica de fora dos testes.
+#[allow(dead_code)]
+#[path = "../../../src-tauri/src/update.rs"]
+mod update;
 
 use app::App;
 use serde_json::{json, Value};
@@ -77,6 +81,11 @@ fn main() {
             "spell_ignore_all" => spelling
                 .ignore_all(&s("language"), &s("word"))
                 .map(|_| Value::Null),
+            // A resposta do GitHub vem simulada do tauri-mock.js.
+            "check_update" => {
+                update::evaluate(&s("release"), &s("current"), args["windows"] == json!(true))
+                    .map(|v| json!(v))
+            }
             _ => Ok(Value::Null),
         };
         let out = match res {

@@ -18,6 +18,11 @@ A seção da versão é usada como texto da página de release no GitHub.
   enquanto digita (maiúscula no início da frase, aspas inteligentes, -- vira —, lista de
   substituições editável) e Contar Palavras (Ctrl+Shift+G) com páginas, palavras, caracteres,
   parágrafos e linhas.
+- Aviso de atualização: ao abrir o app (e uma vez por dia), a NovaOffice procura uma versão nova no
+  GitHub e mostra uma faixa abaixo da faixa de opções, com as Novidades da versão. No Windows,
+  "Baixar e instalar" baixa o instalador, confere o SHA-256, pergunta se salva o documento e instala;
+  no macOS e no Linux, abre a página da release. Arquivo → Sobre mostra a versão, procura
+  atualizações e liga ou desliga o aviso.
 
 ## [0.1.6] - 2026-10-22
 
