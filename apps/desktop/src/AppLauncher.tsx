@@ -1,5 +1,5 @@
 // Menu de aplicativos do NovaOffice (botão de grade na barra de título): os
-// seis aplicativos da suíte, com o atual em destaque. Os que ainda não
+// oito aplicativos da suíte, com o atual em destaque. Os que ainda não
 // existem aparecem como "Em breve".
 
 import { useRef, useState } from "react";
@@ -21,6 +21,8 @@ export const APPS: AppInfo[] = [
   { id: "draw", name: "Nova Draw", subtitle: "apps.draw", ready: false },
   { id: "base", name: "Nova Base", subtitle: "apps.base", ready: false },
   { id: "math", name: "Nova Math", subtitle: "apps.math", ready: false },
+  { id: "mail", name: "Nova Mail", subtitle: "apps.mail", ready: false },
+  { id: "drive", name: "Nova Drive", subtitle: "apps.drive", ready: false },
 ];
 
 export function AppLauncher({ current, onHome }: { current: BrandApp; onHome: () => void }) {

@@ -142,6 +142,8 @@ const ptBR = {
   "apps.draw": "Desenhos",
   "apps.base": "Banco de dados",
   "apps.math": "Fórmulas",
+  "apps.mail": "E-mail",
+  "apps.drive": "Arquivos na nuvem",
 
   "bs.back": "Voltar ao documento",
   "bs.home": "Início",
@@ -553,6 +555,8 @@ const en: Messages = {
   "apps.draw": "Drawings",
   "apps.base": "Databases",
   "apps.math": "Formulas",
+  "apps.mail": "Email",
+  "apps.drive": "Cloud files",
 
   "bs.back": "Back to document",
   "bs.home": "Home",
