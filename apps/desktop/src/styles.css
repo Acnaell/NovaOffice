@@ -2063,3 +2063,17 @@ select {
     min-height: 0 !important;
   }
 }
+
+/* ---------- Aba Revisão ---------- */
+
+.panel .menu-button.big-button {
+  flex-direction: column;
+  height: 64px;
+  gap: 2px;
+}
+
+.panel .menu-button.big-button > svg:last-child {
+  width: 10px;
+  height: 10px;
+  color: inherit;
+}

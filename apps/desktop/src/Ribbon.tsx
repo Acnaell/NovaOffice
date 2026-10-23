@@ -62,8 +62,8 @@ const GALLERY: BlockStyle[] = ["paragraph", "heading1", "heading2", "heading3", 
 
 /** "Arquivo" não é uma aba de comandos: abre a tela Arquivo, como no Word. */
 /** "table" é a aba contextual Layout da Tabela, que só aparece com o cursor numa tabela. */
-type Tab = "home" | "insert" | "layout" | "view" | "table" | "picture";
-const TABS: ("file" | Tab)[] = ["file", "home", "insert", "layout", "view"];
+type Tab = "home" | "insert" | "layout" | "review" | "view" | "table" | "picture";
+const TABS: ("file" | Tab)[] = ["file", "home", "insert", "layout", "review", "view"];
 
 /** Marcas que aparecem pressionadas na faixa de opções. */
 export type ActiveMarks = Record<"bold" | "italic" | "underline" | "strike" | "subscript" | "superscript", boolean>;
@@ -116,6 +116,8 @@ export interface RibbonProps {
   page: PageSetup;
   onPage: (page: PageSetup) => void;
   onCustomMargins: () => void;
+  /** Conteúdo da aba Revisão (ReviewTab.tsx). */
+  review: ReactNode;
 }
 
 /** Entrelinhas oferecidas no menu, em % (como no Word: 1,0 1,15 1,5 2,0 2,5 3,0). */
@@ -509,6 +511,7 @@ export function Ribbon(props: RibbonProps) {
     layout,
     table: tableLayout,
     picture: pictureFormat,
+    review: props.review,
     view: (
       <>
         <Group label={t("group.theme")}>

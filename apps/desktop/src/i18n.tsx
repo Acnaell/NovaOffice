@@ -299,13 +299,16 @@ const ptBR = {
   "spell.language": "Idioma de revisão",
   "spell.lang.pt-BR": "Português (Brasil)",
   "spell.lang.en-US": "Inglês (EUA)",
-  "spell.lang.es": "Espanhol",
+  "spell.lang.es-ES": "Espanhol (Espanha)",
   "spell.off": "Não verificar ortografia",
   "spell.menu": "Ortografia: {word}",
   "spell.loading": "Procurando sugestões…",
   "spell.noSuggestions": "(Nenhuma sugestão de ortografia)",
   "spell.ignoreAll": "Ignorar Tudo",
   "spell.add": "Adicionar ao Dicionário",
+  "tab.review": "Revisão",
+  "review.language": "Idioma",
+  "review.languageTip": "Idioma de revisão: o dicionário usado para verificar a ortografia",
 };
 
 export type MessageKey = keyof typeof ptBR;
@@ -605,13 +608,16 @@ const en: Messages = {
   "spell.language": "Proofing language",
   "spell.lang.pt-BR": "Portuguese (Brazil)",
   "spell.lang.en-US": "English (US)",
-  "spell.lang.es": "Spanish",
+  "spell.lang.es-ES": "Spanish (Spain)",
   "spell.off": "Don't check spelling",
   "spell.menu": "Spelling: {word}",
   "spell.loading": "Looking for suggestions…",
   "spell.noSuggestions": "(No spelling suggestions)",
   "spell.ignoreAll": "Ignore All",
   "spell.add": "Add to Dictionary",
+  "tab.review": "Review",
+  "review.language": "Language",
+  "review.languageTip": "Proofing language: the dictionary used to check spelling",
 };
 
 export const LOCALES = {

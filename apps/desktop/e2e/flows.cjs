@@ -636,6 +636,24 @@ const flows = [
       ? OK('Português (VERO), inglês (SCOWL), espanhol (RLA-ES) ou desligado; a escolha fica salva.')
       : FALHA(`pt ${JSON.stringify(pt)} en ${JSON.stringify(en)} off ${JSON.stringify(off)}`);
   } },
+  { area: 'Ortografia', name: 'Idioma de revisão na aba Revisão (pt-BR, en-US, es-ES)', run: async (h) => {
+    await h.reset(['the house é bonita, la casa es bonita']);
+    await h.p.locator('.tab', { hasText: 'Revisão' }).click();
+    const pick = async (name) => {
+      await h.p.locator('.review-language').click();
+      await h.p.locator('.menu-item', { hasText: name }).click();
+      return underlined(h);
+    };
+    const pt = await underlined(h);
+    const es = await pick('Espanhol (Espanha)');
+    const status = await h.p.locator('.statusbar .proofing').inputValue();
+    const en = await pick('Inglês (EUA)');
+    await pick('Português (Brasil)');
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    return pt.includes('house') && !es.includes('casa') && es.includes('house') && status === 'es-ES' && !en.includes('house') && en.includes('casa')
+      ? OK('Revisão › Idioma; a barra de status acompanha a escolha.')
+      : FALHA(`pt ${JSON.stringify(pt)} es ${JSON.stringify(es)} (${status}) en ${JSON.stringify(en)}`);
+  } },
   { area: 'Ferramentas', name: 'Contagem de palavras', run: async (h) => {
     await h.reset(['uma duas', 'três']);
     const status = await h.p.locator('.statusbar').innerText();
