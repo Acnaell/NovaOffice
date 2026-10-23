@@ -295,6 +295,17 @@ const ptBR = {
   "status.exportedTo": "Exportado para {path}",
 
   "editor.label": "Documento",
+
+  "spell.language": "Idioma de revisão",
+  "spell.lang.pt-BR": "Português (Brasil)",
+  "spell.lang.en-US": "Inglês (EUA)",
+  "spell.lang.es": "Espanhol",
+  "spell.off": "Não verificar ortografia",
+  "spell.menu": "Ortografia: {word}",
+  "spell.loading": "Procurando sugestões…",
+  "spell.noSuggestions": "(Nenhuma sugestão de ortografia)",
+  "spell.ignoreAll": "Ignorar Tudo",
+  "spell.add": "Adicionar ao Dicionário",
 };
 
 export type MessageKey = keyof typeof ptBR;
@@ -590,6 +601,17 @@ const en: Messages = {
   "status.exportedTo": "Exported to {path}",
 
   "editor.label": "Document",
+
+  "spell.language": "Proofing language",
+  "spell.lang.pt-BR": "Portuguese (Brazil)",
+  "spell.lang.en-US": "English (US)",
+  "spell.lang.es": "Spanish",
+  "spell.off": "Don't check spelling",
+  "spell.menu": "Spelling: {word}",
+  "spell.loading": "Looking for suggestions…",
+  "spell.noSuggestions": "(No spelling suggestions)",
+  "spell.ignoreAll": "Ignore All",
+  "spell.add": "Add to Dictionary",
 };
 
 export const LOCALES = {

@@ -24,4 +24,9 @@ export const api = {
   addImageData: (data: string) => invoke<ImageRef>("add_image_data", { data }),
   /** A imagem embutida como data URL. */
   media: (id: string) => invoke<string | null>("media", { id }),
+  /** Para cada texto (um por parágrafo), os intervalos UTF-16 das palavras erradas. */
+  spellCheck: (language: string, texts: string[]) => invoke<[number, number][][]>("spell_check", { language, texts }),
+  spellSuggest: (language: string, word: string) => invoke<string[]>("spell_suggest", { language, word }),
+  spellAddWord: (language: string, word: string) => invoke<void>("spell_add_word", { language, word }),
+  spellIgnoreAll: (language: string, word: string) => invoke<void>("spell_ignore_all", { language, word }),
 };
