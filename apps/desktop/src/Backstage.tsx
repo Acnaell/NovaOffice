@@ -9,7 +9,7 @@ import { useI18n, type MessageKey } from "./i18n";
 import { BrandMark, icons } from "./icons";
 import type { DocView, FileFormat, Recent, RecoveryInfo } from "./types";
 
-export type BackstagePage = "home" | "new" | "open" | "saveAs" | "print" | "export";
+export type BackstagePage = "home" | "new" | "open" | "saveAs" | "print" | "export" | "about";
 
 /** Tipos de arquivo na ordem de Salvar como; o primeiro é o padrão (Word). */
 export const SAVE_FORMATS: FileFormat[] = ["docx", "odt", "nova", "md", "txt", "html"];
@@ -37,6 +37,8 @@ interface Props {
   onClose: () => void;
   onRecover: () => void;
   onDiscardRecovery: () => void;
+  /** Arquivo → Sobre: versão e atualizações (UpdateBar.tsx). */
+  about?: ReactNode;
 }
 
 const folderOf = (path: string) => path.replace(/[\\/][^\\/]*$/, "");
@@ -239,6 +241,7 @@ export function Backstage(props: Props) {
         </ul>
       </>
     ),
+    about: props.about,
   };
 
   return (
@@ -269,6 +272,8 @@ export function Backstage(props: Props) {
             {action(icons.closeDoc, t("bs.close"), props.onClose)}
           </>
         )}
+        <div className="bs-spacer" />
+        {nav("about", icons.info, t("bs.about"))}
       </nav>
       <div className="bs-main" ref={main} tabIndex={-1}>
         {pages[props.page]}

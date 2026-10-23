@@ -7,6 +7,7 @@ mod app;
 mod editor;
 mod spell;
 mod store;
+mod update;
 
 use app::App;
 use editor::{DispatchResult, DocView};
@@ -15,6 +16,7 @@ use serde_json::Value;
 use spell::Spelling;
 use store::{Recent, RecoveryInfo};
 use tauri::{Manager, State};
+use update::{UpdateInfo, Updates};
 
 #[tauri::command]
 fn snapshot(app: State<'_, App>) -> DocView {
@@ -135,6 +137,47 @@ async fn spell_ignore_all(
     spelling.ignore_all(&language, &word)
 }
 
+// Aviso de atualização (update.rs). A interface só pede "procure", "baixe a
+// versão encontrada" e "instale a baixada"; endereços ficam deste lado.
+
+#[tauri::command]
+async fn check_update(updates: State<'_, Updates>) -> Result<Option<UpdateInfo>, String> {
+    let found = update::check()?;
+    *updates.found.lock().map_err(|e| e.to_string())? = found.clone();
+    Ok(found)
+}
+
+#[tauri::command]
+async fn download_update(
+    handle: tauri::AppHandle,
+    updates: State<'_, Updates>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    let found = updates.found.lock().map_err(|e| e.to_string())?.clone();
+    let installer = found
+        .and_then(|info| info.installer)
+        .ok_or("nenhuma atualização para baixar")?;
+    let path = update::download(&installer, &std::env::temp_dir(), |progress| {
+        let _ = handle.emit("update-progress", progress);
+    })?;
+    *updates.downloaded.lock().map_err(|e| e.to_string())? = Some(path);
+    Ok(())
+}
+
+/// Roda o instalador baixado e fecha o app (a interface já perguntou se salva).
+#[tauri::command]
+fn install_update(handle: tauri::AppHandle, updates: State<'_, Updates>) -> Result<(), String> {
+    let path = updates
+        .downloaded
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or("o instalador ainda não foi baixado")?;
+    update::launch_installer(&path)?;
+    handle.exit(0);
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -150,6 +193,7 @@ pub fn run() {
                 .ok()
                 .map(|dir| dir.join("dicionario.json"));
             handle.manage(Spelling::new(user_dictionary));
+            handle.manage(Updates::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -172,7 +216,10 @@ pub fn run() {
             spell_check,
             spell_suggest,
             spell_add_word,
-            spell_ignore_all
+            spell_ignore_all,
+            check_update,
+            download_update,
+            install_update
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar a NovaOffice");

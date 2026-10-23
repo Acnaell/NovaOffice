@@ -65,6 +65,8 @@ import { load, store } from "./storage";
 import { matchShortcut, profileFor } from "./shortcuts";
 import { useTheme } from "./theme";
 import { applyPatch, DEFAULT_PAGE, type BlockStyle, type PageSetup, type DocView, type FileFormat, type Recent, type RecoveryInfo, type HighlightColor, type Mark, type MarkKind, type ParaAttr, type TextCommand, type ToggleMark } from "./types";
+import { AboutPage, ReleaseNotesDialog, UpdateBar, useUpdates } from "./UpdateBar";
+import { updateApi } from "./update";
 
 interface State {
   view: DocView;
@@ -855,6 +857,30 @@ export default function App() {
     };
   }, []);
 
+  // ---------- Atualizações ----------
+
+  const updates = useUpdates();
+  const [releaseNotes, setReleaseNotes] = useState(false);
+
+  /** Com o instalador baixado e conferido: "Salvar alterações?", roda o instalador e o app fecha. */
+  const installUpdate = () =>
+    afterQueue(async () => {
+      if (!(await confirmLeave())) return;
+      await updateApi.install();
+    });
+
+  /** Windows: baixa e instala pelo app. macOS e Linux: abre a página da release. */
+  const downloadUpdate = () => {
+    setReleaseNotes(false);
+    const info = updates.found;
+    if (!info) return;
+    if (!info.canInstall) {
+      openUrl(info.pageUrl).catch(showError);
+      return;
+    }
+    updates.download(installUpdate);
+  };
+
   const onCommand = (command: RibbonCommand) => {
     switch (command) {
       case "file.new":
@@ -1068,7 +1094,11 @@ export default function App() {
           onClose={closeDocument}
           onRecover={recoverDocument}
           onDiscardRecovery={discardRecovery}
+          about={<AboutPage updates={updates} onNotes={() => setReleaseNotes(true)} onDownload={downloadUpdate} />}
         />
+      )}
+      {releaseNotes && updates.found && (
+        <ReleaseNotesDialog info={updates.found} onLink={openLink} onDownload={downloadUpdate} onClose={() => setReleaseNotes(false)} />
       )}
       {saveAsk && <SaveChangesDialog title={saveAsk.title} onChoose={saveAsk.resolve} />}
       {linkRequest && <LinkDialog request={linkRequest} onApply={applyLink} onRemove={removeLink} onClose={closeLinkDialog} />}
@@ -1167,6 +1197,7 @@ export default function App() {
         onCustomMargins={() => setMarginsDialog(true)}
         review={<ReviewTab proofing={proofing} profile={profile} onProofing={chooseProofing} onCommand={onCommand} />}
       />
+      <UpdateBar updates={updates} onNotes={() => setReleaseNotes(true)} onDownload={downloadUpdate} onInstall={installUpdate} />
       <main className={`workspace${find ? " with-panel" : ""}`}>
         {find && (
           <FindPanel
