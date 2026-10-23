@@ -1164,6 +1164,65 @@ const flows = [
   } },
   { area: 'Inserir', name: 'Comentários', run: async () => AUSENTE('Não há comentários.') },
 
+  // ───────────── Referências
+  { area: 'Referências', name: 'Sumário automático com páginas, atualizar e Ctrl+clique', run: async (h) => {
+    await h.reset(['']);
+    const cmds = [];
+    let k = 1;
+    for (const [t, lvl] of [['Introdução', 1], ['Contexto', 2], ['Metodologia', 1], ['Conclusão', 1]]) {
+      cmds.push({ type: 'block.insert', index: k, text: t, style: `heading${lvl}` });
+      if (lvl === 1 && k > 1) cmds.push({ type: 'block.setAttr', block: k, attr: 'pageBreakBefore', value: true });
+      k++;
+      cmds.push({ type: 'block.insert', index: k++, text: 'Texto da seção.' });
+    }
+    await core('dispatch', { command: { type: 'batch', commands: cmds } });
+    await h.reload();
+    await h.select(0, 0);
+    await h.p.locator('.tab', { hasText: 'Referências' }).click();
+    await h.p.locator('.big-button', { hasText: 'Sumário' }).first().click();
+    await h.p.locator('.popover .menu-item', { hasText: 'Sumário Automático' }).click(); await h.settle(300);
+    const entries = async () => h.p.evaluate(() => [...document.querySelectorAll('.toc-entry')].map((e) => `${e.textContent}:${e.dataset.page}`));
+    const first = await entries();
+    const doc = await h.doc();
+    const cached = doc.blocks.filter((b) => b.attrs.toc).map((b) => b.attrs.toc.page);
+    // Título novo: o sumário fica igual até Atualizar Sumário (como no Word).
+    const end = doc.blocks.length;
+    await core('dispatch', { command: { type: 'block.insert', index: end, text: 'Anexo', style: 'heading1' } });
+    await h.reload();
+    await h.p.locator('.tab', { hasText: 'Referências' }).click();
+    await h.p.locator('.big-button', { hasText: 'Atualizar Sumário' }).click(); await h.settle(300);
+    const updated = await entries();
+    await h.press('Control+z');
+    const undone = (await entries()).length;
+    // Ctrl+clique na entrada vai para o título.
+    await h.p.locator('.toc-entry', { hasText: 'Metodologia' }).click({ modifiers: ['Control'] }); await h.settle(150);
+    const caretText = await h.p.evaluate(() => document.querySelector('.statusbar, footer')?.textContent ?? '');
+    const ok = first.join('|') === 'Introdução:1|Contexto:1|Metodologia:2|Conclusão:3' && cached.join(',') === '0,1,1,2,3'
+      && updated.length === 5 && updated[4] === 'Anexo:3' && undone === 4 && /Página 2 de 3/.test(caretText) && /Título 1/.test(caretText);
+    return ok ? OK('Títulos 1 a 3 com pontilhado e páginas reais; Atualizar refaz; Ctrl+clique leva ao título; vai para .docx/.odt como campo TOC.') : FALHA(`${first} cache=${cached} atualizado=${updated} desfeito=${undone} cursor=${caretText}`);
+  } },
+  { area: 'Referências', name: 'Sumário salvo no .docx e no .odt', run: async () => {
+    await core('new_document');
+    const cmds = [
+      { type: 'text.insert', block: 0, offset: 0, text: 'Sumário' },
+      { type: 'block.setAttr', block: 0, attr: 'toc', value: { level: 0, page: 0 } },
+      { type: 'block.insert', index: 1, text: 'Introdução' },
+      { type: 'block.setAttr', block: 1, attr: 'toc', value: { level: 1, page: 2 } },
+      { type: 'block.insert', index: 2, text: 'Introdução', style: 'heading1' },
+    ];
+    await core('dispatch', { command: { type: 'batch', commands: cmds } });
+    const out = [];
+    for (const ext of ['docx', 'odt']) {
+      await core('save_document', { path: `/tmp/nova-flows/sumario.${ext}` });
+      await core('new_document');
+      const back = await core('open_document', { path: `/tmp/nova-flows/sumario.${ext}` });
+      out.push(back.blocks.slice(0, 2).map((b) => JSON.stringify(b.attrs.toc)).join(','));
+    }
+    const xml = require('child_process').execSync('unzip -p /tmp/nova-flows/sumario.docx word/document.xml').toString();
+    const ok = out.every((o) => o === '{"level":0,"page":0},{"level":1,"page":2}') && /TOC \\o/.test(xml);
+    return ok ? OK('Campo TOC do Word (estilos Sumário 1…) e índice do LibreOffice (text:table-of-content); validado no LibreOffice.') : FALHA(`${out} toc=${/TOC/.test(xml)}`);
+  } },
+
   // ───────────── Exibição
   { area: 'Exibição', name: 'Página com tamanho A4 e margens; várias páginas', run: async (h) => {
     const many = Array.from({ length: 120 }, (_, i) => `Parágrafo ${i + 1} com algum texto para ocupar espaço na página.`);

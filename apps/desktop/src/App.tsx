@@ -56,6 +56,8 @@ import { deleteColumns, deleteRows, deleteTable, insertColumn, insertRow, insert
 import { fileToBase64, insertImage, resizeImage, setImage, TEXT_WIDTH_PT } from "./images";
 import { defaultProofing, matchAt, matchText, parseProofing, SPELL_LANGUAGES, useSpelling, type Proofing } from "./spell";
 import { ReviewTab, useReviewShortcuts } from "./ReviewTab";
+import { ReferencesTab } from "./ReferencesTab";
+import { findToc, insertToc, removeToc, screenPages, updateToc } from "./toc";
 import { SpellingPane } from "./SpellingPane";
 import { AutoCorrectDialog } from "./AutoCorrectDialog";
 import { WordCountDialog } from "./WordCountDialog";
@@ -1131,6 +1133,11 @@ export default function App() {
   const words = wordCount(view);
   const blocks = view.blocks.length;
 
+  // Sumário: páginas dos títulos na tela (depois da paginação) e textos no idioma da interface.
+  const hasToc = findToc(view.blocks) !== null;
+  const tocPages = () => screenPages(document.querySelector<HTMLElement>(".page"));
+  const tocLabels = { title: t("toc.title"), empty: t("toc.empty") };
+
   return (
     <div className={`app${painter ? " painting" : ""}`}>
       {backstage && (
@@ -1269,6 +1276,14 @@ export default function App() {
         onPage={setPage}
         onCustomMargins={() => setMarginsDialog(true)}
         review={<ReviewTab proofing={proofing} profile={profile} onProofing={chooseProofing} onCommand={onCommand} />}
+        references={
+          <ReferencesTab
+            hasToc={hasToc}
+            onInsertToc={() => run((doc, sel) => insertToc(doc, sel, tocPages(), tocLabels))}
+            onUpdateToc={() => run((doc, sel) => updateToc(doc, sel, tocPages(), tocLabels))}
+            onRemoveToc={() => run((doc, sel) => removeToc(doc, sel))}
+          />
+        }
       />
       <UpdateBar updates={updates} onNotes={() => setReleaseNotes(true)} onDownload={downloadUpdate} onInstall={installUpdate} />
       <main className={`workspace${find ? " with-panel" : ""}`}>

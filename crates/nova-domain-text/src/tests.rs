@@ -543,6 +543,7 @@ fn alinhamento_recuo_espacamento_e_lista() {
             page_break_before: false,
             cell: None,
             image: None,
+            toc: None,
         }
     );
     assert_eq!(doc.block_attrs(1).unwrap(), ParaAttrs::default());
@@ -1002,4 +1003,29 @@ fn cabecalho_e_rodape() {
     assert!(doc
         .execute(TextCommand::SetHeaderFooter { value: bad })
         .is_err());
+}
+
+#[test]
+fn sumario_vai_ao_crdt_e_volta() {
+    use crate::format::TocEntry;
+    let mut doc = TextDocument::from_plain_text(1, "Sumário\nIntrodução");
+    let entry = TocEntry { level: 2, page: 14 };
+    doc.execute(TextCommand::SetBlockAttr {
+        block: 1,
+        attr: ParaAttr::Toc(Some(entry)),
+    })
+    .unwrap();
+    assert_eq!(doc.block_attrs(1).unwrap().toc, Some(entry));
+    // Nível acima de 6 é recusado.
+    assert!(doc
+        .execute(TextCommand::SetBlockAttr {
+            block: 0,
+            attr: ParaAttr::Toc(Some(TocEntry { level: 7, page: 1 })),
+        })
+        .is_err());
+    // No JSON da interface.
+    let json = serde_json::to_value(doc.block_attrs(1).unwrap()).unwrap();
+    assert_eq!(json["toc"], serde_json::json!({"level": 2, "page": 14}));
+    doc.execute(TextCommand::Undo).unwrap();
+    assert_eq!(doc.block_attrs(1).unwrap().toc, None);
 }

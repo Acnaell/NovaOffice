@@ -79,5 +79,7 @@ export function paginate(root: HTMLElement, g: Geometry, caretBlock: number): Pa
   }
   const pages = Math.max(1, Math.floor(Math.max(lastBottom - 1, 0) / stride) + 1);
   root.style.minHeight = `${pages * stride - g.gap}px`;
+  // Para quem precisa saber a página de um parágrafo (Sumário).
+  root.dataset.stride = String(stride);
   return { pages, current };
 }

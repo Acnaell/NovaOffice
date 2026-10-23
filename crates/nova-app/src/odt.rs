@@ -148,6 +148,20 @@ fn styles_xml(page: nova_domain_text::PageSetup, hf: &nova_domain_text::HeadersF
             ));
         }
     }
+    // Estilos do Sumário: tab à direita com pontilhado na largura do texto.
+    let text_width = cm(page
+        .width
+        .saturating_sub(page.margin_left + page.margin_right)
+        .max(1440));
+    let mut contents = String::from(
+        r#"<style:style style:name="Contents_20_Heading" style:display-name="Contents Heading" style:family="paragraph" style:parent-style-name="Heading" style:next-style-name="Standard" style:class="index"><style:text-properties fo:font-size="16pt" fo:font-weight="bold"/></style:style>"#,
+    );
+    for level in 1..=nova_domain_text::MAX_TOC_LEVEL {
+        contents.push_str(&format!(
+            r#"<style:style style:name="Contents_20_{level}" style:display-name="Contents {level}" style:family="paragraph" style:parent-style-name="Standard" style:class="index"><style:paragraph-properties fo:margin-left="{:.2}cm" fo:margin-bottom="5pt"><style:tab-stops><style:tab-stop style:position="{text_width}" style:type="right" style:leader-style="dotted" style:leader-text="."/></style:tab-stops></style:paragraph-properties></style:style>"#,
+            f64::from(level - 1) * 0.39
+        ));
+    }
     let layout = format!(
         r#"<office:automatic-styles>{styles}<style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="{}" fo:page-height="{}" style:print-orientation="{orientation}" fo:margin-top="{}" fo:margin-bottom="{}" fo:margin-left="{}" fo:margin-right="{}"/>{layout_extra}</style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1">{master}</style:master-page></office:master-styles></office:document-styles>"#,
         cm(page.width),
@@ -157,7 +171,13 @@ fn styles_xml(page: nova_domain_text::PageSetup, hf: &nova_domain_text::HeadersF
         cm(page.margin_left),
         cm(page.margin_right)
     );
-    STYLES.replacen("</office:document-styles>", &layout, 1)
+    STYLES
+        .replacen(
+            "</office:styles>",
+            &format!("{contents}</office:styles>"),
+            1,
+        )
+        .replacen("</office:document-styles>", &layout, 1)
 }
 
 /// Cabeçalho e rodapé do primeiro estilo de página mestre do styles.xml.
@@ -492,7 +512,11 @@ fn content_xml(paragraphs: &[Paragraph], pictures: &HashMap<String, String>) -> 
             ..p.attrs.clone()
         };
         let props = para_props(&attrs);
-        let parent = parent_style(p.style);
+        let toc_parent = p.attrs.toc.map(|t| match t.level {
+            0 => "Contents_20_Heading".to_string(),
+            n => format!("Contents_20_{n}"),
+        });
+        let parent = toc_parent.as_deref().unwrap_or(parent_style(p.style));
         let key = format!("{parent}|{props}");
         let index = styles
             .iter()
@@ -540,7 +564,9 @@ fn content_xml(paragraphs: &[Paragraph], pictures: &HashMap<String, String>) -> 
         }
     };
 
-    for p in paragraphs {
+    let mut toc_open = false;
+    let mut tocs = 0;
+    for (index, p) in paragraphs.iter().enumerate() {
         let cell = p.attrs.cell.as_ref();
         let key = cell.map(|c| (c.table.clone(), c.row, c.col));
         if key != open_cell {
@@ -616,8 +642,24 @@ fn content_xml(paragraphs: &[Paragraph], pictures: &HashMap<String, String>) -> 
                 previous_kind = None;
             }
         }
+        // Sumário: um text:table-of-content com as entradas no index-body.
+        let toc = p.attrs.toc.filter(|_| cell.is_none());
+        if toc.is_some() && !toc_open {
+            tocs += 1;
+            body.push_str(&format!(
+                r#"<text:table-of-content text:name="Sumário{tocs}" text:protected="false"><text:table-of-content-source text:outline-level="3">{TOC_TEMPLATES}</text:table-of-content-source><text:index-body>"#
+            ));
+            toc_open = true;
+        }
+        let toc_title = toc.is_some_and(|t| t.level == 0);
+        if toc_title {
+            body.push_str(&format!(
+                r#"<text:index-title text:name="Sumário{tocs}_Head">"#
+            ));
+        }
         let name = para_style_name(&mut para_styles, p);
-        let (open_tag, close_tag) = match p.style.heading_level() {
+        let heading_level = p.style.heading_level().filter(|_| toc.is_none());
+        let (open_tag, close_tag) = match heading_level {
             Some(level) => (
                 format!(r#"<text:h text:style-name="{name}" text:outline-level="{level}">"#),
                 "</text:h>",
@@ -672,7 +714,20 @@ fn content_xml(paragraphs: &[Paragraph], pictures: &HashMap<String, String>) -> 
                 body.push_str("</text:a>");
             }
         }
+        if let Some(entry) = toc.filter(|t| t.level > 0) {
+            body.push_str(&format!("<text:tab/>{}", entry.page.max(1)));
+        }
         body.push_str(close_tag);
+        if toc_title {
+            body.push_str("</text:index-title>");
+        }
+        let next_in_toc = paragraphs
+            .get(index + 1)
+            .is_some_and(|n| n.attrs.toc.is_some() && n.attrs.cell.is_none());
+        if toc_open && !next_in_toc {
+            body.push_str("</text:index-body></text:table-of-content>");
+            toc_open = false;
+        }
     }
     close_to(&mut body, &mut open, 0);
     if let Some((table, _, col)) = open_cell {
@@ -717,6 +772,9 @@ fn content_xml(paragraphs: &[Paragraph], pictures: &HashMap<String, String>) -> 
         r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content {NS} office:version="1.3"><office:automatic-styles>{auto}</office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"#
     )
 }
+
+/// Modelos do Sumário (níveis 1 a 3): texto, tab com pontilhado e número da página.
+const TOC_TEMPLATES: &str = r#"<text:index-title-template text:style-name="Contents_20_Heading">Sumário</text:index-title-template><text:table-of-content-entry-template text:outline-level="1" text:style-name="Contents_20_1"><text:index-entry-link-start/><text:index-entry-chapter/><text:index-entry-text/><text:index-entry-tab-stop style:type="right" style:leader-char="."/><text:index-entry-page-number/><text:index-entry-link-end/></text:table-of-content-entry-template><text:table-of-content-entry-template text:outline-level="2" text:style-name="Contents_20_2"><text:index-entry-link-start/><text:index-entry-chapter/><text:index-entry-text/><text:index-entry-tab-stop style:type="right" style:leader-char="."/><text:index-entry-page-number/><text:index-entry-link-end/></text:table-of-content-entry-template><text:table-of-content-entry-template text:outline-level="3" text:style-name="Contents_20_3"><text:index-entry-link-start/><text:index-entry-chapter/><text:index-entry-text/><text:index-entry-tab-stop style:type="right" style:leader-char="."/><text:index-entry-page-number/><text:index-entry-link-end/></text:table-of-content-entry-template>"#;
 
 fn list_styles() -> String {
     const BULLETS: [&str; 3] = ["•", "◦", "▪"];
@@ -1029,6 +1087,26 @@ fn read_styles(
     }
 }
 
+/// Nível do Sumário pelo estilo do parágrafo ("Contents 1"…, herdado por estilos automáticos).
+fn toc_level_of(name: &str, styles: &HashMap<String, OdfStyle>) -> Option<u8> {
+    let mut cur = Some(name.to_string());
+    for _ in 0..16 {
+        let n = cur?;
+        let lower = n.to_lowercase().replace("_20_", " ");
+        if lower == "contents heading" {
+            return Some(0);
+        }
+        if let Some(level) = lower
+            .strip_prefix("contents ")
+            .and_then(|l| l.trim().parse::<u8>().ok())
+        {
+            return Some(level.clamp(1, nova_domain_text::MAX_TOC_LEVEL));
+        }
+        cur = styles.get(&n).and_then(|s| s.parent.clone());
+    }
+    None
+}
+
 /// Estilo com os pais resolvidos: marcas e atributos herdados, estilo do Nova.
 fn resolve(
     name: &str,
@@ -1125,6 +1203,8 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     let (mut tbl_depth, mut table_no, mut row, mut col) = (0u32, 0u32, 0u16, 0u16);
     let mut cell: Option<nova_domain_text::CellRef> = None;
     let mut cell_shading: Option<String> = None;
+    // Sumário (text:table-of-content) e o título dele.
+    let (mut in_toc, mut in_toc_title) = (false, false);
 
     let push = |para: &mut Option<Paragraph>, marks: &[Vec<Mark>], text: &str| {
         let p = para.get_or_insert_with(Paragraph::default);
@@ -1171,9 +1251,23 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                         };
                         frame = (pt(b"width").zip(pt(b"height")), None);
                     }
-                    b"note" | b"annotation" | b"tracked-changes" | b"sequence-decls" if !empty => {
+                    b"note"
+                    | b"annotation"
+                    | b"tracked-changes"
+                    | b"sequence-decls"
+                    | b"table-of-content-source"
+                    | b"alphabetical-index-source"
+                    | b"illustration-index-source"
+                    | b"table-index-source"
+                    | b"object-index-source"
+                    | b"user-index-source"
+                    | b"bibliography-source"
+                        if !empty =>
+                    {
                         skip = 1
                     }
+                    b"table-of-content" if !empty => in_toc = true,
+                    b"index-title" if !empty && in_toc => in_toc_title = true,
                     b"table" if !empty && e.name().as_ref() == b"table:table" => {
                         tbl_depth += 1;
                         if tbl_depth == 1 {
@@ -1242,6 +1336,20 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                         } else if !list_stack.is_empty() {
                             attrs.list = Some(ListKind::Bullet);
                             attrs.indent = ((list_stack.len() - 1) as u8).min(MAX_INDENT);
+                        }
+                        // O título do sumário pode vir fora do índice (o LibreOffice o
+                        // grava assim ao abrir um .docx).
+                        let toc_style = toc_level_of(&style_name, &styles);
+                        let toc_level = match (in_toc, in_toc_title, toc_style) {
+                            (true, true, _) | (_, _, Some(0)) => Some(0),
+                            (true, false, level) => Some(level.unwrap_or(1)),
+                            _ => None,
+                        };
+                        if let Some(level) = toc_level.filter(|_| cell.is_none()) {
+                            if level > 0 {
+                                style = BlockStyle::Paragraph;
+                            }
+                            attrs.toc = Some(nova_domain_text::TocEntry { level, page: 0 });
                         }
                         para = Some(Paragraph {
                             style,
@@ -1359,8 +1467,14 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                             cell = None;
                         }
                     }
+                    b"table-of-content" => in_toc = false,
+                    b"index-title" => in_toc_title = false,
                     b"p" | b"h" => {
                         if let Some(mut p) = para.take() {
+                            if let Some(mut entry) = p.attrs.toc.filter(|t| t.level > 0) {
+                                entry.page = crate::docx::take_toc_page(&mut p);
+                                p.attrs.toc = Some(entry);
+                            }
                             // Imagens do parágrafo: cada uma num parágrafo próprio, antes do texto.
                             let images = std::mem::take(&mut para_images);
                             let text_too = p.spans.iter().any(|s| !s.text.trim().is_empty());

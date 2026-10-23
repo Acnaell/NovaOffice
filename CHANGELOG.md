@@ -8,6 +8,18 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Cabeçalho, rodapé e número de página** (Inserir → Cabeçalho e Rodapé): duplo clique na margem
+  de cima ou de baixo para editar, aba contextual com Número de Página e Número de Páginas,
+  Primeira Página Diferente e alinhamento. Número de Página tem as posições do Word (início ou fim da
+  página, à esquerda, no centro ou à direita, e "Página X de Y"). Na impressão e no PDF vão nas
+  margens de cada página. São lidos e gravados em .docx (`header1.xml`/`footer1.xml` com os campos
+  PAGE e NUMPAGES) e .odt.
+- Aba **Referências** com **Sumário Automático**: lista os títulos 1 a 3 com pontilhado e o número
+  da página real de cada um; Atualizar Sumário refaz a lista; Ctrl+clique numa entrada leva ao
+  título. Vai para o .docx como campo TOC do Word e para o .odt como índice do LibreOffice, e volta.
+
 ## [0.1.7] - 2026-10-23
 
 ### Adicionado

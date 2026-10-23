@@ -492,14 +492,26 @@ fn body_xml(
     let mut previous_list: Option<ListKind> = None;
     let mut current_number_id = 0;
     let mut table = TableWriter::new(paragraphs);
-    for p in paragraphs {
+    // Sumário: as entradas ficam dentro de um campo TOC, como no Word.
+    let text_width = page
+        .width
+        .saturating_sub(page.margin_left + page.margin_right)
+        .max(1440);
+    let mut toc_open = false;
+    for (index, p) in paragraphs.iter().enumerate() {
         table.before(&mut out, p);
         out.push_str("<w:p>");
         let mut ppr = String::new();
-        if let Some(id) = style_id(p.style) {
-            ppr.push_str(&format!(r#"<w:pStyle w:val="{id}"/>"#));
-        }
         let a = &p.attrs;
+        match a.toc {
+            Some(entry) if entry.level == 0 => ppr.push_str(r#"<w:pStyle w:val="TOCHeading"/>"#),
+            Some(entry) => ppr.push_str(&format!(r#"<w:pStyle w:val="TOC{}"/>"#, entry.level)),
+            None => {
+                if let Some(id) = style_id(p.style) {
+                    ppr.push_str(&format!(r#"<w:pStyle w:val="{id}"/>"#));
+                }
+            }
+        }
         if a.page_break_before {
             ppr.push_str("<w:pageBreakBefore/>");
         }
@@ -543,6 +555,11 @@ fn body_xml(
             }
             ppr.push_str("/>");
         }
+        if a.toc.is_some_and(|t| t.level > 0) {
+            ppr.push_str(&format!(
+                r#"<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{text_width}"/></w:tabs>"#
+            ));
+        }
         if a.list.is_none() && a.indent > 0 {
             ppr.push_str(&format!(
                 r#"<w:ind w:left="{}"/>"#,
@@ -559,6 +576,11 @@ fn body_xml(
             out.push_str("<w:pPr>");
             out.push_str(&ppr);
             out.push_str("</w:pPr>");
+        }
+        let toc_entry = a.toc.filter(|t| t.level > 0);
+        if toc_entry.is_some() && !toc_open {
+            out.push_str(TOC_FIELD_BEGIN);
+            toc_open = true;
         }
         if let Some(image) = &p.attrs.image {
             if let Some(index) = images.iter().position(|(id, ..)| *id == image.id) {
@@ -587,6 +609,19 @@ fn body_xml(
         if open_link.is_some() {
             out.push_str("</w:hyperlink>");
         }
+        if let Some(entry) = toc_entry {
+            out.push_str(&format!(
+                "<w:r><w:tab/></w:r><w:r><w:t>{}</w:t></w:r>",
+                entry.page.max(1)
+            ));
+        }
+        let next_is_entry = paragraphs
+            .get(index + 1)
+            .is_some_and(|n| n.attrs.toc.is_some_and(|t| t.level > 0));
+        if toc_open && !next_is_entry {
+            out.push_str(r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#);
+            toc_open = false;
+        }
         out.push_str("</w:p>");
     }
     if table.finish(&mut out) {
@@ -604,6 +639,9 @@ fn body_xml(
     ));
     (out, nums, links)
 }
+
+/// Início do campo do Sumário (títulos 1 a 3, com links), antes do resultado.
+const TOC_FIELD_BEGIN: &str = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>"#;
 
 /// Um `w:r`, com as propriedades na ordem que o esquema do Word exige.
 fn run_xml(out: &mut String, span: &Span) {
@@ -751,7 +789,7 @@ const CORE_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?
 
 /// Estilos com os nomes internos do Word ("heading 1"…), que ele traduz para
 /// "Título 1" na interface em português. Tamanhos iguais aos do Nova Text.
-const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:uiPriority w:val="39"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style></w:styles>"#;
+const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:uiPriority w:val="39"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOCHeading"><w:name w:val="TOC Heading"/><w:basedOn w:val="Heading1"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:qFormat/><w:pPr><w:outlineLvl w:val="9"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC2"><w:name w:val="toc 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="220"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC3"><w:name w:val="toc 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="440"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC4"><w:name w:val="toc 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="660"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC5"><w:name w:val="toc 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="880"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC6"><w:name w:val="toc 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="1100"/></w:pPr></w:style></w:styles>"#;
 
 // ---------------------------------------------------------------- abrir
 
@@ -837,6 +875,44 @@ fn style_from(id: &str, name: &str) -> Option<BlockStyle> {
         return Some(BlockStyle::Code);
     }
     None
+}
+
+/// Nível de Sumário de um estilo pelo nome interno do Word ("toc 1" a "toc 9",
+/// "TOC Heading" = 0). Níveis acima de 6 ficam no 6.
+fn toc_level(name: &str) -> Option<u8> {
+    let name = name.to_lowercase();
+    if name == "toc heading" {
+        return Some(0);
+    }
+    let level: u8 = name.strip_prefix("toc ")?.trim().parse().ok()?;
+    (level >= 1).then(|| level.min(nova_domain_text::MAX_TOC_LEVEL))
+}
+
+/// Tira o número de página do fim de uma entrada de sumário ("Introdução\t3").
+pub(crate) fn take_toc_page(p: &mut Paragraph) -> u16 {
+    let text = p.text();
+    let Some(tab) = text.rfind('\t') else {
+        return 0;
+    };
+    let tail = text[tab + 1..].trim();
+    if tail.chars().count() > 12 {
+        return 0;
+    }
+    let page = tail.parse().unwrap_or(0);
+    // Corta os trechos no tab (o tab e o número saem).
+    let mut left = tab;
+    p.spans.retain_mut(|span| {
+        if left == 0 {
+            return false;
+        }
+        if span.text.len() > left {
+            span.text.truncate(left);
+        }
+        left -= span.text.len();
+        true
+    });
+    p.spans.retain(|span| !span.text.is_empty());
+    page
 }
 
 /// Um elemento de propriedade (`w:b`, `w:sz`, `w:jc`…) com os atributos pelo
@@ -928,6 +1004,8 @@ fn read_theme(xml: &str) -> ThemeFonts {
 struct StyleInfo {
     /// Estilo do Nova equivalente (Título 1, Citação…); `None` para os demais.
     style: Option<BlockStyle>,
+    /// Estilo de Sumário ("toc 1"… e "TOC Heading" = 0).
+    toc: Option<u8>,
     num: Option<(u32, u8)>,
     based_on: Option<String>,
     rpr: Vec<Prop>,
@@ -966,6 +1044,7 @@ impl Styles {
         StyleInfo {
             style: chain.iter().rev().find_map(|s| s.style),
             num: chain.iter().rev().find_map(|s| s.num),
+            toc: chain.last().and_then(|s| s.toc),
             ..StyleInfo::default()
         }
     }
@@ -1043,6 +1122,7 @@ fn read_styles(xml: &str) -> Styles {
                 b"style" => {
                     if let Some((id, name, mut info)) = current.take() {
                         info.style = style_from(&id, &name);
+                        info.toc = toc_level(&name);
                         info.num = num_lvl.0.map(|n| (n, num_lvl.1));
                         by_id.insert(id, info);
                     }
@@ -1408,6 +1488,10 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         let info = styles.info(para_style);
         if let Some(style) = info.style {
             p.style = style;
+        }
+        if let Some(level) = info.toc {
+            let page = if level > 0 { take_toc_page(&mut p) } else { 0 };
+            p.attrs.toc = Some(nova_domain_text::TocEntry { level, page });
         }
         // Lista: a do parágrafo, ou a herdada do estilo (Lista com Marcadores…).
         if let Some((num_id, lvl)) = para_num.or(info.num) {

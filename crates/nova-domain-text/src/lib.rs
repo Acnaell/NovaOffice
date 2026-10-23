@@ -10,8 +10,8 @@ mod format;
 
 pub use format::{
     is_hex_color, is_link, is_media_id, Align, BlockStyle, CellRef, ImageRef, ListKind, Mark,
-    MarkKind, ParaAttr, ParaAttrs, Paragraph, Span, HIGHLIGHT_COLORS, MAX_IMAGE_PT, MAX_INDENT,
-    MAX_TABLE_SIZE,
+    MarkKind, ParaAttr, ParaAttrs, Paragraph, Span, TocEntry, HIGHLIGHT_COLORS, MAX_IMAGE_PT,
+    MAX_INDENT, MAX_TABLE_SIZE, MAX_TOC_LEVEL,
 };
 
 /// Página do documento, em twips (1/20 de ponto, 1/1440 de polegada), como no
@@ -457,6 +457,9 @@ impl TextDocument {
                     .then_some(ParaAttr::PageBreakBefore(true)),
                 d.cell.clone().map(|c| ParaAttr::Cell(Some(c))),
                 d.image.clone().map(|i| ParaAttr::Image(Some(i))),
+                d.toc
+                    .filter(TocEntry::is_valid)
+                    .map(|t| ParaAttr::Toc(Some(t))),
             ];
             commands.extend(
                 changes

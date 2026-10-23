@@ -11,6 +11,7 @@ import type { Match } from "./find";
 import { autoLink, autoList, changeIndent, isDark, linkOf, listMarkers } from "./formatting";
 import { moveToCell, tableGrid } from "./tables";
 import { paginate, unpaginate, type PageInfo } from "./paginate";
+import { screenPages, tocTargets } from "./toc";
 import { HeaderFooterLayer, splitFields, type Part } from "./headerfooter";
 import {
   blockText,
@@ -135,6 +136,17 @@ export function Editor(props: Props) {
       latest.current.selection.focus.block,
     );
     setPages((n) => (n === info.pages ? n : info.pages));
+    // Sumário: o número da página de cada entrada é o da página real do título.
+    const entries = root.querySelectorAll<HTMLElement>(".toc-entry");
+    if (entries.length) {
+      const targets = tocTargets(latest.current.view.blocks);
+      const pageOf = screenPages(root);
+      entries.forEach((el) => {
+        const target = targets.get(Number(el.dataset.block));
+        const page = target === undefined ? "" : String(pageOf(target));
+        if (el.dataset.page !== page) el.dataset.page = page;
+      });
+    }
     latest.current.onPageInfo(info);
   };
   useLayoutEffect(() => repaginate.current(), [props.revision, props.showMarks, props.selection.focus.block, page]);
@@ -469,6 +481,17 @@ export function Editor(props: Props) {
     // Ctrl+clique segue o link, como no Word.
     const onClick = (e: MouseEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
+      // Entrada do Sumário: vai para o título, como os links do sumário do Word.
+      const entry = (e.target as HTMLElement | null)?.closest<HTMLElement>(".toc-entry");
+      const target = entry && tocTargets(latest.current.view.blocks).get(Number(entry.dataset.block));
+      if (target !== undefined && target !== null) {
+        e.preventDefault();
+        const sel = { anchor: { block: target, offset: 0 }, focus: { block: target, offset: 0 } };
+        writeSelection(root, sel);
+        latest.current.onSelect(sel);
+        root.querySelector(`[data-block="${target}"]`)?.scrollIntoView({ block: "start" });
+        return;
+      }
       const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-href]");
       if (!el?.dataset.href) return;
       e.preventDefault();
@@ -693,7 +716,7 @@ const Block = memo(function Block({
     <Tag
       data-block={index}
       data-marker={marker ?? undefined}
-      className={`block block-${block.style}${marker ? ` list list-${block.attrs.list}` : ""}${block.attrs.pageBreakBefore ? " page-break" : ""}`}
+      className={`block block-${block.style}${marker ? ` list list-${block.attrs.list}` : ""}${block.attrs.pageBreakBefore ? " page-break" : ""}${tocClass(block)}`}
       data-page-break={block.attrs.pageBreakBefore ? labels.pageBreak : undefined}
       style={paragraphStyle(block.attrs)}
     >
@@ -745,6 +768,13 @@ const lineBreaks = (text: string) => text.replace(/\u000B/g, "\n");
 
 /** Espaço vira · e tabulação vira →, com o mesmo comprimento (offsets não mudam). */
 const visibleMarks = (text: string) => lineBreaks(text).replace(/ /g, "·").replace(/\t/g, "→");
+
+/** Classes do parágrafo do Sumário: título ou entrada (com o nível). */
+function tocClass(block: BlockView): string {
+  const toc = block.attrs.toc;
+  if (!toc) return "";
+  return toc.level === 0 ? " toc-title" : ` toc-entry toc-${Math.min(toc.level, 6)}`;
+}
 
 function paragraphStyle(attrs: ParaAttrs | undefined): CSSProperties | undefined {
   if (!attrs) return undefined;

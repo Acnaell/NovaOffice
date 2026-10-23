@@ -73,6 +73,15 @@ export interface ParaAttrs {
   cell: CellRef | null;
   /** Imagem do parágrafo (alinhada com o texto); o arquivo vem de `api.media`. */
   image: ImageRef | null;
+  /** Parágrafo do Sumário (título = nível 0); o texto é o do título do documento. */
+  toc: TocEntry | null;
+}
+
+export interface TocEntry {
+  /** 0 = título do sumário; 1 a 6 = nível do título. */
+  level: number;
+  /** Página da última atualização (a tela mostra a calculada na hora). */
+  page: number;
 }
 
 export interface ImageRef {
@@ -99,7 +108,8 @@ export type ParaAttr =
   | { attr: "shading"; value: string | null }
   | { attr: "pageBreakBefore"; value: boolean }
   | { attr: "cell"; value: CellRef | null }
-  | { attr: "image"; value: ImageRef | null };
+  | { attr: "image"; value: ImageRef | null }
+  | { attr: "toc"; value: TocEntry | null };
 
 export const MAX_INDENT = 8;
 

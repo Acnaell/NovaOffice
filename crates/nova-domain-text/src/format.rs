@@ -358,6 +358,42 @@ pub struct ParaAttrs {
     /// "Alinhado com o Texto" no Word). O arquivo fica nos arquivos embutidos.
     #[serde(default)]
     pub image: Option<ImageRef>,
+    /// Parágrafo do Sumário. Os parágrafos seguidos com `toc` formam o sumário.
+    #[serde(default)]
+    pub toc: Option<TocEntry>,
+}
+
+/// Níveis de título que entram no Sumário (Título 1 a Título 6).
+pub const MAX_TOC_LEVEL: u8 = 6;
+
+/// Linha do Sumário: o texto do parágrafo é o do título; `level` 0 é o título
+/// do próprio sumário. `page` é o número da página da última vez que o sumário
+/// foi atualizado (como o resultado guardado do campo TOC do Word); a tela
+/// mostra o número calculado na hora.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TocEntry {
+    pub level: u8,
+    pub page: u16,
+}
+
+impl TocEntry {
+    pub fn is_valid(&self) -> bool {
+        self.level <= MAX_TOC_LEVEL
+    }
+
+    /// No CRDT: `"nível:página"`.
+    fn encode(&self) -> String {
+        format!("{}:{}", self.level, self.page)
+    }
+
+    fn decode(value: &str) -> Option<TocEntry> {
+        let (level, page) = value.split_once(':')?;
+        let entry = TocEntry {
+            level: level.parse().ok()?,
+            page: page.parse().ok()?,
+        };
+        entry.is_valid().then_some(entry)
+    }
 }
 
 /// Imagem num parágrafo: o arquivo embutido e o tamanho em pontos.
@@ -455,6 +491,7 @@ pub enum ParaAttr {
     PageBreakBefore(bool),
     Cell(Option<CellRef>),
     Image(Option<ImageRef>),
+    Toc(Option<TocEntry>),
 }
 
 impl ParaAttr {
@@ -475,6 +512,9 @@ impl ParaAttr {
             )),
             ParaAttr::Cell(Some(cell)) if !cell.is_valid() => invalid(format!(
                 "célula {cell:?}: id de 1 a 32 caracteres (letras, dígitos, - e _), linha e coluna até {MAX_TABLE_SIZE}"
+            )),
+            ParaAttr::Toc(Some(entry)) if !entry.is_valid() => invalid(format!(
+                "sumário {entry:?}: nível de 0 a {MAX_TOC_LEVEL}"
             )),
             ParaAttr::Shading(Some(c)) if !is_hex_color(c) => {
                 invalid(format!("sombreamento {c:?} não é #RRGGBB"))
@@ -500,6 +540,7 @@ impl ParaAttr {
             ParaAttr::PageBreakBefore(true) => ("pageBreakBefore", Some(AttrValue::Bool(true))),
             ParaAttr::Cell(v) => ("cell", v.as_ref().map(|c| AttrValue::Text(c.encode()))),
             ParaAttr::Image(v) => ("image", v.as_ref().map(|i| AttrValue::Text(i.encode()))),
+            ParaAttr::Toc(v) => ("toc", v.map(|t| AttrValue::Text(t.encode()))),
         };
         (key.to_string(), value)
     }
@@ -533,6 +574,10 @@ impl ParaAttrs {
             },
             image: match map.get("image") {
                 Some(AttrValue::Text(v)) => ImageRef::decode(v),
+                _ => None,
+            },
+            toc: match map.get("toc") {
+                Some(AttrValue::Text(v)) => TocEntry::decode(v),
                 _ => None,
             },
             shading: match map.get("shading") {
