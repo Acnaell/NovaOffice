@@ -2274,7 +2274,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nova-app"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "base64 0.22.1",
  "imagesize",
@@ -2288,7 +2288,7 @@ dependencies = [
 
 [[package]]
 name = "nova-cli"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "clap",
@@ -2298,7 +2298,7 @@ dependencies = [
 
 [[package]]
 name = "nova-crdt"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "thiserror 1.0.69",
  "yrs",
@@ -2306,7 +2306,7 @@ dependencies = [
 
 [[package]]
 name = "nova-desktop"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "nova-app",
  "nova-domain-text",
@@ -2324,7 +2324,7 @@ dependencies = [
 
 [[package]]
 name = "nova-domain-text"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "nova-crdt",
  "serde",
@@ -2334,7 +2334,7 @@ dependencies = [
 
 [[package]]
 name = "nova-spell"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "serde",
  "serde_json",
