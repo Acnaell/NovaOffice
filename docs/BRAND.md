@@ -6,7 +6,7 @@ Os arquivos ficam em [`assets/brand`](../assets/brand).
 
 ## Símbolo
 
-Seis formas geométricas numa grade 3 × 2, uma para cada aplicativo da suíte, sobre o fundo azul-marinho.
+Oito formas geométricas numa grade 4 × 2, uma para cada aplicativo da suíte, sobre o fundo azul-marinho.
 O símbolo completo representa a NovaOffice; a versão em contorno com uma única forma colorida
 representa cada aplicativo.
 
@@ -18,6 +18,10 @@ representa cada aplicativo.
 | Círculo | **Nova Draw** | Draw | `#D094DD` lilás |
 | Quarto de círculo | **Nova Base** | Base | `#D1A84B` ouro |
 | Sinal de mais | **Nova Math** | Math | `#2AC4CC` turquesa |
+| Funil (trapézio que se estreita para a direita) | **Nova Mail** | E-mail (como o Thunderbird) | `#F07F9C` rosa |
+| Nuvem em arcos (quarto de círculo + semicírculo sobre base reta) | **Nova Drive** | Arquivos na nuvem (motor Rclone) | `#9AA5F5` índigo |
+
+Na grade, a primeira linha tem Text, Sheets, Slides e Mail; a segunda, Draw, Base, Math e Drive.
 
 ## Cores
 
@@ -28,7 +32,7 @@ representa cada aplicativo.
 | Texto claro sobre o fundo | `#F2F4F6` |
 | Texto escuro sobre fundo claro | `#1D1F20` |
 
-As seis cores dos aplicativos são usadas só para identificar o aplicativo correspondente,
+As oito cores dos aplicativos são usadas só para identificar o aplicativo correspondente,
 nunca como cor decorativa genérica.
 
 ## Arquivos
@@ -48,7 +52,7 @@ nunca como cor decorativa genérica.
 - Não mude as cores, a ordem ou as proporções das formas.
 - No logotipo, "Nova" vai em negrito e "Office" em peso regular, sem espaço entre as palavras.
 - Os nomes dos aplicativos são sempre "Nova" + nome em inglês: Nova Text, Nova Sheets, Nova Slides,
-  Nova Draw, Nova Base, Nova Math.
+  Nova Draw, Nova Base, Nova Math, Nova Mail, Nova Drive.
 
 ## Ícones do app desktop
 

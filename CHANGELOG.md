@@ -8,6 +8,13 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Alterado
+
+- Novo símbolo da NovaOffice com **8 aplicativos** numa grade 4 × 2. Entram o **Nova Mail** (funil
+  rosa) e o **Nova Drive** (nuvem em arcos índigo), ainda como "Em breve". Mudam o ícone do app,
+  os cards, o logotipo e a imagem de compartilhamento. A tela inicial e o menu de aplicativos
+  mostram os 8 em duas linhas de 4.
+
 ## [0.1.8] - 2026-10-23
 
 ### Adicionado

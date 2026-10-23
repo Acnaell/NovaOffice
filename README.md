@@ -30,6 +30,10 @@ Cada aplicativo tem sua forma e sua cor no símbolo da NovaOffice.
     <td><picture><source media="(prefers-color-scheme: dark)" srcset="assets/brand/products/card-base-dark.png"><img src="assets/brand/products/card-base-light.png" alt="Nova Base" width="300"></picture><br><sub>Planejado: banco de dados</sub></td>
     <td><picture><source media="(prefers-color-scheme: dark)" srcset="assets/brand/products/card-math-dark.png"><img src="assets/brand/products/card-math-light.png" alt="Nova Math" width="300"></picture><br><sub>Planejado: fórmulas matemáticas</sub></td>
   </tr>
+  <tr>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="assets/brand/products/card-mail-dark.png"><img src="assets/brand/products/card-mail-light.png" alt="Nova Mail" width="300"></picture><br><sub>Planejado: e-mail com todas as contas (<a href="docs/nova-mail/VISAO.md">visão</a>)</sub></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="assets/brand/products/card-drive-dark.png"><img src="assets/brand/products/card-drive-light.png" alt="Nova Drive" width="300"></picture><br><sub>Planejado: seus drives na nuvem no computador (<a href="docs/nova-drive/VISAO.md">visão</a>)</sub></td>
+  </tr>
 </table>
 
 ## Nova Text hoje

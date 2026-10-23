@@ -956,7 +956,7 @@ const flows = [
     const title = await h.p.evaluate(() => window.__title);
     await h.p.locator('.bs-tile').first().click(); await h.settle(150);
     const gone = !(await h.p.locator('.backstage').count());
-    return apps === 6 && gone ? OK(`6 aplicativos, Novo e Recentes; título "${title}".`) : FALHA(`apps=${apps} fechou=${gone}`);
+    return apps === 8 && gone ? OK(`8 aplicativos (com Nova Mail e Nova Drive), Novo e Recentes; título "${title}".`) : FALHA(`apps=${apps} fechou=${gone}`);
   } },
   { area: 'NovaOffice', name: 'Menu de aplicativos (grade ao lado do logo)', run: async (h) => {
     await h.reset(['x']);
@@ -966,8 +966,8 @@ const flows = [
     const soon = await h.p.locator('.launcher-app:disabled').count();
     await h.press('Escape');
     const closed = !(await h.p.locator('.launcher').count());
-    const ok = names.length === 6 && current === 'Nova Text' && soon === 5 && closed;
-    return ok ? OK(`${names.join(', ')}; os outros 5 aparecem como "Em breve"; Esc fecha.`) : FALHA(`${names} atual=${current} breve=${soon} fechou=${closed}`);
+    const ok = names.length === 8 && current === 'Nova Text' && soon === 7 && closed;
+    return ok ? OK(`${names.join(', ')}; os outros 7 aparecem como "Em breve"; Esc fecha.`) : FALHA(`${names} atual=${current} breve=${soon} fechou=${closed}`);
   } },
 
   // ───────────── Inserir

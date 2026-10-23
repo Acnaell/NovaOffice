@@ -1142,7 +1142,7 @@ select {
 }
 
 .popover.launcher {
-  width: 344px;
+  width: 432px;
   max-height: none;
   padding: 14px;
 }
@@ -1165,7 +1165,7 @@ select {
 
 .launcher-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 6px;
 }
 
@@ -1192,6 +1192,7 @@ select {
 .launcher-name {
   font-weight: 600;
   font-size: 12.5px;
+  white-space: nowrap;
 }
 
 .launcher-sub {
@@ -1343,9 +1344,9 @@ select {
 
 .bs-apps {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  max-width: 900px;
+  max-width: 680px;
 }
 
 .bs-app {

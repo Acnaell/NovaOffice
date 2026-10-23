@@ -13,21 +13,24 @@ export const BRAND = {
   lilac: "#D094DD", // Nova Draw
   gold: "#D1A84B", // Nova Base
   teal: "#2AC4CC", // Nova Math
+  rose: "#F07F9C", // Nova Mail
+  indigo: "#9AA5F5", // Nova Drive
 } as const;
 
-export type BrandApp = "text" | "sheets" | "slides" | "draw" | "base" | "math";
+export type BrandApp = "text" | "sheets" | "slides" | "draw" | "base" | "math" | "mail" | "drive";
 
 /**
  * O símbolo da marca. Sem `app`, todas as formas coloridas (logotipo);
  * com `app`, só a forma daquele aplicativo colorida e as demais em contorno.
  */
 export function BrandMark({ app, size = 24 }: { app?: BrandApp; size?: number }) {
+  // Grade 4 × 2: mesma altura do símbolo de 6 formas, um pouco mais largo.
   const shape = (owner: BrandApp, color: string) =>
     !app || app === owner
       ? { fill: color }
       : { fill: "none", stroke: BRAND.outline, strokeWidth: 6, strokeLinejoin: "round" as const };
   return (
-    <svg width={size} height={size} viewBox="24 58 208 140" aria-hidden="true">
+    <svg width={Math.round((size * 276) / 208)} height={Math.round((size * 140) / 208)} viewBox="24 58 276 140" aria-hidden="true">
       <g {...shape("text", BRAND.blue)}>
         <rect x="32" y="66" width="60" height="20" />
         <rect x="32" y="98" width="26" height="20" />
@@ -42,6 +45,8 @@ export function BrandMark({ app, size = 24 }: { app?: BrandApp; size?: number })
       <circle cx="62" cy="162" r="30" {...shape("draw", BRAND.lilac)} />
       <path d="M100 132 A58 58 0 0 1 158 190 L100 190 Z" {...shape("base", BRAND.gold)} />
       <path d="M187 132h16v22h21v16h-21v22h-16v-22h-21v-16h21z" {...shape("math", BRAND.teal)} />
+      <path d="M234 66 L292 86 V102 L234 122 Z" {...shape("mail", BRAND.rose)} />
+      <path d="M234 190 A20 20 0 0 1 254 170 A19 19 0 0 1 292 170 V190 Z" {...shape("drive", BRAND.indigo)} />
     </svg>
   );
 }
