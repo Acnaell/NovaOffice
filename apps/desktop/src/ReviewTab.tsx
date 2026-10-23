@@ -33,6 +33,7 @@ export function ReviewTab({ proofing, profile, onProofing, onCommand }: ReviewTa
       <RibbonGroup label={t("group.proofing")}>
         {button("review.spelling", reviewIcons.spelling)}
         {button("review.autocorrect", reviewIcons.autocorrect)}
+        {button("review.wordCount", reviewIcons.wordCount)}
       </RibbonGroup>
       <RibbonGroup label={t("group.language")}>
         <MenuButton
@@ -122,6 +123,15 @@ function Icon({ children, ...props }: SVGProps<SVGSVGElement> & { children: Reac
 }
 
 export const reviewIcons = {
+  /** "123" sobre linhas de texto: Contar Palavras. */
+  wordCount: (
+    <Icon strokeWidth="1.5">
+      <path d="M3 3.5l1.5-1v6M3 8.5h3" />
+      <path d="M7.5 3.5a1.5 1.3 0 1 1 2.2 1.7L7.5 8.5h3" />
+      <path d="M12.5 3a1.3 1.1 0 1 1 1.2 1.9 1.4 1.2 0 1 1-1.3 2.2" />
+      <path d="M3 12h14M3 15h14M3 18h9" strokeWidth="1.75" />
+    </Icon>
+  ),
   /** Varinha com brilho: AutoCorreção. */
   autocorrect: (
     <Icon>

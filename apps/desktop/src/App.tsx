@@ -57,6 +57,7 @@ import { defaultProofing, matchAt, matchText, parseProofing, SPELL_LANGUAGES, us
 import { ReviewTab, useReviewShortcuts } from "./ReviewTab";
 import { SpellingPane } from "./SpellingPane";
 import { AutoCorrectDialog } from "./AutoCorrectDialog";
+import { WordCountDialog } from "./WordCountDialog";
 import { autoCorrect, loadAutoCorrect, storeAutoCorrect, type AutoCorrectOptions } from "./autocorrect";
 import type { Pos } from "./types";
 import { SpellMenu } from "./SpellMenu";
@@ -619,6 +620,7 @@ export default function App() {
 
   const [autoCorrectOptions, setAutoCorrectOptions] = useState<AutoCorrectOptions>(loadAutoCorrect);
   const [autoCorrectOpen, setAutoCorrectOpen] = useState(false);
+  const [wordCountOpen, setWordCountOpen] = useState(false);
 
   // Uma tecla digitada chega como um text.insert de um caractere (sozinho ou
   // depois de apagar a seleção). A correção vai num comando próprio: Ctrl+Z
@@ -995,6 +997,8 @@ export default function App() {
         return openSpellPane();
       case "review.autocorrect":
         return setAutoCorrectOpen(true);
+      case "review.wordCount":
+        return setWordCountOpen(true);
       default:
         return onStyle(command.slice("style.".length) as BlockStyle);
     }
@@ -1202,6 +1206,17 @@ export default function App() {
             }}
           />
         </div>
+        {wordCountOpen && (
+          <WordCountDialog
+            view={view}
+            selection={selection}
+            pages={pageInfo.pages}
+            onClose={() => {
+              setWordCountOpen(false);
+              focusEditor();
+            }}
+          />
+        )}
         {autoCorrectOpen && (
           <AutoCorrectDialog
             options={autoCorrectOptions}

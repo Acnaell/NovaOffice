@@ -13,6 +13,11 @@ A seção da versão é usada como texto da página de release no GitHub.
 - Corretor ortográfico no Nova Text, com os dicionários do LibreOffice (português do Brasil, inglês
   e espanhol): sublinhado vermelho enquanto digita, sugestões no clique direito, Ignorar Tudo e
   Adicionar ao Dicionário. O idioma de revisão fica na barra de status.
+- Aba Revisão no Nova Text: idioma de revisão (português do Brasil, inglês dos EUA, espanhol da
+  Espanha), Ortografia e Gramática (F7) com painel que percorre os erros um a um, AutoCorreção
+  enquanto digita (maiúscula no início da frase, aspas inteligentes, -- vira —, lista de
+  substituições editável) e Contar Palavras (Ctrl+Shift+G) com páginas, palavras, caracteres,
+  parágrafos e linhas.
 
 ## [0.1.6] - 2026-10-22
 
