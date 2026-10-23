@@ -48,6 +48,7 @@ export type CommandId =
   | "para.spacing2"
   | "para.showMarks"
   | "review.spelling"
+  | "review.autocorrect"
   | "style.paragraph"
   | "style.heading1"
   | "style.heading2"

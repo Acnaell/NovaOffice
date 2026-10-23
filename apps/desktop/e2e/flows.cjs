@@ -589,7 +589,7 @@ const flows = [
   } },
   { area: 'Ortografia', name: 'A palavra em digitação só é marcada ao sair dela', run: async (h) => {
     await h.reset(['']);
-    await h.type('pobrema');
+    await h.type('Um pobrema');
     const typing = await underlined(h);
     await h.type(' ');
     const after = await underlined(h);
@@ -702,6 +702,34 @@ const flows = [
       ? OK('Troca todas as ocorrências num único passo de desfazer; Esc fecha o painel.')
       : FALHA(`${JSON.stringify(t)} concluído=${done} painel=${closed} desfeito=${JSON.stringify(undone)}`);
   } },
+  { area: 'Ferramentas', name: 'AutoCorreção: aspas inteligentes, travessão e substituições', run: async (h) => {
+    await h.reset(); await h.type('Ele disse "oi" -- e saiu (c) ');
+    await h.settle(200);
+    const t = await h.texts();
+    return eq(t, ['Ele disse “oi” — e saiu © '])
+      ? OK('Aspas “ ”, -- vira — e a lista de substituições do Word ((c) → ©, ... → …).')
+      : FALHA(JSON.stringify(t));
+  } },
+  { area: 'Ferramentas', name: 'Opções de AutoCorreção (Revisão › AutoCorreção)', run: async (h) => {
+    await h.reset();
+    await h.p.locator('.tab', { hasText: 'Revisão' }).click();
+    await h.p.locator('.big-button', { hasText: 'AutoCorreção' }).click();
+    const dialog = h.p.locator('.modal.autocorrect');
+    await dialog.locator('label', { hasText: 'Primeira letra' }).locator('input').uncheck();
+    await dialog.locator('input[aria-label="Substituir"]').fill('nao');
+    await dialog.locator('input[aria-label="Por"]').fill('não');
+    await dialog.locator('button', { hasText: 'Adicionar' }).click();
+    await dialog.locator('button', { hasText: 'OK' }).click();
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    await h.p.locator('.page').focus();
+    await h.type('eu nao sei ');
+    await h.settle(200);
+    const t = await h.texts();
+    // Volta ao padrão para os outros fluxos.
+    await h.p.evaluate(() => localStorage.removeItem('nova.autocorrect'));
+    await h.reload();
+    return eq(t, ['eu não sei ']) ? OK('Cada correção liga e desliga; a lista Substituir/Por é editável e fica salva.') : FALHA(JSON.stringify(t));
+  } },
   { area: 'Ferramentas', name: 'Contagem de palavras', run: async (h) => {
     await h.reset(['uma duas', 'três']);
     const status = await h.p.locator('.statusbar').innerText();
@@ -713,9 +741,14 @@ const flows = [
     return /1 palavra · 1 parágrafo/.test(status) ? OK() : FALHA(`Plural: "${status.replace(/\n/g, ' · ')}"`);
   } },
   { area: 'Ferramentas', name: 'Autocorreção (maiúscula no início da frase)', run: async (h) => {
-    await h.reset(); await h.type('frase. outra');
+    await h.reset(); await h.type('frase. outra ');
+    await h.settle(200);
     const t = await h.texts();
-    return t[0] === 'Frase. Outra' ? OK() : AUSENTE('Não há autocorreção (maiúscula inicial, aspas inteligentes, -- → —).');
+    await h.press('Control+z');
+    const undone = await h.texts();
+    return t[0] === 'Frase. Outra ' && undone[0] === 'Frase. outra '
+      ? OK('Ao digitar o espaço depois da palavra, como no Word; Ctrl+Z logo depois desfaz só a correção.')
+      : FALHA(`${JSON.stringify(t)} → ${JSON.stringify(undone)}`);
   } },
 
   // ───────────── Arquivo
@@ -764,7 +797,7 @@ const flows = [
     return calls.includes('plugin:dialog|save') && !d.dirty ? OK() : FALHA(JSON.stringify(calls));
   } },
   { area: 'Arquivo', name: 'Novo documento com alterações pergunta Salvar / Não Salvar / Cancelar', run: async (h) => {
-    await h.reset(); await h.type('não salvo');
+    await h.reset(); await h.type('Não salvo');
     await h.press('Control+o'); await h.settle(150);
     if (!(await h.modalVisible())) return FALHA('Não perguntou.');
     await h.p.locator('.modal button', { hasText: 'Cancelar' }).click(); await h.settle(150);
@@ -772,7 +805,7 @@ const flows = [
     await h.press('Control+o'); await h.settle(150);
     await h.p.locator('.modal button', { hasText: 'Não Salvar' }).click(); await h.settle(200);
     const after = await h.texts();
-    return eq(kept, ['não salvo']) && eq(after, ['']) ? OK() : FALHA(`${JSON.stringify(kept)} → ${JSON.stringify(after)}`);
+    return eq(kept, ['Não salvo']) && eq(after, ['']) ? OK() : FALHA(`${JSON.stringify(kept)} → ${JSON.stringify(after)}`);
   } },
   { area: 'Arquivo', name: 'Fechar a janela com alterações não salvas', run: async (h) => {
     await h.reset(); await h.type('importante');
@@ -857,7 +890,7 @@ const flows = [
     return printed && hidden ? OK('Tela Imprimir → janela de impressão do sistema; só a página sai no papel.') : FALHA(`printed=${printed} css=${hidden}`);
   } },
   { area: 'Arquivo', name: 'Salvamento automático / recuperação', run: async (h) => {
-    await h.reset(); await h.type('texto que quase se perdeu');
+    await h.reset(); await h.type('Texto que quase se perdeu');
     const saved = await core('autosave');
     await core('restart'); // o app fecha sem salvar
     await h.p.reload(); await h.p.waitForSelector('.backstage'); await h.settle(150);
@@ -865,7 +898,7 @@ const flows = [
     if (!saved || !banner) return FALHA(`autosave=${saved} aviso=${banner}`);
     await h.p.locator('.bs-recovery button', { hasText: 'Recuperar' }).click(); await h.settle(300);
     const d = await h.doc();
-    return eq(await h.texts(), ['texto que quase se perdeu']) && d.dirty ? OK('Cópia a cada minuto; ao abrir de novo, a tela inicial oferece Recuperar.') : FALHA(JSON.stringify(await h.texts()));
+    return eq(await h.texts(), ['Texto que quase se perdeu']) && d.dirty ? OK('Cópia a cada minuto; ao abrir de novo, a tela inicial oferece Recuperar.') : FALHA(JSON.stringify(await h.texts()));
   } },
 
   // ───────────── NovaOffice

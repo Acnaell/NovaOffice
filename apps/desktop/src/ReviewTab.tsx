@@ -30,7 +30,10 @@ export function ReviewTab({ proofing, profile, onProofing, onCommand }: ReviewTa
   );
   return (
     <>
-      <RibbonGroup label={t("group.proofing")}>{button("review.spelling", reviewIcons.spelling)}</RibbonGroup>
+      <RibbonGroup label={t("group.proofing")}>
+        {button("review.spelling", reviewIcons.spelling)}
+        {button("review.autocorrect", reviewIcons.autocorrect)}
+      </RibbonGroup>
       <RibbonGroup label={t("group.language")}>
         <MenuButton
           label={t("review.language")}
@@ -119,6 +122,13 @@ function Icon({ children, ...props }: SVGProps<SVGSVGElement> & { children: Reac
 }
 
 export const reviewIcons = {
+  /** Varinha com brilho: AutoCorreção. */
+  autocorrect: (
+    <Icon>
+      <path d="M3 17l9.5-9.5M11 6l1.5-1.5 3 3L14 9" />
+      <path d="M15 2v3M13.5 3.5h3M5 4v2.5M3.75 5.25h2.5M16.5 12v2.5M15.25 13.25h2.5" strokeWidth="1.5" />
+    </Icon>
+  ),
   /** "ABC" com um visto: Ortografia e Gramática. */
   spelling: (
     <Icon strokeWidth="1.5">

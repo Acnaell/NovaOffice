@@ -323,6 +323,20 @@ const ptBR = {
   "proof.done": "A verificação ortográfica foi concluída.",
   "proof.ok": "OK",
   "proof.off": "A verificação ortográfica está desligada. Escolha um idioma em Revisão › Idioma.",
+  "cmd.review.autocorrect": "AutoCorreção",
+  "autocorrect.title": "Opções de AutoCorreção",
+  "autocorrect.capitalize": "Primeira letra da frase em maiúscula",
+  "autocorrect.smartQuotes": "Aspas retas por aspas inteligentes (\" por “ ”)",
+  "autocorrect.dashes": "Hifens (--) por travessão (—)",
+  "autocorrect.replaceText": "Substituir texto ao digitar",
+  "autocorrect.replace": "Substituir",
+  "autocorrect.with": "Por",
+  "autocorrect.list": "Substituições",
+  "autocorrect.add": "Adicionar",
+  "autocorrect.update": "Substituir",
+  "autocorrect.remove": "Excluir",
+  "autocorrect.reset": "Restaurar padrão",
+  "autocorrect.ok": "OK",
 };
 
 export type MessageKey = keyof typeof ptBR;
@@ -646,6 +660,20 @@ const en: Messages = {
   "proof.done": "The spelling check is complete.",
   "proof.ok": "OK",
   "proof.off": "Spell checking is off. Choose a language in Review › Language.",
+  "cmd.review.autocorrect": "AutoCorrect",
+  "autocorrect.title": "AutoCorrect Options",
+  "autocorrect.capitalize": "Capitalize first letter of sentences",
+  "autocorrect.smartQuotes": "Straight quotes with smart quotes (\" with “ ”)",
+  "autocorrect.dashes": "Hyphens (--) with dash (—)",
+  "autocorrect.replaceText": "Replace text as you type",
+  "autocorrect.replace": "Replace",
+  "autocorrect.with": "With",
+  "autocorrect.list": "Replacements",
+  "autocorrect.add": "Add",
+  "autocorrect.update": "Replace",
+  "autocorrect.remove": "Delete",
+  "autocorrect.reset": "Reset to defaults",
+  "autocorrect.ok": "OK",
 };
 
 export const LOCALES = {
