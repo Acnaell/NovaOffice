@@ -309,6 +309,20 @@ const ptBR = {
   "tab.review": "Revisão",
   "review.language": "Idioma",
   "review.languageTip": "Idioma de revisão: o dicionário usado para verificar a ortografia",
+  "group.proofing": "Revisão de Texto",
+  "cmd.review.spelling": "Ortografia e Gramática",
+  "proof.title": "Ortografia",
+  "proof.close": "Fechar o painel Ortografia",
+  "proof.notInDictionary": "Não está no dicionário",
+  "proof.suggestions": "Sugestões",
+  "proof.noSuggestions": "(Nenhuma sugestão)",
+  "proof.ignoreOnce": "Ignorar uma vez",
+  "proof.change": "Alterar",
+  "proof.changeAll": "Alterar Todas",
+  "proof.checking": "Verificando…",
+  "proof.done": "A verificação ortográfica foi concluída.",
+  "proof.ok": "OK",
+  "proof.off": "A verificação ortográfica está desligada. Escolha um idioma em Revisão › Idioma.",
 };
 
 export type MessageKey = keyof typeof ptBR;
@@ -618,6 +632,20 @@ const en: Messages = {
   "tab.review": "Review",
   "review.language": "Language",
   "review.languageTip": "Proofing language: the dictionary used to check spelling",
+  "group.proofing": "Proofing",
+  "cmd.review.spelling": "Spelling & Grammar",
+  "proof.title": "Spelling",
+  "proof.close": "Close the Spelling pane",
+  "proof.notInDictionary": "Not in dictionary",
+  "proof.suggestions": "Suggestions",
+  "proof.noSuggestions": "(No suggestions)",
+  "proof.ignoreOnce": "Ignore Once",
+  "proof.change": "Change",
+  "proof.changeAll": "Change All",
+  "proof.checking": "Checking…",
+  "proof.done": "The spelling check is complete.",
+  "proof.ok": "OK",
+  "proof.off": "Spell checking is off. Choose a language in Review › Language.",
 };
 
 export const LOCALES = {

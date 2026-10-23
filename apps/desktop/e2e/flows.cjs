@@ -654,6 +654,54 @@ const flows = [
       ? OK('Revisão › Idioma; a barra de status acompanha a escolha.')
       : FALHA(`pt ${JSON.stringify(pt)} es ${JSON.stringify(es)} (${status}) en ${JSON.stringify(en)}`);
   } },
+  { area: 'Ortografia', name: 'Ortografia e Gramática (F7): painel percorre os erros um a um', run: async (h) => {
+    await h.reset(['Um pobrema e outro pobrema.', 'A excessão confirma a regra. Plimbrox.']);
+    await underlined(h);
+    const pane = h.p.locator('.proof-pane');
+    const word = async () => { await h.settle(500); return pane.locator('.proof-context mark').innerText(); };
+    const click = (name) => pane.locator('button', { hasText: name }).first().click();
+    await h.press('F7');
+    await pane.waitFor();
+    const seen = [await word()];
+    await click('Alterar');                 // pobrema → problema
+    seen.push(await word());
+    await click('Ignorar uma vez');         // o segundo pobrema fica
+    seen.push(await word());
+    await click('Alterar');                 // excessão → exceção
+    seen.push(await word());
+    // (o dicionário do usuário da ponte é o mesmo em todos os fluxos: palavra nova aqui)
+    await click('Ignorar Tudo');            // Plimbrox
+    await h.settle(800);
+    const done = await pane.locator('.proof-done').innerText().catch(() => '');
+    const t = await h.texts();
+    await pane.locator('.proof-done button').click();
+    const closed = await pane.count();
+    return eq(seen, ['pobrema', 'pobrema', 'excessão', 'Plimbrox']) && /concluída/.test(done) && closed === 0
+      && eq(t, ['Um problema e outro pobrema.', 'A exceção confirma a regra. Plimbrox.'])
+      ? OK('Alterar, Ignorar uma vez e Ignorar Tudo, do cursor em diante; termina com "A verificação ortográfica foi concluída".')
+      : FALHA(`${JSON.stringify(seen)} ${JSON.stringify(t)} "${done}" painel=${closed}`);
+  } },
+  { area: 'Ortografia', name: 'Ortografia e Gramática: Alterar Todas e a aba Revisão', run: async (h) => {
+    await h.reset(['pobrema, pobrema e pobrema']);
+    await underlined(h);
+    await h.p.locator('.tab', { hasText: 'Revisão' }).click();
+    await h.p.locator('.big-button', { hasText: 'Ortografia e Gramática' }).click();
+    const pane = h.p.locator('.proof-pane');
+    await pane.locator('.proof-suggestions button').first().waitFor();
+    await pane.locator('button', { hasText: 'Alterar Todas' }).click();
+    await h.settle(900);
+    const t = await h.texts();
+    const done = await pane.locator('.proof-done').count();
+    await h.press('Escape');
+    const closed = await pane.count();
+    await h.p.locator('.page').focus();
+    await h.press('Control+z');
+    const undone = await h.texts();
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    return eq(t, ['problema, problema e problema']) && done === 1 && closed === 0 && eq(undone, ['pobrema, pobrema e pobrema'])
+      ? OK('Troca todas as ocorrências num único passo de desfazer; Esc fecha o painel.')
+      : FALHA(`${JSON.stringify(t)} concluído=${done} painel=${closed} desfeito=${JSON.stringify(undone)}`);
+  } },
   { area: 'Ferramentas', name: 'Contagem de palavras', run: async (h) => {
     await h.reset(['uma duas', 'três']);
     const status = await h.p.locator('.statusbar').innerText();

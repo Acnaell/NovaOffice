@@ -54,7 +54,9 @@ import { DateTimeDialog, LinkDialog, MarginsDialog, type LinkRequest } from "./I
 import { deleteColumns, deleteRows, deleteTable, insertColumn, insertRow, insertTable } from "./tables";
 import { fileToBase64, insertImage, resizeImage, setImage, TEXT_WIDTH_PT } from "./images";
 import { defaultProofing, matchAt, matchText, parseProofing, SPELL_LANGUAGES, useSpelling, type Proofing } from "./spell";
-import { ReviewTab } from "./ReviewTab";
+import { ReviewTab, useReviewShortcuts } from "./ReviewTab";
+import { SpellingPane } from "./SpellingPane";
+import type { Pos } from "./types";
 import { SpellMenu } from "./SpellMenu";
 import { load, store } from "./storage";
 import { matchShortcut, profileFor } from "./shortcuts";
@@ -108,6 +110,8 @@ export default function App() {
   const [proofingChoice, setProofingChoice] = useState<Proofing | null>(() => parseProofing(load(PROOFING_KEY)));
   const proofing = proofingChoice ?? defaultProofing(locale);
   const [spellMenu, setSpellMenu] = useState<{ match: Match; word: string; x: number; y: number } | null>(null);
+  /** Painel Ortografia (F7): de onde começa e quantas vezes foi aberto. */
+  const [spellPane, setSpellPane] = useState<{ start: Pos; token: number } | null>(null);
   const profile = profileFor(locale);
   const [theme, setTheme] = useTheme();
   // Callbacks estáveis leem a tradução atual daqui; trocar de idioma não os recria.
@@ -577,6 +581,10 @@ export default function App() {
 
   const pickSuggestion = (match: Match, word: string, suggestion: string) => {
     closeSpellMenu();
+    replaceWord(match, word, suggestion);
+  };
+
+  const replaceWord = (match: Match, word: string, suggestion: string) => {
     run((doc) =>
       // O documento pode ter mudado com o menu aberto: só troca se a palavra continua lá.
       matchText(doc, match) === word
@@ -590,6 +598,20 @@ export default function App() {
     store(PROOFING_KEY, value);
     focusEditor();
   };
+
+  const openSpellPane = () => {
+    const current = stateRef.current;
+    if (!current) return;
+    setSpellPane((p) => ({ start: ordered(current.selection)[0], token: (p?.token ?? 0) + 1 }));
+  };
+
+  const closeSpellPane = () => {
+    setSpellPane(null);
+    focusEditor();
+  };
+
+  const changeEverywhere = (word: string, replacement: string) =>
+    run((doc, sel) => ({ command: replaceAll(doc, word, replacement, { matchCase: true, wholeWord: true }).command, selection: sel }));
 
   const rememberWord = (action: "add" | "ignore", word: string) => {
     closeSpellMenu();
@@ -913,6 +935,8 @@ export default function App() {
         return onParaAttr({ attr: "lineSpacing", value: 200 });
       case "para.showMarks":
         return setShowMarks((s) => !s);
+      case "review.spelling":
+        return openSpellPane();
       default:
         return onStyle(command.slice("style.".length) as BlockStyle);
     }
@@ -937,6 +961,8 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [profile]);
+
+  useReviewShortcuts(profile, onCommand);
 
   const highlights = useMemo(
     () => ({ all: find ? matches : [], current: find && find.current >= 0 ? matches[find.current] ?? null : null }),
@@ -1077,7 +1103,7 @@ export default function App() {
         page={view.page}
         onPage={setPage}
         onCustomMargins={() => setMarginsDialog(true)}
-        review={<ReviewTab proofing={proofing} onProofing={chooseProofing} />}
+        review={<ReviewTab proofing={proofing} profile={profile} onProofing={chooseProofing} onCommand={onCommand} />}
       />
       <main className={`workspace${find ? " with-panel" : ""}`}>
         {find && (
@@ -1118,6 +1144,22 @@ export default function App() {
             }}
           />
         </div>
+        {spellPane && (
+          <SpellingPane
+            view={view}
+            matches={spelling.all}
+            ready={spelling.ready}
+            proofing={proofing}
+            start={spellPane.start}
+            token={spellPane.token}
+            onSelect={(m) => run(() => ({ command: null, selection: matchSelection(m) }))}
+            onChange={replaceWord}
+            onChangeAll={changeEverywhere}
+            onRecheck={spelling.recheck}
+            onError={showError}
+            onClose={closeSpellPane}
+          />
+        )}
       </main>
       <footer className="statusbar">
         <span>{t("status.page", pageInfo)}</span>

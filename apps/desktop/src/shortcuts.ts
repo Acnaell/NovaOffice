@@ -47,6 +47,7 @@ export type CommandId =
   | "para.spacing15"
   | "para.spacing2"
   | "para.showMarks"
+  | "review.spelling"
   | "style.paragraph"
   | "style.heading1"
   | "style.heading2"
@@ -87,6 +88,7 @@ const COMMON: Bindings = {
   "para.spacing2": ["Ctrl+2"],
   "para.spacing15": ["Ctrl+5"],
   "para.showMarks": ["Ctrl+Shift+8"],
+  "review.spelling": ["F7"],
   "style.paragraph": ["Ctrl+Alt+0"],
   "style.heading1": ["Ctrl+Alt+1"],
   "style.heading2": ["Ctrl+Alt+2"],
