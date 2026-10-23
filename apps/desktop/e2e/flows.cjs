@@ -1429,6 +1429,129 @@ const flows = [
     return ok ? OK('word/header1.xml e footer1.xml com o campo PAGE e "Primeira Página Diferente"; também em .odt.') : FALHA(JSON.stringify(back.headerFooter));
   } },
 
+  // ───────────── Exibir
+  { area: 'Exibir', name: 'Zoom na barra de status (−/+, porcentagem e Ctrl + roda) sem mudar as páginas', run: async (h) => {
+    const long = Array.from({ length: 60 }, (_, i) => `Parágrafo ${i + 1}: o rato roeu a roupa do rei de Roma e a rainha remendou com linha e agulha.`);
+    await h.reset(long);
+    const measure = () => h.p.evaluate(() => ({
+      zoom: getComputedStyle(document.querySelector('.paper')).zoom,
+      page: document.querySelector('.page').offsetHeight,
+      status: document.querySelector('.statusbar').textContent.match(/Página \d+ de \d+/)[0],
+      level: document.querySelector('.zoom-level').value,
+    }));
+    const before = await measure();
+    await h.p.locator('.zoom-step[aria-label^="Ampliar"]').click(); await h.settle();
+    await h.p.locator('.zoom-step[aria-label^="Ampliar"]').click(); await h.settle();
+    const plus = await measure();
+    await h.p.locator('.zoom-step[aria-label^="Reduzir"]').click(); await h.settle();
+    const minus = await measure();
+    await h.p.locator('.zoom-level').selectOption('50'); await h.settle(200);
+    const half = await measure();
+    const box = await h.p.locator('.scroller').boundingBox();
+    await h.p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await h.p.keyboard.down('Control');
+    await h.p.mouse.wheel(0, -120); await h.settle(150);
+    await h.p.keyboard.up('Control');
+    const wheel = await measure();
+    await h.p.locator('.zoom-level').selectOption('200'); await h.settle(200);
+    const big = await measure();
+    // Digitar com zoom continua indo para o lugar certo.
+    await h.select(3, 0);
+    await h.type('§');
+    const typed = (await h.texts())[3].startsWith('§Parágrafo 4');
+    await h.reload();
+    const after = await measure();
+    const ok = before.zoom === '1' && plus.level === '120' && plus.zoom === '1.2' && minus.level === '110' && half.zoom === '0.5' && wheel.level === '60'
+      && big.zoom === '2' && [plus, minus, half, wheel, big].every((m) => m.page === before.page && m.status === before.status) && typed && after.level === '100';
+    return ok ? OK(`Páginas iguais em todos os níveis (${before.status}); o zoom não fica salvo.`) : FALHA(JSON.stringify({ before, plus, minus, half, wheel, big, typed, after }));
+  } },
+  { area: 'Exibir', name: '100%, Uma Página e Largura da Página', run: async (h) => {
+    await h.reset(['texto']);
+    await h.p.locator('.tab', { hasText: 'Exibir' }).click();
+    const fits = () => h.p.evaluate(() => {
+      const s = document.querySelector('.scroller').getBoundingClientRect();
+      const sheet = document.querySelector('.sheet').getBoundingClientRect();
+      return { level: document.querySelector('.zoom-level').value, sheetH: sheet.height, sheetW: sheet.width, viewH: s.height, viewW: s.width };
+    });
+    await h.p.locator('.big-button', { hasText: 'Uma Página' }).click(); await h.settle(200);
+    const page = await fits();
+    await h.p.locator('.big-button', { hasText: 'Largura da Página' }).click(); await h.settle(200);
+    const width = await fits();
+    await h.p.locator('.big-button', { hasText: '100%' }).click(); await h.settle(200);
+    const full = await fits();
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    const ok = page.sheetH <= page.viewH && page.sheetH > page.viewH * 0.8 && width.sheetW <= width.viewW && width.sheetW > width.viewW * 0.9 && full.level === '100' && Math.abs(full.sheetW - 793.7) < 1;
+    return ok ? OK(`Uma Página ${page.level}%, Largura da Página ${width.level}%.`) : FALHA(JSON.stringify({ page, width, full }));
+  } },
+  { area: 'Exibir', name: 'Régua com as margens da página', run: async (h) => {
+    await h.reset(['texto']);
+    await h.p.locator('.tab', { hasText: 'Exibir' }).click();
+    await h.p.locator('.view-check', { hasText: 'Régua' }).locator('input').check(); await h.settle();
+    const geometry = () => h.p.evaluate(() => {
+      const r = (sel) => document.querySelector(sel).getBoundingClientRect();
+      const ruler = r('.ruler'), sheet = r('.sheet'), left = r('.ruler-margin[data-side="left"]'), right = r('.ruler-margin[data-side="right"]');
+      const text = document.querySelector('[data-block="0"]').getBoundingClientRect();
+      return { dx: Math.abs(ruler.left - sheet.left), dw: Math.abs(ruler.width - sheet.width), margin: Math.abs(left.right - text.left), right: right.width };
+    });
+    const normal = await geometry();
+    // Margens ABNT (3 cm à esquerda, 2 cm à direita): a régua acompanha.
+    await h.p.locator('.tab', { hasText: 'Layout' }).click();
+    await h.p.locator('button[aria-label="Margens"]').click();
+    await h.p.locator('.popover .menu-item', { hasText: 'ABNT' }).click(); await h.settle(200);
+    const abnt = await geometry();
+    await h.p.locator('.zoom-level').selectOption('150'); await h.settle(200);
+    const zoomed = await geometry();
+    await h.reload();
+    const kept = await h.p.locator('.ruler').count();
+    await h.p.locator('.tab', { hasText: 'Exibir' }).click();
+    await h.p.locator('.view-check', { hasText: 'Régua' }).locator('input').uncheck(); await h.settle();
+    const off = await h.p.locator('.ruler').count();
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    const cm = 96 / 2.54;
+    const ok = [normal, abnt, zoomed].every((g) => g.dx < 1.5 && g.dw < 1.5 && g.margin < 1.5) && Math.abs(abnt.right - 2 * cm) < 1.5 && Math.abs(zoomed.right - 3 * cm) < 1.5 && kept === 1 && off === 0;
+    return ok ? OK('Alinhada ao papel e à margem, em qualquer zoom; fica ligada ao reabrir.') : FALHA(JSON.stringify({ normal, abnt, zoomed, kept, off }));
+  } },
+  { area: 'Exibir', name: 'Painel de Navegação: títulos e clique leva o cursor', run: async (h) => {
+    const paras = ['Introdução', 'texto', 'Objetivos', 'mais texto', 'Detalhes', ...Array.from({ length: 40 }, (_, i) => `linha ${i}`), 'Conclusão', 'fim'];
+    await h.reset(paras);
+    const style = { 0: 'heading1', 2: 'heading2', 4: 'heading3', 45: 'heading1' };
+    await core('dispatch', { command: { type: 'batch', commands: Object.entries(style).map(([b, s]) => ({ type: 'block.setStyle', block: Number(b), style: s })) } });
+    await h.reload();
+    await h.p.locator('.tab', { hasText: 'Exibir' }).click();
+    await h.p.locator('.view-check', { hasText: 'Painel de Navegação' }).locator('input').check(); await h.settle();
+    const items = await h.p.locator('.nav-heading').evaluateAll((els) => els.map((e) => `${e.className.match(/level-(\d)/)[1]}:${e.textContent}`));
+    await h.p.locator('.nav-heading', { hasText: 'Conclusão' }).click(); await h.settle(300);
+    const current = await h.p.locator('.nav-heading[aria-current]').innerText();
+    const visible = await h.p.evaluate(() => {
+      const r = document.querySelector('[data-block="45"]').getBoundingClientRect();
+      const s = document.querySelector('.scroller').getBoundingClientRect();
+      return r.top >= s.top && r.bottom <= s.bottom;
+    });
+    const t = await h.caretProbe();
+    await h.reload();
+    const kept = await h.p.locator('.nav-pane').count();
+    await h.p.locator('.nav-pane-close').click(); await h.settle();
+    const closed = await h.p.locator('.nav-pane').count();
+    const ok = items.join('|') === '1:Introdução|2:Objetivos|3:Detalhes|1:Conclusão' && current === 'Conclusão' && visible && t[45] === '§Conclusão' && kept === 1 && closed === 0;
+    return ok ? OK('Título 1 a 3, com a seção do cursor marcada.') : FALHA(JSON.stringify({ items, current, visible, t45: t[45], kept, closed }));
+  } },
+  { area: 'Exibir', name: 'Modo de Foco em tela inteira; Esc volta', run: async (h) => {
+    await h.reset(['texto']);
+    await h.p.locator('.tab', { hasText: 'Exibir' }).click();
+    await h.p.locator('.big-button', { hasText: 'Modo de Foco' }).click(); await h.settle(200);
+    const hidden = await h.p.evaluate(() => ['.chrome', '.statusbar'].map((s) => getComputedStyle(document.querySelector(s)).display));
+    const full = await h.p.evaluate(() => window.__calls.filter((c) => c.cmd === 'plugin:window|set_fullscreen').map((c) => c.args.value));
+    await h.select(0, 5);
+    await h.type('!');
+    const typed = (await h.texts())[0];
+    await h.press('Escape');
+    const back = await h.p.evaluate(() => getComputedStyle(document.querySelector('.chrome')).display);
+    const after = await h.p.evaluate(() => window.__calls.filter((c) => c.cmd === 'plugin:window|set_fullscreen').map((c) => c.args.value));
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    const ok = hidden.every((d) => d === 'none') && full.join() === 'true' && typed === 'texto!' && back !== 'none' && after.join() === 'true,false';
+    return ok ? OK('Esconde a faixa de opções e a barra de status; o documento continua editável.') : FALHA(JSON.stringify({ hidden, full, typed, back, after }));
+  } },
+
   // ───────────── Desempenho
   { area: 'Desempenho', name: 'Digitar num documento longo (≈300 parágrafos)', run: async (h) => {
     const many = Array.from({ length: 300 }, (_, i) => `Parágrafo ${i + 1}: o rato roeu a roupa do rei de Roma e a rainha remendou.`);

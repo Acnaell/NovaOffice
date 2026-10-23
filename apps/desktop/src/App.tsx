@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -70,6 +70,8 @@ import { useTheme } from "./theme";
 import { applyPatch, DEFAULT_HEADER_FOOTER, DEFAULT_PAGE, type HeadersFooters, type BlockStyle, type PageSetup, type DocView, type FileFormat, type Recent, type RecoveryInfo, type HighlightColor, type Mark, type MarkKind, type ParaAttr, type TextCommand, type ToggleMark } from "./types";
 import { AboutPage, ReleaseNotesDialog, UpdateBar, useUpdates } from "./UpdateBar";
 import { updateApi } from "./update";
+import { NavigationPane, Ruler, ViewTab, ZoomControl, type ZoomFit } from "./ViewTab";
+import { fitPage, fitWidth, headings as listHeadings, stepZoom } from "./zoom";
 
 interface State {
   view: DocView;
@@ -93,6 +95,10 @@ const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: 
 
 /** Idioma de revisão escolhido na barra de status (sem escolha, segue o da interface). */
 const PROOFING_KEY = "nova.proofing";
+
+/** Aba Exibir: Régua e Painel de Navegação ficam como o usuário deixou. */
+const RULER_KEY = "nova.view.ruler";
+const NAVIGATION_KEY = "nova.view.navigation";
 
 export default function App() {
   const [state, setState] = useState<State | null>(null);
@@ -942,6 +948,109 @@ export default function App() {
     updates.download(installUpdate);
   };
 
+  // ---------- Exibir ----------
+
+  const [zoom, setZoomValue] = useState(1);
+  const [ruler, setRuler] = useState(() => load(RULER_KEY) === "on");
+  const [navigation, setNavigation] = useState(() => load(NAVIGATION_KEY) === "on");
+  const [focusMode, setFocusMode] = useState(false);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  /** Ponto da janela que fica parado ao mudar o zoom (o mouse, ou o centro). */
+  const zoomAnchor = useRef<{ x: number; y: number; top: number; left: number; from: number } | null>(null);
+
+  const setZoom = useCallback((next: number, at?: { x: number; y: number }) => {
+    const el = scrollerRef.current;
+    if (el && next !== zoomRef.current) {
+      const point = at ?? { x: el.clientWidth / 2, y: el.clientHeight / 2 };
+      zoomAnchor.current = { ...point, top: el.scrollTop, left: el.scrollLeft, from: zoomRef.current };
+    }
+    setZoomValue(next);
+  }, []);
+
+  useLayoutEffect(() => {
+    const anchor = zoomAnchor.current;
+    const el = scrollerRef.current;
+    zoomAnchor.current = null;
+    if (!anchor || !el) return;
+    const k = zoom / anchor.from;
+    el.scrollTop = (anchor.top + anchor.y) * k - anchor.y;
+    el.scrollLeft = (anchor.left + anchor.x) * k - anchor.x;
+  }, [zoom]);
+
+  /** Uma Página e Largura da Página: o espaço do papel é a janela menos o espaçamento e a régua. */
+  const fitZoom = useCallback(
+    (fit: ZoomFit) => {
+      const el = scrollerRef.current;
+      const page = stateRef.current?.view.page;
+      if (!el || !page) return;
+      const css = getComputedStyle(el);
+      const ruler = el.querySelector<HTMLElement>(".ruler-track")?.offsetHeight ?? 0;
+      const viewport = {
+        width: el.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight),
+        height: el.clientHeight - parseFloat(css.paddingTop) - ruler - 16,
+      };
+      setZoom(fit === "page" ? fitPage(page, viewport) : fitWidth(page, viewport));
+    },
+    [setZoom],
+  );
+
+  // Ctrl + roda do mouse, como no Word (no lugar do zoom da página inteira do WebView).
+  const ready = !!state;
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey || e.deltaY === 0) return;
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      setZoom(stepZoom(zoomRef.current, e.deltaY < 0 ? 1 : -1), { x: e.clientX - r.left, y: e.clientY - r.top });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [ready, setZoom]);
+
+  const showRuler = (on: boolean) => {
+    setRuler(on);
+    store(RULER_KEY, on ? "on" : "off");
+  };
+
+  const showNavigation = (on: boolean) => {
+    setNavigation(on);
+    store(NAVIGATION_KEY, on ? "on" : "off");
+    if (!on) focusEditor();
+  };
+
+  /** Painel de Navegação: o cursor vai para o começo do título, que sobe para o alto da janela. */
+  const goToHeading = (block: number) => {
+    focusEditor();
+    run(() => ({ command: null, selection: caret({ block, offset: 0 }) }));
+    queue.current = queue.current.then(() => {
+      requestAnimationFrame(() => document.querySelector(`.page [data-block="${block}"]`)?.scrollIntoView({ block: "start" }));
+    });
+  };
+
+  // Modo de Foco: tela inteira só com o documento; Esc volta (se não houver caixa aberta).
+  const exitFocus = useCallback(() => {
+    setFocusMode(false);
+    getCurrentWindow().setFullscreen(false).catch(() => {});
+  }, []);
+  const enterFocus = () => {
+    setFocusMode(true);
+    getCurrentWindow().setFullscreen(true).catch(() => {});
+    setTimeout(focusEditor, 0);
+  };
+  useEffect(() => {
+    if (!focusMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.querySelector(".modal-backdrop, .backstage, .popover")) return;
+      exitFocus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focusMode, exitFocus]);
+
   const onCommand = (command: RibbonCommand) => {
     switch (command) {
       case "file.new":
@@ -1139,7 +1248,7 @@ export default function App() {
   const tocLabels = { title: t("toc.title"), empty: t("toc.empty") };
 
   return (
-    <div className={`app${painter ? " painting" : ""}`}>
+    <div className={`app${painter ? " painting" : ""}${focusMode ? " focus-mode" : ""}`}>
       {backstage && (
         <Backstage
           page={backstage}
@@ -1284,9 +1393,24 @@ export default function App() {
             onRemoveToc={() => run((doc, sel) => removeToc(doc, sel))}
           />
         }
+        viewTab={
+          <ViewTab
+            zoom={zoom}
+            ruler={ruler}
+            navigation={navigation}
+            onZoom={(z) => setZoom(z)}
+            onFit={fitZoom}
+            onRuler={showRuler}
+            onNavigation={showNavigation}
+            onFocusMode={enterFocus}
+          />
+        }
       />
       <UpdateBar updates={updates} onNotes={() => setReleaseNotes(true)} onDownload={downloadUpdate} onInstall={installUpdate} />
       <main className={`workspace${find ? " with-panel" : ""}`}>
+        {navigation && (
+          <NavigationPane headings={listHeadings(view)} caretBlock={selection.focus.block} onGo={goToHeading} onClose={() => showNavigation(false)} />
+        )}
         {find && (
           <FindPanel
             state={find}
@@ -1301,7 +1425,8 @@ export default function App() {
             }}
           />
         )}
-        <div className="scroller">
+        <div className="scroller" ref={scrollerRef} style={{ "--zoom": zoom } as CSSProperties} data-zoomed={zoom !== 1 || undefined}>
+          {ruler && <Ruler page={view.page} zoom={zoom} />}
           <Editor
             view={view}
             revision={state.revision}
@@ -1394,7 +1519,13 @@ export default function App() {
             ? t(painter.sticky ? "status.painterSticky" : "status.painter")
             : status || (view.dirty ? t("status.unsaved") : view.path ? t("status.saved") : "")}
         </span>
+        <ZoomControl zoom={zoom} onZoom={(z) => setZoom(z)} onFit={fitZoom} onStep={(d) => setZoom(stepZoom(zoom, d))} />
       </footer>
+      {focusMode && (
+        <button className="focus-exit" onClick={exitFocus} title={t("view.focusExit")}>
+          {t("view.focusExit")}
+        </button>
+      )}
       {spellMenu && proofing !== "off" && (
         <SpellMenu
           word={spellMenu.word}
