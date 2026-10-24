@@ -18,7 +18,7 @@ representa cada aplicativo.
 | Círculo | **Nova Draw** | Draw | `#D094DD` lilás |
 | Quarto de círculo | **Nova Base** | Base | `#D1A84B` ouro |
 | Sinal de mais | **Nova Math** | Math | `#2AC4CC` turquesa |
-| Funil (trapézio que se estreita para a direita) | **Nova Mail** | E-mail (como o Thunderbird) | `#F07F9C` rosa |
+| Caixa de correio (com a bandeira levantada) | **Nova Mail** | E-mail (como o Thunderbird) | `#F07F9C` rosa |
 | Nuvem em arcos (quarto de círculo + semicírculo sobre base reta) | **Nova Drive** | Arquivos na nuvem (motor Rclone) | `#9AA5F5` índigo |
 
 Na grade, a primeira linha tem Text, Sheets, Slides e Mail; a segunda, Draw, Base, Math e Drive.
