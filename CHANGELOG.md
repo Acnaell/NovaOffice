@@ -8,6 +8,11 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Alterado
+
+- O símbolo do **Nova Mail** agora é uma **caixa de correio** com a bandeira levantada. Ela
+  substitui o funil, que nos ícones pequenos ficava parecido com o triângulo do Nova Slides.
+
 ## [0.1.9] - 2026-10-23
 
 ### Alterado

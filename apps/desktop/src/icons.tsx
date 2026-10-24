@@ -45,7 +45,7 @@ export function BrandMark({ app, size = 24 }: { app?: BrandApp; size?: number })
       <circle cx="62" cy="162" r="30" {...shape("draw", BRAND.lilac)} />
       <path d="M100 132 A58 58 0 0 1 158 190 L100 190 Z" {...shape("base", BRAND.gold)} />
       <path d="M187 132h16v22h21v16h-21v22h-16v-22h-21v-16h21z" {...shape("math", BRAND.teal)} />
-      <path d="M234 66 L292 86 V102 L234 122 Z" {...shape("mail", BRAND.rose)} />
+      <path d="M259.9 122 V111.1 H241.2 V91.7 A11.7 11.7 0 0 1 252.9 80 H271.6 V66 H283.2 V72.2 H275.4 V80 H284.8 V111.1 H266.1 V122 Z" {...shape("mail", BRAND.rose)} />
       <path d="M234 190 A20 20 0 0 1 254 170 A19 19 0 0 1 292 170 V190 Z" {...shape("drive", BRAND.indigo)} />
     </svg>
   );
