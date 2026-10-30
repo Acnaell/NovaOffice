@@ -483,7 +483,7 @@ dependencies = [
 
 [[package]]
 name = "nova-app"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "base64",
  "imagesize",
@@ -497,7 +497,7 @@ dependencies = [
 
 [[package]]
 name = "nova-crdt"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "thiserror",
  "yrs",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "nova-domain-text"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "nova-crdt",
  "serde",
@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "nova-spell"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "serde",
  "serde_json",
