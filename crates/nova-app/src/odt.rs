@@ -15,7 +15,7 @@ use quick_xml::Reader;
 use zip::write::SimpleFileOptions;
 use zip::ZipArchive;
 
-use crate::AppError;
+use crate::{design, AppError};
 
 const INDENT_CM: f64 = 1.27;
 
@@ -62,7 +62,11 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         ("meta.xml", META.to_string()),
         (
             "styles.xml",
-            styles_xml(doc.page_setup(), &doc.header_footer()),
+            styles_xml(
+                &doc.page_setup(),
+                &doc.header_footer(),
+                doc.watermark().as_ref(),
+            ),
         ),
         ("content.xml", content),
     ] {
@@ -77,8 +81,13 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
     zip.finish().expect("zip em memória").into_inner()
 }
 
-/// Estilos fixos mais a página (papel e margens) do documento.
-fn styles_xml(page: nova_domain_text::PageSetup, hf: &nova_domain_text::HeadersFooters) -> String {
+/// Estilos fixos mais a página (papel, margens, cor e borda), o cabeçalho e o
+/// rodapé e a marca d'água do documento.
+fn styles_xml(
+    page: &nova_domain_text::PageSetup,
+    hf: &nova_domain_text::HeadersFooters,
+    watermark: Option<&nova_domain_text::Watermark>,
+) -> String {
     let cm = |twips: u32| format!("{:.3}cm", f64::from(twips) / 1440.0 * 2.54);
     let orientation = if page.width > page.height {
         "landscape"
@@ -95,8 +104,15 @@ fn styles_xml(page: nova_domain_text::PageSetup, hf: &nova_domain_text::HeadersF
     let mut styles = String::new();
     let mut master = String::new();
     let mut layout_extra = String::new();
+    // A marca d'água fica no cabeçalho (também no da primeira página), atrás do texto.
+    let mut shape = String::new();
+    if let Some(w) = watermark {
+        styles.push_str(&design::odt_watermark_style(w));
+        shape = design::odt_watermark(w, page);
+    }
     for (tag, name, value) in [("header", "MP1", &hf.header), ("footer", "MP2", &hf.footer)] {
-        if value.text.is_empty() {
+        let shape = if tag == "header" { shape.as_str() } else { "" };
+        if value.text.is_empty() && shape.is_empty() {
             continue;
         }
         styles.push_str(&format!(
@@ -111,7 +127,7 @@ fn styles_xml(page: nova_domain_text::PageSetup, hf: &nova_domain_text::HeadersF
         layout_extra.push_str(&format!(
             r#"<style:{tag}-style><style:header-footer-properties fo:min-height="0cm" {margin}="0.3cm"/></style:{tag}-style>"#
         ));
-        let mut body = String::new();
+        let mut body = shape.to_string();
         let mut rest = value.text.as_str();
         while !rest.is_empty() {
             let next = [
@@ -125,7 +141,7 @@ fn styles_xml(page: nova_domain_text::PageSetup, hf: &nova_domain_text::HeadersF
                 Some((i, f)) => (&rest[..i], Some(f)),
                 None => (rest, None),
             };
-            body.push_str(&odf_text(text, body.is_empty()));
+            body.push_str(&odf_text(text, body.len() == shape.len()));
             match field {
                 Some(f) => {
                     body.push_str(if f == nova_domain_text::PAGE_FIELD {
@@ -144,7 +160,7 @@ fn styles_xml(page: nova_domain_text::PageSetup, hf: &nova_domain_text::HeadersF
         if hf.different_first {
             // Primeira página com cabeçalho/rodapé vazio (um parágrafo vazio, como o LibreOffice grava).
             master.push_str(&format!(
-                r#"<style:{tag}-first><text:p text:style-name="{name}"/></style:{tag}-first>"#
+                r#"<style:{tag}-first><text:p text:style-name="{name}">{shape}</text:p></style:{tag}-first>"#
             ));
         }
     }
@@ -162,14 +178,16 @@ fn styles_xml(page: nova_domain_text::PageSetup, hf: &nova_domain_text::HeadersF
             f64::from(level - 1) * 0.39
         ));
     }
+    // Cor e borda (aba Design); com borda, parte da margem vira enchimento.
+    let (design_props, margins) = design::odt_page_props(page);
     let layout = format!(
-        r#"<office:automatic-styles>{styles}<style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="{}" fo:page-height="{}" style:print-orientation="{orientation}" fo:margin-top="{}" fo:margin-bottom="{}" fo:margin-left="{}" fo:margin-right="{}"/>{layout_extra}</style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1">{master}</style:master-page></office:master-styles></office:document-styles>"#,
+        r#"<office:automatic-styles>{styles}<style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="{}" fo:page-height="{}" style:print-orientation="{orientation}" fo:margin-top="{}" fo:margin-bottom="{}" fo:margin-left="{}" fo:margin-right="{}"{design_props}/>{layout_extra}</style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1">{master}</style:master-page></office:master-styles></office:document-styles>"#,
         cm(page.width),
         cm(page.height),
-        cm(page.margin_top),
-        cm(page.margin_bottom),
-        cm(page.margin_left),
-        cm(page.margin_right)
+        cm(margins[0]),
+        cm(margins[1]),
+        cm(margins[2]),
+        cm(margins[3])
     );
     STYLES
         .replacen(
@@ -206,6 +224,10 @@ fn read_header_footer(
                     b"header-first" | b"footer-first" if in_master => {
                         first_part = !empty;
                         out.different_first = true;
+                    }
+                    // Formas (marca d'água) não são texto do cabeçalho.
+                    b"custom-shape" | b"frame" if part.is_some() && !empty => {
+                        part_skip(&mut reader);
                     }
                     b"p" | b"h" if part.is_some() && !first_part => {
                         let header = part == Some(true);
@@ -314,31 +336,66 @@ fn part_skip(reader: &mut Reader<&[u8]>) {
     }
 }
 
-/// Página do styles.xml: a do primeiro `style:page-layout-properties`.
+/// Página do styles.xml: a do primeiro `style:page-layout-properties` com
+/// tamanho (o LibreOffice grava antes um `style:default-page-layout` sem ele).
+/// O cabeçalho e o rodapé do LibreOffice ficam dentro da margem (`fo:min-height`):
+/// a margem do Nova, como a do Word, vai até o texto e soma essa altura.
 fn read_page(xml: &str) -> Option<nova_domain_text::PageSetup> {
     let mut reader = Reader::from_str(xml);
     let mut buf = Vec::new();
+    let mut page: Option<nova_domain_text::PageSetup> = None;
+    // Some(true) = dentro do style:header-style, Some(false) = do style:footer-style.
+    let mut part: Option<bool> = None;
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e))
-                if e.local_name().as_ref() == b"page-layout-properties" =>
-            {
-                let twips = |k: &[u8]| {
-                    attr(&e, k)
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => match e.local_name().as_ref() {
+                b"page-layout-properties"
+                    if page.is_none() && attr(&e, b"page-width").is_some() =>
+                {
+                    let twips = |k: &[u8]| {
+                        attr(&e, k)
+                            .and_then(|v| length_cm(&v))
+                            .map(|cm| (cm / 2.54 * 1440.0).round().max(0.0) as u32)
+                    };
+                    let d = nova_domain_text::PageSetup::default();
+                    // Com borda, a margem do Nova (e do Word) vai até o texto: soma borda e enchimento.
+                    let (background, border, extra) = design::odt_read_page_props(&e, length_cm);
+                    let extra = if border.is_some() { extra } else { [0; 4] };
+                    page = Some(nova_domain_text::PageSetup {
+                        width: twips(b"page-width")?,
+                        height: twips(b"page-height")?,
+                        margin_top: twips(b"margin-top").unwrap_or(d.margin_top) + extra[0],
+                        margin_bottom: twips(b"margin-bottom").unwrap_or(d.margin_bottom)
+                            + extra[1],
+                        margin_left: twips(b"margin-left").unwrap_or(d.margin_left) + extra[2],
+                        margin_right: twips(b"margin-right").unwrap_or(d.margin_right) + extra[3],
+                        background,
+                        border,
+                    });
+                }
+                b"header-style" if page.is_some() => part = Some(true),
+                b"footer-style" if page.is_some() => part = Some(false),
+                b"header-footer-properties" => {
+                    let height = attr(&e, b"min-height")
                         .and_then(|v| length_cm(&v))
                         .map(|cm| (cm / 2.54 * 1440.0).round().max(0.0) as u32)
-                };
-                let d = nova_domain_text::PageSetup::default();
-                return Some(nova_domain_text::PageSetup {
-                    width: twips(b"page-width")?,
-                    height: twips(b"page-height")?,
-                    margin_top: twips(b"margin-top").unwrap_or(d.margin_top),
-                    margin_bottom: twips(b"margin-bottom").unwrap_or(d.margin_bottom),
-                    margin_left: twips(b"margin-left").unwrap_or(d.margin_left),
-                    margin_right: twips(b"margin-right").unwrap_or(d.margin_right),
-                });
-            }
-            Ok(Event::Eof) | Err(_) => return None,
+                        .unwrap_or(0);
+                    if let (Some(p), Some(header)) = (page.as_mut(), part) {
+                        if header {
+                            p.margin_top += height;
+                        } else {
+                            p.margin_bottom += height;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::End(e)) => match e.local_name().as_ref() {
+                b"header-style" | b"footer-style" => part = None,
+                b"page-layout" if page.is_some() => return page,
+                _ => {}
+            },
+            Ok(Event::Eof) | Err(_) => return page,
             _ => {}
         }
         buf.clear();
@@ -832,12 +889,12 @@ const META: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-met
 
 /// Estilos comuns com os nomes do LibreOffice ("Heading 1"…, que ele mostra
 /// como "Título 1" em português) e os tamanhos do Nova Text.
-const STYLES: &str = r##"<?xml version="1.0" encoding="UTF-8"?><office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.3"><office:styles><style:default-style style:family="paragraph"><style:paragraph-properties fo:margin-bottom="8pt" fo:line-height="115%"/><style:text-properties fo:font-family="Calibri" fo:font-size="11pt" fo:language="pt" fo:country="BR"/></style:default-style><style:style style:name="Standard" style:family="paragraph" style:class="text"/><style:style style:name="Heading" style:family="paragraph" style:parent-style-name="Standard" style:next-style-name="Standard" style:class="text"><style:paragraph-properties fo:margin-top="12pt" fo:margin-bottom="6pt" fo:keep-with-next="always"/><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_1" style:display-name="Heading 1" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="1" style:class="text"><style:text-properties fo:font-size="20pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_2" style:display-name="Heading 2" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="2" style:class="text"><style:text-properties fo:font-size="16pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_3" style:display-name="Heading 3" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="3" style:class="text"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_4" style:display-name="Heading 4" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="4" style:class="text"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_5" style:display-name="Heading 5" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="5" style:class="text"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_6" style:display-name="Heading 6" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="6" style:class="text"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Quotations" style:family="paragraph" style:parent-style-name="Standard" style:class="html"><style:paragraph-properties fo:margin-left="1cm"/><style:text-properties fo:font-style="italic" fo:color="#4a4a46"/></style:style><style:style style:name="Preformatted_20_Text" style:display-name="Preformatted Text" style:family="paragraph" style:parent-style-name="Standard" style:class="html"><style:paragraph-properties fo:margin-bottom="0pt" fo:line-height="100%"/><style:text-properties fo:font-family="Consolas" fo:font-size="10pt"/></style:style><style:style style:name="Footnote" style:display-name="Footnote" style:family="paragraph" style:parent-style-name="Standard" style:class="extra"><style:paragraph-properties fo:margin-left="0.5cm" fo:margin-bottom="0pt" fo:text-indent="-0.5cm" fo:line-height="100%"/><style:text-properties fo:font-size="10pt"/></style:style></office:styles></office:document-styles>"##;
+const STYLES: &str = r##"<?xml version="1.0" encoding="UTF-8"?><office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.3"><office:styles><style:default-style style:family="paragraph"><style:paragraph-properties fo:margin-bottom="8pt" fo:line-height="115%"/><style:text-properties fo:font-family="Calibri" fo:font-size="11pt" fo:language="pt" fo:country="BR"/></style:default-style><style:style style:name="Standard" style:family="paragraph" style:class="text"/><style:style style:name="Heading" style:family="paragraph" style:parent-style-name="Standard" style:next-style-name="Standard" style:class="text"><style:paragraph-properties fo:margin-top="12pt" fo:margin-bottom="6pt" fo:keep-with-next="always"/><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_1" style:display-name="Heading 1" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="1" style:class="text"><style:text-properties fo:font-size="20pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_2" style:display-name="Heading 2" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="2" style:class="text"><style:text-properties fo:font-size="16pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_3" style:display-name="Heading 3" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="3" style:class="text"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_4" style:display-name="Heading 4" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="4" style:class="text"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_5" style:display-name="Heading 5" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="5" style:class="text"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_6" style:display-name="Heading 6" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="6" style:class="text"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Quotations" style:family="paragraph" style:parent-style-name="Standard" style:class="html"><style:paragraph-properties fo:margin-left="1cm"/><style:text-properties fo:font-style="italic" fo:color="#4a4a46"/></style:style><style:style style:name="Preformatted_20_Text" style:display-name="Preformatted Text" style:family="paragraph" style:parent-style-name="Standard" style:class="html"><style:paragraph-properties fo:margin-bottom="0pt" fo:line-height="100%"/><style:text-properties fo:font-family="Consolas" fo:font-size="10pt"/></style:style><style:style style:name="Footnote" style:display-name="Footnote" style:family="paragraph" style:parent-style-name="Standard" style:class="extra"><style:paragraph-properties fo:margin-left="0.5cm" fo:margin-bottom="0pt" fo:text-indent="-0.5cm" fo:line-height="100%"/><style:text-properties fo:font-size="10pt"/></style:style></office:styles></office:document-styles>"##;
 
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media, page, header_footer, notes) = read_document(bytes)?;
+    let (paragraphs, media, page, header_footer, watermark, notes) = read_document(bytes)?;
     let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
         doc.put_media(&id, &mime, &data)?;
@@ -847,6 +904,9 @@ pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> 
     }
     if header_footer != Default::default() && header_footer.validate().is_ok() {
         doc.load_header_footer(header_footer)?;
+    }
+    if let Some(w) = watermark {
+        doc.load_watermark(w)?;
     }
     if !notes.is_empty() {
         doc.load_footnotes(&notes)?;
@@ -1167,6 +1227,7 @@ type Document = (
     Vec<crate::docx::Media>,
     Option<nova_domain_text::PageSetup>,
     nova_domain_text::HeadersFooters,
+    Option<nova_domain_text::Watermark>,
     Vec<(String, String)>,
 );
 
@@ -1221,10 +1282,12 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     let mut lists = HashMap::new();
     let mut page = None;
     let mut header_footer = nova_domain_text::HeadersFooters::default();
+    let mut watermark = None;
     if let Some(s) = read("styles.xml")? {
         read_styles(&s, &mut styles, &mut lists);
         page = read_page(&s);
         header_footer = read_header_footer(&s, &styles);
+        watermark = design::odt_read_watermark(&s);
     }
     read_styles(&content, &mut styles, &mut lists);
 
@@ -1623,13 +1686,38 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         out.push(Paragraph::default());
     }
     crate::docx::normalize(&mut out);
-    Ok((out, media, page, header_footer, notes))
+    Ok((out, media, page, header_footer, watermark, notes))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use nova_domain_text::{ParaAttr, TextCommand};
+
+    /// O LibreOffice grava um `style:default-page-layout` sem tamanho antes do
+    /// layout da página, e o cabeçalho fica dentro da margem de cima.
+    #[test]
+    fn pagina_do_libreoffice() {
+        let xml = r##"<office:document-styles><office:styles><style:default-page-layout><style:page-layout-properties style:layout-grid-standard-mode="true"/></style:default-page-layout></office:styles><office:automatic-styles><style:page-layout style:name="Mpm1"><style:page-layout-properties fo:page-width="21.001cm" fo:page-height="29.7cm" fo:margin-top="0.847cm" fo:margin-bottom="0.847cm" fo:margin-left="0.847cm" fo:margin-right="0.847cm" fo:border="1.5pt solid #2f5496" fo:padding-top="0.349cm" fo:padding-bottom="1.6cm" fo:padding-left="1.6cm" fo:padding-right="1.6cm" style:shadow="#000000 0.053cm 0.053cm" fo:background-color="#fff2cc" draw:fill="solid" draw:fill-color="#fff2cc"/><style:header-style><style:header-footer-properties fo:min-height="1.251cm" fo:margin-bottom="1.15cm"/></style:header-style><style:footer-style/></style:page-layout></office:automatic-styles></office:document-styles>"##;
+        let page = read_page(xml).unwrap();
+        let d = nova_domain_text::PageSetup::default();
+        assert_eq!((page.width, page.height), (d.width, d.height));
+        // 2,5 cm de margem: 0,847 cm + borda de 1,5 pt + enchimento (+ cabeçalho em cima).
+        for m in [
+            page.margin_top,
+            page.margin_bottom,
+            page.margin_left,
+            page.margin_right,
+        ] {
+            assert!(m.abs_diff(1417) <= 1, "{page:?}");
+        }
+        assert_eq!(page.background.as_deref(), Some("#FFF2CC"));
+        let border = page.border.unwrap();
+        assert_eq!(
+            (border.style, border.color.as_str(), border.width),
+            (nova_domain_text::BorderStyle::Shadow, "#2F5496", 12)
+        );
+    }
 
     fn sample() -> TextDocument {
         let mut doc = TextDocument::from_plain_text(

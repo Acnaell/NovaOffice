@@ -56,6 +56,7 @@ import { deleteColumns, deleteRows, deleteTable, insertColumn, insertRow, insert
 import { fileToBase64, insertImage, resizeImage, setImage, TEXT_WIDTH_PT } from "./images";
 import { defaultProofing, matchAt, matchText, parseProofing, SPELL_LANGUAGES, useSpelling, type Proofing } from "./spell";
 import { ReviewTab, useReviewShortcuts } from "./ReviewTab";
+import { DesignTab } from "./DesignTab";
 import { ReferencesTab } from "./ReferencesTab";
 import { insertFootnote, newFootnoteId, nextFootnote } from "./footnotes";
 import { findToc, insertToc, removeToc, screenPages, updateToc } from "./toc";
@@ -92,7 +93,7 @@ const PARAGRAPH_SPACE = 12;
 /** Intervalo da recuperação automática (o Word usa 10 min; aqui é mais curto). */
 const AUTOSAVE_MS = 60_000;
 
-const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, footnotes: {} };
+const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, watermark: null, footnotes: {} };
 
 /** Idioma de revisão escolhido na barra de status (sem escolha, segue o da interface). */
 const PROOFING_KEY = "nova.proofing";
@@ -1395,6 +1396,17 @@ export default function App() {
         onPage={setPage}
         onCustomMargins={() => setMarginsDialog(true)}
         review={<ReviewTab proofing={proofing} profile={profile} onProofing={chooseProofing} onCommand={onCommand} />}
+        design={
+          <DesignTab
+            page={view.page}
+            watermark={view.watermark ?? null}
+            onPage={setPage}
+            onWatermark={(value) => {
+              focusEditor();
+              runCommand({ type: "watermark.set", value });
+            }}
+          />
+        }
         references={
           <ReferencesTab
             hasToc={hasToc}

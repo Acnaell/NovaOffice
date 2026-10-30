@@ -3,6 +3,7 @@
 //! UI, plugins, agentes de IA e o CLI mandam os mesmos comandos para uma
 //! `Session`, que os executa no agregado e publica os eventos resultantes.
 
+pub mod design;
 pub mod docx;
 pub mod file;
 pub mod formats;

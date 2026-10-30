@@ -14,6 +14,8 @@ import { paginate, unpaginate, type PageInfo } from "./paginate";
 import { screenPages, tocTargets } from "./toc";
 import { footnoteOf, footnoteOrder, FootnotesLayer, FootnotesPrint, NOTE_SEPARATOR, noteHeight, notesByPage, type PageNotes } from "./footnotes";
 import { HeaderFooterLayer, splitFields, type Part } from "./headerfooter";
+import { paperStyle, printDesignCss, printMarginBoxes } from "./design";
+import { PrintDesign, SheetDesign } from "./pagedesign";
 import {
   blockText,
   deleteBackward,
@@ -199,10 +201,12 @@ export function Editor(props: Props) {
       document.head.appendChild(style);
     }
     const pt = (twips: number) => `${twips / 20}pt`;
-    style.textContent = `@page { size: ${pt(page.width)} ${pt(page.height)}; margin: ${pt(page.marginTop)} ${pt(page.marginRight)} ${pt(page.marginBottom)} ${pt(page.marginLeft)}; ${printBoxes(props.headerFooter)} }${
-      props.headerFooter.differentFirst ? ` @page :first { ${printBoxes(props.headerFooter, true)} }` : ""
-    }`;
-  }, [page, props.headerFooter]);
+    // Cor e borda da página (aba Design) nas caixas de margem, antes das do cabeçalho e rodapé.
+    const design = printMarginBoxes(page);
+    style.textContent = `@page { size: ${pt(page.width)} ${pt(page.height)}; margin: ${pt(page.marginTop)} ${pt(page.marginRight)} ${pt(page.marginBottom)} ${pt(page.marginLeft)}; ${design} ${printBoxes(props.headerFooter)} }${
+      props.headerFooter.differentFirst ? ` @page :first { ${printBoxes(props.headerFooter, true)} ${design} }` : ""
+    }${printDesignCss(page, props.view.watermark)}`;
+  }, [page, props.headerFooter, props.view.watermark]);
 
   // Imagem com o cursor no parágrafo dela: contorno e alça de tamanho.
   useLayoutEffect(() => {
@@ -572,10 +576,12 @@ export function Editor(props: Props) {
   }, []);
 
   return (
-    <div className={`paper${props.hfEditing ? " hf-mode" : ""}`} style={{ width: `${px(page.width)}px` }}>
+    <div className={`paper${props.hfEditing ? " hf-mode" : ""}`} style={{ width: `${px(page.width)}px`, ...paperStyle(page) }}>
       <div className="sheets" aria-hidden="true">
         {Array.from({ length: pages }, (_, k) => (
-          <div key={k} className="sheet" style={{ top: `${k * (px(page.height) + SHEET_GAP)}px`, height: `${px(page.height)}px` }} />
+          <div key={k} className="sheet" style={{ top: `${k * (px(page.height) + SHEET_GAP)}px`, height: `${px(page.height)}px` }}>
+            <SheetDesign page={page} watermark={props.view.watermark} />
+          </div>
         ))}
       </div>
     <div
@@ -628,6 +634,7 @@ export function Editor(props: Props) {
         onChange={props.onHfChange}
         onClose={props.onHfClose}
       />
+      <PrintDesign page={page} watermark={props.view.watermark} />
     </div>
   );
 }

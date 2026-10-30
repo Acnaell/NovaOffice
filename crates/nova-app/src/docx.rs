@@ -20,7 +20,7 @@ use quick_xml::Reader;
 use zip::write::SimpleFileOptions;
 use zip::ZipArchive;
 
-use crate::AppError;
+use crate::{design, AppError};
 
 /// Recuo por nível em twips (1,27 cm), o padrão do Word.
 const INDENT_TWIPS: u32 = 720;
@@ -40,14 +40,17 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
             }
         }
     }
+    let page = doc.page_setup();
+    let watermark = doc.watermark();
     let notes = doc.footnotes();
-    let (body, nums, links) = body_xml(&paragraphs, &images, doc.page_setup(), &notes);
+    let (body, nums, links) = body_xml(&paragraphs, &images, &page, &notes);
     let media_names: Vec<String> = images
         .iter()
         .enumerate()
         .map(|(i, (_, mime, _))| format!("media/image{}.{}", i + 1, crate::media::extension(mime)))
         .collect();
-    // Cabeçalho e rodapé: partes próprias, referenciadas no w:sectPr.
+    // Cabeçalho e rodapé: partes próprias, referenciadas no w:sectPr. A marca
+    // d'água vai no cabeçalho, como no Word.
     let hf = doc.header_footer();
     let mut body = body;
     let mut extra_rels = String::new();
@@ -58,7 +61,8 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         ("header", "header1.xml", &hf.header),
         ("footer", "footer1.xml", &hf.footer),
     ] {
-        if value.text.is_empty() {
+        let mark = watermark.as_ref().filter(|_| kind == "header");
+        if value.text.is_empty() && mark.is_none() {
             continue;
         }
         let tag = if kind == "header" { "hdr" } else { "ftr" };
@@ -69,7 +73,7 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
             } else {
                 "word/footer1.xml"
             },
-            header_footer_xml(tag, value),
+            header_footer_xml(tag, value, mark.map(|w| (w, &page, 1))),
         ));
         extra_rels.push_str(&format!(
             r#"<Relationship Id="{id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}" Target="{part}"/>"#
@@ -81,12 +85,38 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
             r#"<w:{kind}Reference w:type="default" r:id="{id}"/>"#
         ));
     }
-    // Notas de rodapé: word/footnotes.xml (com os separadores) e as configurações que o Word espera.
+    // Primeira Página Diferente: a primeira página tem um cabeçalho só com a marca d'água.
+    if let Some(w) = watermark.as_ref().filter(|_| hf.different_first) {
+        extra_files.push((
+            "word/header2.xml",
+            header_footer_xml("hdr", &Default::default(), Some((w, &page, 2))),
+        ));
+        extra_rels.push_str(r#"<Relationship Id="rIdHdrFirst" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header2.xml"/>"#);
+        extra_types.push_str(r#"<Override PartName="/word/header2.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>"#);
+        refs.push_str(r#"<w:headerReference w:type="first" r:id="rIdHdrFirst"/>"#);
+    }
+    // Cor da página: w:background, que o Word só mostra com w:displayBackgroundShape.
+    if let Some(color) = &page.background {
+        body = body.replacen(
+            "<w:body>",
+            &format!("{}<w:body>", design::docx_background(color)),
+            1,
+        );
+    }
+    // Notas de rodapé: word/footnotes.xml (com os separadores).
     if !notes.is_empty() {
         extra_files.push(("word/footnotes.xml", footnotes_xml(&notes)));
-        extra_files.push(("word/settings.xml", SETTINGS_XML.to_string()));
-        extra_rels.push_str(r#"<Relationship Id="rIdFn" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/><Relationship Id="rIdSet" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>"#);
-        extra_types.push_str(r#"<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>"#);
+        extra_rels.push_str(r#"<Relationship Id="rIdFn" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>"#);
+        extra_types.push_str(r#"<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>"#);
+    }
+    // Configurações: o fundo da página (w:displayBackgroundShape) e os separadores das notas.
+    if page.background.is_some() || !notes.is_empty() {
+        extra_files.push((
+            "word/settings.xml",
+            settings_xml(page.background.is_some(), !notes.is_empty()),
+        ));
+        extra_rels.push_str(r#"<Relationship Id="rIdSettings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>"#);
+        extra_types.push_str(r#"<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>"#);
     }
     body = body.replacen("<w:sectPr>", &format!("<w:sectPr>{refs}"), 1);
     if hf.different_first {
@@ -161,8 +191,22 @@ fn footnotes_xml(notes: &[(String, String)]) -> String {
     out
 }
 
-/// Configurações mínimas: os separadores das notas de rodapé.
-const SETTINGS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr></w:settings>"#;
+/// `word/settings.xml`: mostrar a cor da página e os separadores das notas de rodapé.
+fn settings_xml(background: bool, footnotes: bool) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{}{}</w:settings>"#,
+        if background {
+            "<w:displayBackgroundShape/>"
+        } else {
+            ""
+        },
+        if footnotes {
+            r#"<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>"#
+        } else {
+            ""
+        }
+    )
+}
 
 /// Notas de rodapé de `word/footnotes.xml`: número → texto (sem os separadores).
 fn read_footnotes(xml: &str) -> HashMap<String, String> {
@@ -228,10 +272,24 @@ fn read_footnotes(xml: &str) -> HashMap<String, String> {
     out
 }
 
-/// `w:hdr`/`w:ftr` com um parágrafo: texto, quebras de linha e os campos PAGE e NUMPAGES.
-fn header_footer_xml(tag: &str, value: &nova_domain_text::HeaderFooter) -> String {
+/// `w:hdr`/`w:ftr` com um parágrafo: texto, quebras de linha e os campos PAGE e
+/// NUMPAGES; no cabeçalho, também a marca d'água (com o número da forma).
+fn header_footer_xml(
+    tag: &str,
+    value: &nova_domain_text::HeaderFooter,
+    watermark: Option<(
+        &nova_domain_text::Watermark,
+        &nova_domain_text::PageSetup,
+        u32,
+    )>,
+) -> String {
+    let vml = if watermark.is_some() {
+        design::VML_NAMESPACES
+    } else {
+        ""
+    };
     let mut out = format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{tag} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:p>"#
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{tag} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"{vml}><w:p>"#
     );
     let jc = match value.align {
         Align::Center => "center",
@@ -241,6 +299,9 @@ fn header_footer_xml(tag: &str, value: &nova_domain_text::HeaderFooter) -> Strin
     };
     if !jc.is_empty() {
         out.push_str(&format!(r#"<w:pPr><w:jc w:val="{jc}"/></w:pPr>"#));
+    }
+    if let Some((w, page, id)) = watermark {
+        out.push_str(&design::docx_watermark(w, page, id));
     }
     let mut rest = value.text.as_str();
     while !rest.is_empty() {
@@ -586,7 +647,7 @@ impl TableWriter {
 fn body_xml(
     paragraphs: &[Paragraph],
     images: &[(String, String, Vec<u8>)],
-    page: nova_domain_text::PageSetup,
+    page: &nova_domain_text::PageSetup,
     notes: &[(String, String)],
 ) -> (String, Vec<Num>, Vec<String>) {
     let mut links: Vec<String> = Vec::new();
@@ -756,8 +817,13 @@ fn body_xml(
     } else {
         ""
     };
+    let borders = page
+        .border
+        .as_ref()
+        .map(design::docx_page_borders)
+        .unwrap_or_default();
     out.push_str(&format!(
-        r#"<w:sectPr><w:pgSz w:w="{}" w:h="{}"{orient}/><w:pgMar w:top="{}" w:right="{}" w:bottom="{}" w:left="{}" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>"#,
+        r#"<w:sectPr><w:pgSz w:w="{}" w:h="{}"{orient}/><w:pgMar w:top="{}" w:right="{}" w:bottom="{}" w:left="{}" w:header="708" w:footer="708" w:gutter="0"/>{borders}</w:sectPr></w:body></w:document>"#,
         page.width, page.height, page.margin_top, page.margin_right, page.margin_bottom, page.margin_left
     ));
     (out, nums, links)
@@ -917,7 +983,7 @@ const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media, page, header_footer, notes) = read_document(bytes)?;
+    let (paragraphs, media, page, header_footer, watermark, notes) = read_document(bytes)?;
     let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
         doc.put_media(&id, &mime, &data)?;
@@ -927,6 +993,9 @@ pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> 
     }
     if header_footer != Default::default() && header_footer.validate().is_ok() {
         doc.load_header_footer(header_footer)?;
+    }
+    if let Some(w) = watermark {
+        doc.load_watermark(w)?;
     }
     if !notes.is_empty() {
         doc.load_footnotes(&notes)?;
@@ -1509,12 +1578,13 @@ fn read_paragraphs(bytes: &[u8]) -> Result<Vec<Paragraph>, AppError> {
     Ok(read_document(bytes)?.0)
 }
 
-/// O que se lê de um .docx: parágrafos, imagens e a página.
+/// O que se lê de um .docx: parágrafos, imagens, a página, cabeçalho e rodapé e a marca d'água.
 type Document = (
     Vec<Paragraph>,
     Vec<Media>,
     Option<nova_domain_text::PageSetup>,
     nova_domain_text::HeadersFooters,
+    Option<nova_domain_text::Watermark>,
     Vec<(String, String)>,
 );
 
@@ -1568,6 +1638,9 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     let mut hf_parts: Vec<(bool, String)> = Vec::new();
     // Página: a do último w:sectPr (o do corpo do documento).
     let mut page: Option<nova_domain_text::PageSetup> = None;
+    // Aba Design: cor da página (w:background) e bordas (w:pgBorders do último w:sectPr).
+    let mut background: Option<String> = None;
+    let (mut in_pg_borders, mut pg_border) = (false, None);
     // Imagem sendo lida (w:drawing): profundidade, tamanho em EMU e relação.
     let mut drawing_depth = 0u32;
     let mut drawing: (Option<(u64, u64)>, Option<String>) = (None, None);
@@ -1719,6 +1792,16 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                         }
                     }
                     b"titlePg" => header_footer.different_first = toggle_on(e),
+                    b"background" => {
+                        background = attr(e, b"color").and_then(|c| design::parse_color(&c));
+                    }
+                    b"sectPr" => pg_border = None,
+                    b"pgBorders" => in_pg_borders = !empty,
+                    b"top" | b"left" | b"bottom" | b"right" if in_pg_borders => {
+                        if pg_border.is_none() {
+                            pg_border = design::docx_read_border(e);
+                        }
+                    }
                     b"pgSz" => {
                         let n = |k: &[u8]| attr(e, k).and_then(|v| v.parse::<u32>().ok());
                         if let (Some(w), Some(h)) = (n(b"w"), n(b"h")) {
@@ -1925,6 +2008,9 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                 push_text(&mut para, &run, &text);
             }
             Event::End(e) => {
+                if e.local_name().as_ref() == b"pgBorders" {
+                    in_pg_borders = false;
+                }
                 if skip_depth > 0 {
                     skip_depth -= 1;
                     buf.clear();
@@ -2020,6 +2106,12 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         out.push(Paragraph::default());
     }
     normalize(&mut out);
+    if background.is_some() || pg_border.is_some() {
+        let p = page.get_or_insert_with(Default::default);
+        p.background = background;
+        p.border = pg_border;
+    }
+    let mut watermark = None;
     for (header, target) in hf_parts {
         let path = match target.strip_prefix('/') {
             Some(absolute) => absolute.to_string(),
@@ -2028,13 +2120,14 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         if let Some(xml) = part(&mut zip, &path)? {
             let value = read_header_footer(&xml);
             if header {
+                watermark = design::docx_read_watermark(&xml);
                 header_footer.header = value;
             } else {
                 header_footer.footer = value;
             }
         }
     }
-    Ok((out, media, page, header_footer, notes))
+    Ok((out, media, page, header_footer, watermark, notes))
 }
 
 /// Cores que o Word e o LibreOffice dão aos links.

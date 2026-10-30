@@ -6,8 +6,12 @@
 //!
 //! Offsets são unidades UTF-16 dentro de um bloco (parágrafo).
 
+mod design;
 mod format;
 
+pub use design::{
+    BorderStyle, PageBorder, Watermark, WatermarkLayout, BORDER_WIDTHS, MAX_WATERMARK_CHARS,
+};
 pub use format::{
     is_hex_color, is_link, is_media_id, is_note_id, Align, BlockStyle, CellRef, ImageRef, ListKind,
     Mark, MarkKind, ParaAttr, ParaAttrs, Paragraph, Span, TocEntry, FOOTNOTE_CHAR,
@@ -15,8 +19,9 @@ pub use format::{
 };
 
 /// Página do documento, em twips (1/20 de ponto, 1/1440 de polegada), como no
-/// `w:sectPr` do Word. O padrão é A4 retrato com margens de 2,5 cm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// `w:sectPr` do Word. O padrão é A4 retrato com margens de 2,5 cm, sem cor
+/// nem borda (aba Design).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PageSetup {
     pub width: u32,
@@ -25,6 +30,12 @@ pub struct PageSetup {
     pub margin_bottom: u32,
     pub margin_left: u32,
     pub margin_right: u32,
+    /// Cor da Página (`#RRGGBB`); `None` é Sem Cor (papel branco).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<String>,
+    /// Bordas da Página.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<PageBorder>,
 }
 
 impl Default for PageSetup {
@@ -36,6 +47,8 @@ impl Default for PageSetup {
             margin_bottom: 1417,
             margin_left: 1417,
             margin_right: 1417,
+            background: None,
+            border: None,
         }
     }
 }
@@ -69,6 +82,15 @@ impl PageSetup {
             && (INCH..=22 * INCH).contains(&self.height)
             && self.margin_left + self.margin_right + INCH <= self.width
             && self.margin_top + self.margin_bottom + INCH <= self.height;
+        if let Some(border) = &self.border {
+            border.validate()?;
+        }
+        if self.background.as_deref().is_some_and(|c| !is_hex_color(c)) {
+            return Err(DomainError::InvalidAttr(format!(
+                "cor da página {:?}: use #RRGGBB",
+                self.background
+            )));
+        }
         if ok {
             Ok(())
         } else {
@@ -78,12 +100,18 @@ impl PageSetup {
         }
     }
 
-    fn to_settings(self) -> Vec<(String, Option<AttrValue>)> {
-        Self::KEYS
+    fn to_settings(&self) -> Vec<(String, Option<AttrValue>)> {
+        let mut out: Vec<_> = Self::KEYS
             .iter()
             .zip(self.values())
             .map(|(k, v)| (k.to_string(), Some(AttrValue::Number(f64::from(v)))))
-            .collect()
+            .collect();
+        out.push((
+            "pageBackground".into(),
+            self.background.clone().map(AttrValue::Text),
+        ));
+        out.extend(PageBorder::to_settings(self.border.as_ref()));
+        out
     }
 
     fn from_settings(map: &AttrMap) -> PageSetup {
@@ -99,6 +127,11 @@ impl PageSetup {
             margin_bottom: get("marginBottom", d.margin_bottom),
             margin_left: get("marginLeft", d.margin_left),
             margin_right: get("marginRight", d.margin_right),
+            background: match map.get("pageBackground") {
+                Some(AttrValue::Text(c)) if is_hex_color(c) => Some(c.clone()),
+                _ => None,
+            },
+            border: PageBorder::from_settings(map),
         };
         if page.validate().is_ok() {
             page
@@ -272,6 +305,9 @@ pub enum TextCommand {
     /// Tamanho do papel e margens (aba Layout): `{"type":"page.set","page":{…}}`.
     #[serde(rename = "page.set")]
     SetPage { page: PageSetup },
+    /// Marca d'água (aba Design); `null` remove: `{"type":"watermark.set","value":{…}}`.
+    #[serde(rename = "watermark.set")]
+    SetWatermark { value: Option<Watermark> },
     #[serde(rename = "history.undo")]
     Undo,
     #[serde(rename = "history.redo")]
@@ -346,6 +382,9 @@ pub enum TextEvent {
     },
     HeaderFooterSet {
         value: HeadersFooters,
+    },
+    WatermarkSet {
+        value: Option<Watermark>,
     },
     FootnoteSet {
         id: String,
@@ -698,6 +737,14 @@ impl TextDocument {
                 self.replica.set_settings(&page.to_settings());
                 TextEvent::PageSet { page }
             }
+            TextCommand::SetWatermark { value } => {
+                if let Some(w) = &value {
+                    w.validate()?;
+                }
+                self.replica
+                    .set_settings(&Watermark::to_settings(value.as_ref()));
+                TextEvent::WatermarkSet { value }
+            }
             TextCommand::Undo => {
                 if !self.replica.undo() {
                     return Ok(Vec::new());
@@ -837,9 +884,23 @@ impl TextDocument {
         Ok(())
     }
 
-    /// Tamanho do papel e margens.
+    /// Tamanho do papel, margens, cor e borda da página.
     pub fn page_setup(&self) -> PageSetup {
         PageSetup::from_settings(&self.replica.settings())
+    }
+
+    /// Marca d'água, se houver.
+    pub fn watermark(&self) -> Option<Watermark> {
+        Watermark::from_settings(&self.replica.settings())
+    }
+
+    /// Define a marca d'água ao abrir um arquivo, sem entrar no desfazer.
+    pub fn load_watermark(&mut self, value: Watermark) -> Result<(), DomainError> {
+        value.validate()?;
+        self.replica
+            .set_settings(&Watermark::to_settings(Some(&value)));
+        self.replica.clear_history();
+        Ok(())
     }
 
     /// Guarda um arquivo embutido (imagem). Não entra no desfazer.

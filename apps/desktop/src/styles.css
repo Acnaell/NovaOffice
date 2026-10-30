@@ -3045,3 +3045,209 @@ select {
     zoom: 1;
   }
 }
+
+/* ---------- Aba Design: cor, marca d'água e bordas da página ---------- */
+
+/* Na tela: atrás do texto de cada folha. */
+.sheet {
+  overflow: hidden;
+}
+
+.sheet-border {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.sheet-watermark,
+.print-watermark {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.watermark-text {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  font-family: Calibri, Carlito, "Segoe UI", sans-serif;
+}
+
+/* Na impressão: camada fixa, que o navegador repete em cada página, atrás do texto. */
+.print-design {
+  display: none;
+}
+
+@media print {
+  .print-design {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .print-watermark {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+  }
+
+  .sheet-border,
+  .sheet-watermark {
+    display: none;
+  }
+}
+
+/* Galeria de Marca d'Água: miniaturas de página, como no Word. */
+.popover.watermark-menu {
+  width: 296px;
+}
+
+.watermark-gallery {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 6px 10px 10px;
+}
+
+.popover .watermark-tile {
+  position: relative;
+  height: 76px;
+  overflow: hidden;
+  border: 1px solid var(--chrome-border);
+  border-radius: 3px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.popover .watermark-tile:hover,
+.popover .watermark-tile[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.watermark-tile-text {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  font: 600 9px Calibri, Carlito, "Segoe UI", sans-serif;
+  color: #c0c0c0;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+}
+
+.watermark-tile-text.diagonal {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+/* Diálogos Marca d'Água e Bordas da Página. */
+.dialog-form label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--chrome-text);
+}
+
+.dialog-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 0 0 22px;
+  padding: 0;
+  border: 0;
+}
+
+.dialog-fieldset:disabled {
+  opacity: 0.55;
+}
+
+.dialog-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+}
+
+.dialog-label {
+  font-size: 12.5px;
+  color: var(--chrome-muted);
+}
+
+.dialog-form input[type="color"] {
+  width: 64px;
+  height: 32px;
+  padding: 2px;
+}
+
+.borders-body {
+  display: flex;
+  gap: 20px;
+}
+
+.border-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.border-setting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px 5px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--chrome-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.border-setting:hover {
+  background: var(--button-hover);
+}
+
+.border-setting[aria-checked="true"] {
+  border-color: var(--accent);
+  background: var(--button-active);
+}
+
+.border-thumb {
+  width: 22px;
+  height: 28px;
+  box-sizing: border-box;
+  border: 1px dashed var(--chrome-border);
+  background: #fff;
+}
+
+.borders-options {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.border-preview {
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 6px;
+  background: var(--workspace-bg);
+}
+
+.border-preview-page {
+  position: relative;
+  width: 84px;
+  height: 112px;
+  background: #fff;
+  box-shadow: var(--page-shadow);
+}
+
+.border-preview-line {
+  position: absolute;
+  inset: 6px;
+}

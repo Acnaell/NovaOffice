@@ -2,7 +2,7 @@
 
 Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real com o núcleo Rust real.
 
-**127 funcionam · 1 parciais · 0 com falha · 3 ainda não existem**
+**132 funcionam · 2 parciais · 0 com falha · 3 ainda não existem**
 
 | | Área | Fluxo | Observação |
 | --- | --- | --- | --- |
@@ -119,6 +119,12 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ⬜ | Exibição | Zoom (Ctrl + roda / controle de zoom) | Não há controle de zoom no app. |
 | ✅ | Exibição | Tema claro/escuro | Recurso que o Word não tem nesta forma. |
 | ⬜ | Exibição | Régua | Não há régua. |
+| ✅ | Design | Cor da Página: cores do tema, Mais Cores e Sem Cor | Grade de Cores do Tema, Cores Padrão, Mais Cores… e Sem Cor, como no Word; Ctrl+Z desfaz. |
+| ✅ | Design | Marca d'Água da galeria em todas as folhas, atrás do texto | Prata semitransparente na diagonal em 4 folhas, atrás do texto; Ctrl+Z / Ctrl+Y. |
+| ✅ | Design | Marca d'Água Personalizada: texto, cor, transparência e horizontal; Remover | Caixa Marca d'Água como a do Word (Sem marca d'água / Marca d'água de texto, Aplicar). |
+| ✅ | Design | Bordas da Página: caixa, sombra e dupla, com cor e largura | A 24 pt da beira do papel, como o padrão do Word; Nenhuma remove. |
+| ✅ | Design | Imprimir/PDF com cor da página, borda e marca d'água | 3 páginas: cor no papel inteiro (print-color-adjust: exact), borda nas caixas de margem do @page e marca d'água semitransparente em cada página. |
+| ✅ | Design | Cor, borda e marca d'água salvas no .docx e no .odt | w:background, w:pgBorders e v:textpath no cabeçalho (.docx); fo:background-color, fo:border e draw:custom-shape (.odt). Validado no LibreOffice (testes do núcleo). |
 | ✅ | Layout | Margens prontas (Normal, ABNT…) e personalizadas | Inclui ABNT (3 cm em cima e à esquerda, 2 cm embaixo e à direita). |
 | ✅ | Layout | Orientação paisagem e tamanho do papel | Ofício em paisagem; Ctrl+Z desfaz a mudança de página. |
 | ✅ | Layout | Papel e margens salvos no .docx | w:pgSz e w:pgMar como no Word. |
@@ -135,5 +141,5 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Exibir | Régua com as margens da página | Alinhada ao papel e à margem, em qualquer zoom; fica ligada ao reabrir. |
 | ✅ | Exibir | Painel de Navegação: títulos e clique leva o cursor | Título 1 a 3, com a seção do cursor marcada. |
 | ✅ | Exibir | Modo de Foco em tela inteira; Esc volta | Esconde a faixa de opções e a barra de status; o documento continua editável. |
-| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 14 ms por tecla. |
-| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 49 ms por tecla. |
+| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 11 ms por tecla. |
+| 🟡 | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 51 ms por tecla: lento em documentos grandes (o DOM é recriado a cada tecla). |

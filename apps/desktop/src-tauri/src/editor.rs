@@ -20,9 +20,11 @@ pub struct DocView {
     pub path: Option<String>,
     pub title: String,
     pub dirty: bool,
-    /// Papel e margens (aba Layout).
+    /// Papel e margens (aba Layout), cor e bordas da página (aba Design).
     pub page: nova_domain_text::PageSetup,
     pub header_footer: nova_domain_text::HeadersFooters,
+    /// Marca d'água (aba Design).
+    pub watermark: Option<nova_domain_text::Watermark>,
     /// Texto das notas de rodapé, pelo id da marca `footnote` das chamadas.
     pub footnotes: std::collections::BTreeMap<String, String>,
 }
@@ -59,6 +61,7 @@ pub struct ViewPatch {
     pub dirty: bool,
     pub page: nova_domain_text::PageSetup,
     pub header_footer: nova_domain_text::HeadersFooters,
+    pub watermark: Option<nova_domain_text::Watermark>,
     /// Texto das notas de rodapé, pelo id da marca `footnote` das chamadas.
     pub footnotes: std::collections::BTreeMap<String, String>,
 }
@@ -139,6 +142,7 @@ fn dirty_range(events: &[TextEvent]) -> Option<(u32, u32)> {
             | TextEvent::Redone
             | TextEvent::PageSet { .. }
             | TextEvent::HeaderFooterSet { .. }
+            | TextEvent::WatermarkSet { .. }
             | TextEvent::FootnoteSet { .. } => return None,
         }
     }
@@ -228,6 +232,7 @@ impl Editor {
             dirty: view.dirty,
             page: view.page,
             header_footer: view.header_footer,
+            watermark: view.watermark,
             footnotes: view.footnotes,
         }
     }
@@ -254,6 +259,7 @@ impl Editor {
             dirty: self.dirty,
             page: doc.page_setup(),
             header_footer: doc.header_footer(),
+            watermark: doc.watermark(),
             footnotes: doc.footnote_texts(),
         }
     }
