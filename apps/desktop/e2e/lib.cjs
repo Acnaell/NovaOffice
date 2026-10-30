@@ -11,6 +11,41 @@ async function core(cmd, args = {}) {
 
 const blockText = (b) => b.spans.map((s) => s.text).join('');
 
+// Lê um .docx/.odt (zip) sem o `unzip` do sistema, que não existe no Windows:
+// percorre o diretório central e descomprime com o zlib do Node.
+function zipEntries(path) {
+  const buf = require('fs').readFileSync(path);
+  let end = buf.length - 22;
+  while (end >= 0 && buf.readUInt32LE(end) !== 0x06054b50) end--;
+  if (end < 0) throw new Error(`${path} não é um zip`);
+  const entries = new Map();
+  let at = buf.readUInt32LE(end + 16);
+  for (let i = buf.readUInt16LE(end + 10); i > 0; i--) {
+    const method = buf.readUInt16LE(at + 10);
+    const size = buf.readUInt32LE(at + 20);
+    const nameLen = buf.readUInt16LE(at + 28);
+    const local = buf.readUInt32LE(at + 42);
+    const name = buf.toString('utf8', at + 46, at + 46 + nameLen);
+    entries.set(name, () => {
+      const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+      const data = buf.subarray(start, start + size);
+      return method === 0 ? data : require('zlib').inflateRawSync(data);
+    });
+    at += 46 + nameLen + buf.readUInt16LE(at + 30) + buf.readUInt16LE(at + 32);
+  }
+  return entries;
+}
+
+/** Nomes das partes do zip (como `unzip -l`). */
+const zipList = (path) => [...zipEntries(path).keys()];
+
+/** Texto de uma parte do zip (como `unzip -p`). */
+function zipRead(path, name) {
+  const read = zipEntries(path).get(name);
+  if (!read) throw new Error(`${name} não está em ${path}`);
+  return read().toString('utf8');
+}
+
 function makeHelpers(p) {
   const h = {
     p,
@@ -107,4 +142,4 @@ function makeHelpers(p) {
   return h;
 }
 
-module.exports = { core, makeHelpers, blockText };
+module.exports = { core, makeHelpers, blockText, zipList, zipRead };
