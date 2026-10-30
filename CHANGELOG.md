@@ -15,6 +15,15 @@ A seção da versão é usada como texto da página de release no GitHub.
   paginação; régua horizontal com as margens da página; Painel de Navegação com os títulos
   (Título 1 a 3), que leva o cursor ao título clicado; e Modo de Foco em tela inteira, só com o
   documento (Esc volta).
+- Aba **Design** no Nova Text, entre Inserir e Layout, como no Word: **Cor da Página** (cores do
+  tema, Mais Cores e Sem Cor), **Marca d'Água** (CONFIDENCIAL, NÃO COPIE e RASCUNHO na diagonal ou
+  na horizontal, ou um texto seu, com cor e transparência) e **Bordas da Página** (caixa, sombra ou
+  dupla, com cor e largura). Aparecem nas folhas, saem na impressão e no PDF e vão para o .docx e o
+  .odt, abrindo no Word e no LibreOffice.
+
+### Corrigido
+
+- Papel e margens de um .odt gravado pelo LibreOffice agora são lidos (antes valia o padrão).
 
 ## [0.1.10] - 2026-10-24
 

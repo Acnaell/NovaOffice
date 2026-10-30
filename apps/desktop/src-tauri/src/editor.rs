@@ -20,9 +20,11 @@ pub struct DocView {
     pub path: Option<String>,
     pub title: String,
     pub dirty: bool,
-    /// Papel e margens (aba Layout).
+    /// Papel e margens (aba Layout), cor e bordas da página (aba Design).
     pub page: nova_domain_text::PageSetup,
     pub header_footer: nova_domain_text::HeadersFooters,
+    /// Marca d'água (aba Design).
+    pub watermark: Option<nova_domain_text::Watermark>,
 }
 
 #[derive(Debug, Serialize)]
@@ -57,6 +59,7 @@ pub struct ViewPatch {
     pub dirty: bool,
     pub page: nova_domain_text::PageSetup,
     pub header_footer: nova_domain_text::HeadersFooters,
+    pub watermark: Option<nova_domain_text::Watermark>,
 }
 
 /// Faixa de parágrafos alterada, no documento atual: `[start, end)`. Cresce a
@@ -134,7 +137,8 @@ fn dirty_range(events: &[TextEvent]) -> Option<(u32, u32)> {
             TextEvent::Undone
             | TextEvent::Redone
             | TextEvent::PageSet { .. }
-            | TextEvent::HeaderFooterSet { .. } => return None,
+            | TextEvent::HeaderFooterSet { .. }
+            | TextEvent::WatermarkSet { .. } => return None,
         }
     }
     Some(dirty.0.unwrap_or((0, 0)))
@@ -223,6 +227,7 @@ impl Editor {
             dirty: view.dirty,
             page: view.page,
             header_footer: view.header_footer,
+            watermark: view.watermark,
         }
     }
 
@@ -248,6 +253,7 @@ impl Editor {
             dirty: self.dirty,
             page: doc.page_setup(),
             header_footer: doc.header_footer(),
+            watermark: doc.watermark(),
         }
     }
 

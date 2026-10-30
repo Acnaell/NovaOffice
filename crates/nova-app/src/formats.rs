@@ -278,8 +278,10 @@ mod tests {
             margin_bottom: 1134,
             margin_left: 1701,
             margin_right: 1134,
+            ..PageSetup::default()
         };
-        doc.execute(TextCommand::SetPage { page }).unwrap();
+        doc.execute(TextCommand::SetPage { page: page.clone() })
+            .unwrap();
         for format in [Format::Docx, Format::Odt, Format::Nova] {
             let bytes = save(&doc, format, "t");
             let back = open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
@@ -323,6 +325,165 @@ mod tests {
             assert_eq!(back.header_footer(), value, "{format:?}");
             assert!(!back.can_undo(), "{format:?}");
         }
+    }
+
+    /// Aba Design: cor da página, borda (caixa, sombra e dupla) e marca d'água
+    /// (diagonal e horizontal, com e sem Primeira Página Diferente).
+    #[test]
+    fn design_da_pagina_vai_e_volta() {
+        use nova_domain_text::{
+            BorderStyle, HeaderFooter, HeadersFooters, PageBorder, PageSetup, TextCommand,
+            Watermark, WatermarkLayout,
+        };
+        let cases = [
+            (
+                Some("#FFF2CC"),
+                BorderStyle::Single,
+                4,
+                "CONFIDENCIAL",
+                WatermarkLayout::Diagonal,
+                true,
+                false,
+            ),
+            (
+                Some("#DDEBF7"),
+                BorderStyle::Shadow,
+                12,
+                "NÃO COPIE",
+                WatermarkLayout::Horizontal,
+                false,
+                true,
+            ),
+            (
+                None,
+                BorderStyle::Double,
+                6,
+                "Rascunho & <revisão>",
+                WatermarkLayout::Diagonal,
+                true,
+                true,
+            ),
+        ];
+        for (background, style, width, text, layout, semitransparent, different_first) in cases {
+            let mut doc = TextDocument::from_plain_text(
+                1,
+                "corpo
+segunda linha",
+            );
+            let page = PageSetup {
+                background: background.map(str::to_string),
+                border: Some(PageBorder {
+                    style,
+                    color: "#2F5496".into(),
+                    width,
+                }),
+                ..PageSetup::default()
+            };
+            let watermark = Watermark {
+                text: text.into(),
+                color: "#FF0000".into(),
+                semitransparent,
+                layout,
+            };
+            let hf = HeadersFooters {
+                header: HeaderFooter {
+                    text: if different_first {
+                        String::new()
+                    } else {
+                        "Relatório {PAGE}".into()
+                    },
+                    ..HeaderFooter::default()
+                },
+                different_first,
+                ..HeadersFooters::default()
+            };
+            doc.execute(TextCommand::Batch {
+                commands: vec![
+                    TextCommand::SetPage { page: page.clone() },
+                    TextCommand::SetWatermark {
+                        value: Some(watermark.clone()),
+                    },
+                    TextCommand::SetHeaderFooter { value: hf.clone() },
+                ],
+            })
+            .unwrap();
+            for format in [Format::Docx, Format::Odt, Format::Nova] {
+                let bytes = save(&doc, format, "t");
+                let back =
+                    open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
+                let got = back.page_setup();
+                assert_eq!(got.background, page.background, "{format:?}");
+                assert_eq!(got.border, page.border, "{format:?}");
+                // O .odt guarda a margem em partes (margem, borda, enchimento), em cm com 3 casas.
+                let close = |a: u32, b: u32| a.abs_diff(b) <= 2;
+                assert!(
+                    close(got.margin_top, page.margin_top)
+                        && close(got.margin_left, page.margin_left)
+                        && close(got.margin_right, page.margin_right)
+                        && close(got.margin_bottom, page.margin_bottom),
+                    "{format:?}: {got:?}"
+                );
+                assert_eq!(back.watermark(), Some(watermark.clone()), "{format:?}");
+                // A marca d'água não vira texto do cabeçalho.
+                assert_eq!(back.header_footer(), hf, "{format:?}");
+                assert_eq!(
+                    back.to_plain_text(),
+                    "corpo
+segunda linha",
+                    "{format:?}"
+                );
+                assert!(!back.can_undo(), "{format:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn design_no_xml_como_o_word_e_o_libreoffice_gravam() {
+        use nova_domain_text::{BorderStyle, PageBorder, PageSetup, TextCommand, Watermark};
+        let mut doc = TextDocument::from_plain_text(1, "x");
+        doc.execute(TextCommand::SetPage {
+            page: PageSetup {
+                background: Some("#FFF2CC".into()),
+                border: Some(PageBorder {
+                    style: BorderStyle::Shadow,
+                    color: "#000000".into(),
+                    width: 4,
+                }),
+                ..PageSetup::default()
+            },
+        })
+        .unwrap();
+        doc.execute(TextCommand::SetWatermark {
+            value: Some(Watermark::default()),
+        })
+        .unwrap();
+        let part = |bytes: &[u8], name: &str| {
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut out = String::new();
+            std::io::Read::read_to_string(&mut zip.by_name(name).unwrap(), &mut out).unwrap();
+            out
+        };
+        let docx = save(&doc, Format::Docx, "t");
+        let document = part(&docx, "word/document.xml");
+        assert!(document.contains(r#"<w:background w:color="FFF2CC"/><w:body>"#));
+        assert!(document.contains(r#"<w:pgBorders w:offsetFrom="page"><w:top w:val="single" w:sz="4" w:space="24" w:color="000000" w:shadow="1"/>"#));
+        assert!(part(&docx, "word/settings.xml").contains("<w:displayBackgroundShape/>"));
+        let header = part(&docx, "word/header1.xml");
+        assert!(
+            header.contains(r#"<v:shape id="PowerPlusWaterMarkObject1""#),
+            "{header}"
+        );
+        assert!(header.contains(r#"string="CONFIDENCIAL""#) && header.contains("rotation:315"));
+        let odt = save(&doc, Format::Odt, "t");
+        let styles = part(&odt, "styles.xml");
+        assert!(
+            styles.contains(r##"fo:background-color="#fff2cc""##),
+            "{styles}"
+        );
+        assert!(styles.contains(r##"fo:border="0.50pt solid #000000""##));
+        assert!(styles.contains("style:shadow="));
+        assert!(styles.contains(r#"draw:type="fontwork-plain-text""#));
+        assert!(styles.contains(r#"draw:opacity="50%""#));
     }
 
     #[test]

@@ -63,8 +63,8 @@ const GALLERY: BlockStyle[] = ["paragraph", "heading1", "heading2", "heading3", 
 
 /** "Arquivo" não é uma aba de comandos: abre a tela Arquivo, como no Word. */
 /** "table" é a aba contextual Layout da Tabela, que só aparece com o cursor numa tabela. */
-type Tab = "home" | "insert" | "layout" | "references" | "review" | "view" | "table" | "picture" | "headerFooter";
-const TABS: ("file" | Tab)[] = ["file", "home", "insert", "layout", "references", "review", "view"];
+type Tab = "home" | "insert" | "design" | "layout" | "references" | "review" | "view" | "table" | "picture" | "headerFooter";
+const TABS: ("file" | Tab)[] = ["file", "home", "insert", "design", "layout", "references", "review", "view"];
 
 /** Marcas que aparecem pressionadas na faixa de opções. */
 export type ActiveMarks = Record<"bold" | "italic" | "underline" | "strike" | "subscript" | "superscript", boolean>;
@@ -133,6 +133,8 @@ export interface RibbonProps {
   references: ReactNode;
   /** Grupos da aba Exibir antes de Tema e Idioma (ViewTab.tsx). */
   viewTab?: ReactNode;
+  /** Conteúdo da aba Design (DesignTab.tsx). */
+  design: ReactNode;
 }
 
 /** Entrelinhas oferecidas no menu, em % (como no Word: 1,0 1,15 1,5 2,0 2,5 3,0). */
@@ -615,6 +617,7 @@ export function Ribbon(props: RibbonProps) {
     table: tableLayout,
     picture: pictureFormat,
     references: props.references,
+    design: props.design,
     review: props.review,
     view: (
       <>

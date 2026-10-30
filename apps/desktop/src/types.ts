@@ -134,6 +134,8 @@ export interface DocView {
   /** Papel e margens (aba Layout). */
   page: PageSetup;
   headerFooter: HeadersFooters;
+  /** Marca d'água (aba Design); `null` ou ausente sem marca d'água. */
+  watermark?: Watermark | null;
 }
 
 /** Texto de cabeçalho/rodapé: `{PAGE}` e `{NUMPAGES}` são os campos de número e total de páginas. */
@@ -163,6 +165,27 @@ export interface PageSetup {
   marginBottom: number;
   marginLeft: number;
   marginRight: number;
+  /** Cor da Página (`#RRGGBB`, aba Design); ausente é Sem Cor. */
+  background?: string;
+  /** Bordas da Página (aba Design). */
+  border?: PageBorder;
+}
+
+/** Borda nos quatro lados da página, a 24 pt da beira do papel, como no Word. */
+export interface PageBorder {
+  style: "single" | "shadow" | "double";
+  color: string;
+  /** Espessura em oitavos de ponto (2 = ¼ pt … 48 = 6 pt), como o `w:sz` do Word. */
+  width: number;
+}
+
+/** Marca d'água de texto atrás do conteúdo de cada página. */
+export interface Watermark {
+  text: string;
+  color: string;
+  /** 50% de opacidade, como "Semitransparente" no Word. */
+  semitransparent: boolean;
+  layout: "diagonal" | "horizontal";
 }
 
 /** A4 retrato com margens de 2,5 cm, o padrão do núcleo. */
@@ -186,6 +209,7 @@ export type TextCommand =
   | { type: "block.remove"; block: number }
   | { type: "page.set"; page: PageSetup }
   | { type: "headerFooter.set"; value: HeadersFooters }
+  | { type: "watermark.set"; value: Watermark | null }
   | { type: "block.setStyle"; block: number; style: BlockStyle }
   | ({ type: "block.setAttr"; block: number } & ParaAttr)
   | { type: "history.undo" }
@@ -206,6 +230,7 @@ export interface ViewPatch {
   dirty: boolean;
   page?: PageSetup;
   headerFooter?: HeadersFooters;
+  watermark?: Watermark | null;
 }
 
 export interface DispatchResult {
@@ -219,7 +244,7 @@ export function applyPatch(view: DocView, patch: ViewPatch): DocView | null {
   blocks.splice(patch.start, patch.deleteCount, ...patch.blocks);
   if (blocks.length !== patch.blockCount) return null;
   const { canUndo, canRedo, path, title, dirty, format } = patch;
-  return { blocks, canUndo, canRedo, path, title, dirty, format, page: patch.page ?? view.page, headerFooter: patch.headerFooter ?? view.headerFooter };
+  return { blocks, canUndo, canRedo, path, title, dirty, format, page: patch.page ?? view.page, headerFooter: patch.headerFooter ?? view.headerFooter, watermark: patch.watermark === undefined ? view.watermark : patch.watermark };
 }
 
 export interface FormatInfo {

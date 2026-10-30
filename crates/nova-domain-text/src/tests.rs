@@ -952,8 +952,10 @@ fn pagina_e_margens() {
         height: 11906,
         ..PageSetup::default()
     };
-    doc.execute(TextCommand::SetPage { page: landscape })
-        .unwrap();
+    doc.execute(TextCommand::SetPage {
+        page: landscape.clone(),
+    })
+    .unwrap();
     assert_eq!(doc.page_setup(), landscape);
     let bad = PageSetup {
         margin_left: 9000,

@@ -7,6 +7,9 @@ const PARCIAL = (obs) => ({ status: 'parcial', obs });
 const FALHA = (obs) => ({ status: 'falha', obs });
 const AUSENTE = (obs) => ({ status: 'ausente', obs });
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+/** Igualdade de objetos sem depender da ordem das chaves (a ponte devolve em ordem alfabética). */
+const sorted = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted(v[k])])) : v);
+const same = (a, b) => eq(sorted(a), sorted(b));
 /** Resposta de releases/latest do GitHub para o tauri-mock.js (vale depois de recarregar). */
 const release = (tag, { prerelease = false } = {}) => JSON.stringify({
   tag_name: tag,
@@ -1254,6 +1257,152 @@ const flows = [
     return theme === 'dark' ? OK('Recurso que o Word não tem nesta forma.') : FALHA(`data-theme=${theme}`);
   } },
   { area: 'Exibição', name: 'Régua', run: async () => AUSENTE('Não há régua.') },
+
+  // ───────────── Design
+  { area: 'Design', name: 'Cor da Página: cores do tema, Mais Cores e Sem Cor', run: async (h) => {
+    await h.reset(['texto']);
+    await h.p.locator('.tab', { hasText: 'Design' }).click();
+    const pick = async (fn) => { await h.p.locator('button[aria-label="Cor da Página"]').click(); await fn(); await h.settle(200); return (await h.doc()).page.background ?? null; };
+    const theme = await pick(() => h.p.locator('.popover .swatch-grid.theme .swatch').nth(13).click());
+    const sheetBg = await h.p.locator('.sheet').first().evaluate((el) => getComputedStyle(el).backgroundColor);
+    const more = await pick(() => h.p.locator('.popover .hidden-color').evaluate((el) => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, '#ddebf7');
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }));
+    const none = await pick(() => h.p.locator('.popover .menu-item', { hasText: 'Sem Cor' }).click());
+    await h.press('Control+z'); await h.settle(200);
+    const undone = (await h.doc()).page.background ?? null;
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    const ok = /^#[0-9A-F]{6}$/.test(theme) && sheetBg !== 'rgb(255, 255, 255)' && more === '#DDEBF7' && none === null && undone === '#DDEBF7';
+    return ok ? OK('Grade de Cores do Tema, Cores Padrão, Mais Cores… e Sem Cor, como no Word; Ctrl+Z desfaz.') : FALHA(`tema=${theme} folha=${sheetBg} mais=${more} sem=${none} desfeito=${undone}`);
+  } },
+  { area: 'Design', name: "Marca d'Água da galeria em todas as folhas, atrás do texto", run: async (h) => {
+    const many = Array.from({ length: 90 }, (_, i) => `Parágrafo ${i + 1} com algum texto para ocupar espaço na página.`);
+    await h.reset(many);
+    await h.p.locator('.tab', { hasText: 'Design' }).click();
+    await h.p.locator("button[aria-label=\"Marca d'Água\"]").click();
+    await h.p.locator('.popover .watermark-tile[aria-label="CONFIDENCIAL (Diagonal)"]').click(); await h.settle(300);
+    const wm = (await h.doc()).watermark;
+    const layout = await h.p.evaluate(() => {
+      const sheets = document.querySelectorAll('.sheet').length;
+      const marks = [...document.querySelectorAll('.sheet .watermark-text')];
+      const r = marks[0].getBoundingClientRect();
+      // O texto do documento fica por cima: as folhas vêm antes do texto e, no centro da marca d'água, o ponto é do texto.
+      const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      const sheetsEl = document.querySelector('.sheets');
+      const behind = marks.every((m) => sheetsEl.contains(m)) && !!(sheetsEl.compareDocumentPosition(document.querySelector('.page')) & Node.DOCUMENT_POSITION_FOLLOWING) && !!top?.closest('.page');
+      return { sheets, marks: marks.length, rotate: marks[0].style.transform, onTop: behind, text: marks[0].textContent };
+    });
+    await h.press('Control+z'); await h.settle(200);
+    const undone = (await h.doc()).watermark ?? null;
+    const left = await h.p.locator('.sheet .watermark-text').count();
+    await h.press('Control+y'); await h.settle(200);
+    const redone = (await h.doc()).watermark?.text;
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    const ok = wm?.text === 'CONFIDENCIAL' && wm.layout === 'diagonal' && wm.semitransparent && wm.color === '#C0C0C0'
+      && layout.sheets > 1 && layout.marks === layout.sheets && /rotate\(-45deg\)/.test(layout.rotate) && layout.onTop && undone === null && left === 0 && redone === 'CONFIDENCIAL';
+    return ok ? OK(`Prata semitransparente na diagonal em ${layout.sheets} folhas, atrás do texto; Ctrl+Z / Ctrl+Y.`) : FALHA(`${JSON.stringify(wm)} ${JSON.stringify(layout)} desfeito=${JSON.stringify(undone)} sobrou=${left} refeito=${redone}`);
+  } },
+  { area: 'Design', name: "Marca d'Água Personalizada: texto, cor, transparência e horizontal; Remover", run: async (h) => {
+    await h.reset(['texto']);
+    await h.p.locator('.tab', { hasText: 'Design' }).click();
+    await h.p.locator("button[aria-label=\"Marca d'Água\"]").click();
+    await h.p.locator('.popover .menu-item', { hasText: "Marca d'Água Personalizada" }).click();
+    const dialog = h.p.locator('.watermark-dialog');
+    await dialog.locator('label', { hasText: "Marca d'água de texto" }).locator('input').check();
+    await dialog.locator('input[list="watermark-texts"]').fill('USO INTERNO');
+    await dialog.locator('input[type="color"]').fill('#c00000');
+    await dialog.locator('label', { hasText: 'Semitransparente' }).locator('input').uncheck();
+    await dialog.locator('label', { hasText: 'Horizontal' }).locator('input').check();
+    await dialog.locator('button', { hasText: 'OK' }).click(); await h.settle(200);
+    const wm = (await h.doc()).watermark;
+    const svg = await h.p.locator('.sheet .watermark-text').first().evaluate((el) => ({ t: el.style.transform, fill: el.querySelector('text').getAttribute('fill'), op: el.querySelector('text').getAttribute('fill-opacity') }));
+    // Texto em branco não vale (como no Word, o OK fica sem efeito e avisa).
+    await h.p.locator("button[aria-label=\"Marca d'Água\"]").click();
+    await h.p.locator('.popover .menu-item', { hasText: "Marca d'Água Personalizada" }).click();
+    await dialog.locator('input[list="watermark-texts"]').fill('   ');
+    await dialog.locator('button', { hasText: 'OK' }).click();
+    const warned = await dialog.locator('.dialog-error').count();
+    await h.p.keyboard.press('Escape');
+    await h.p.locator("button[aria-label=\"Marca d'Água\"]").click();
+    await h.p.locator('.popover .menu-item', { hasText: "Remover Marca d'Água" }).click(); await h.settle(200);
+    const removed = (await h.doc()).watermark ?? null;
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    const ok = same(wm, { text: 'USO INTERNO', color: '#C00000', semitransparent: false, layout: 'horizontal' }) && !/rotate/.test(svg.t) && svg.fill === '#C00000' && svg.op === '1' && warned === 1 && removed === null;
+    return ok ? OK("Caixa Marca d'Água como a do Word (Sem marca d'água / Marca d'água de texto, Aplicar)."): FALHA(`${JSON.stringify(wm)} ${JSON.stringify(svg)} aviso=${warned} removida=${JSON.stringify(removed)}`);
+  } },
+  { area: 'Design', name: 'Bordas da Página: caixa, sombra e dupla, com cor e largura', run: async (h) => {
+    await h.reset(['texto']);
+    await h.p.locator('.tab', { hasText: 'Design' }).click();
+    const choose = async (setting, color, width) => {
+      await h.p.locator('.big-button', { hasText: 'Bordas da Página' }).click();
+      const d = h.p.locator('.borders-dialog');
+      await d.locator('.border-setting', { hasText: setting }).click();
+      if (color) await d.locator('input[type="color"]').fill(color);
+      if (width) await d.locator('select').selectOption({ label: width });
+      await d.locator('button', { hasText: 'OK' }).click(); await h.settle(200);
+      const css = await h.p.locator('.sheet').first().evaluate((s) => {
+        const b = s.querySelector('.sheet-border');
+        if (!b) return null;
+        const c = getComputedStyle(b);
+        return { style: c.borderTopStyle, width: c.borderTopWidth, color: c.borderTopColor, shadow: c.boxShadow, top: b.offsetTop };
+      });
+      return { border: (await h.doc()).page.border ?? null, css };
+    };
+    const box = await choose('Caixa', '#2f5496', '1 ½ pt');
+    const shadow = await choose('Sombra');
+    const dbl = await choose('Dupla', null, '½ pt');
+    const none = await choose('Nenhuma');
+    await h.p.locator('.tab', { hasText: 'Página inicial' }).click();
+    const ok = same(box.border, { style: 'single', color: '#2F5496', width: 12 }) && box.css.style === 'solid' && box.css.width === '2px' && box.css.top === 32 && box.css.shadow === 'none'
+      && shadow.border?.style === 'shadow' && shadow.css.shadow !== 'none'
+      && same(dbl.border, { style: 'double', color: '#2F5496', width: 4 }) && dbl.css.style === 'double'
+      && none.border === null && none.css === null;
+    return ok ? OK('A 24 pt da beira do papel, como o padrão do Word; Nenhuma remove.') : FALHA(JSON.stringify({ box, shadow, dbl, none }));
+  } },
+  { area: 'Design', name: "Imprimir/PDF com cor da página, borda e marca d'água", run: async (h) => {
+    const many = Array.from({ length: 60 }, (_, i) => `Parágrafo ${i + 1} com algum texto para ocupar espaço na página.`);
+    await h.reset(many);
+    await core('dispatch', { command: { type: 'batch', commands: [
+      { type: 'page.set', page: { width: 11906, height: 16838, marginTop: 1417, marginBottom: 1417, marginLeft: 1417, marginRight: 1417, background: '#FFF2CC', border: { style: 'single', color: '#2F5496', width: 12 } } },
+      { type: 'watermark.set', value: { text: 'CONFIDENCIAL', color: '#C0C0C0', semitransparent: true, layout: 'diagonal' } },
+      { type: 'headerFooter.set', value: { header: { text: 'Relatório', align: 'center' }, footer: { text: '', align: 'left' }, differentFirst: false } },
+    ] } });
+    await h.reload();
+    // PDF como "Gráficos de fundo" desligado: a cor precisa sair mesmo assim.
+    const pdf = await h.p.pdf({ preferCSSPageSize: true, printBackground: false });
+    const zlib = require('zlib');
+    const raw = pdf.toString('latin1');
+    const pages = (raw.match(/\/Type\s*\/Page\b/g) || []).length;
+    let streams = '';
+    for (const m of raw.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
+      try { streams += zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1'); } catch { /* fonte ou imagem */ }
+    }
+    const fills = (rgb) => (streams.match(new RegExp(`${rgb} (rg|sc)`, 'g')) || []).length;
+    const paper = fills('1 \\.949 \\.8');
+    // A borda são gradientes (linear-gradient) nas caixas de margem: /Shading com a cor no dicionário.
+    const line = (raw.match(/\.1843 \.3294 \.5882/g) || []).length;
+    const gray = fills('\\.7529 \\.7529 \\.7529');
+    const alpha = /\/ca\s+\.5/.test(raw);
+    await core('new_document'); await h.reload();
+    const ok = pages > 1 && paper >= pages && line >= pages && gray >= pages && alpha;
+    return ok ? OK(`${pages} páginas: cor no papel inteiro (print-color-adjust: exact), borda nas caixas de margem do @page e marca d'água semitransparente em cada página.`) : FALHA(`páginas=${pages} papel=${paper} borda=${line} marca=${gray} alfa=${alpha}`);
+  } },
+  { area: 'Design', name: 'Cor, borda e marca d\'água salvas no .docx e no .odt', run: async () => {
+    await core('new_document');
+    const page = { width: 11906, height: 16838, marginTop: 1417, marginBottom: 1417, marginLeft: 1417, marginRight: 1417, background: '#E2EFDA', border: { style: 'double', color: '#C00000', width: 6 } };
+    const watermark = { text: 'RASCUNHO', color: '#808080', semitransparent: false, layout: 'horizontal' };
+    await core('dispatch', { command: { type: 'batch', commands: [{ type: 'page.set', page }, { type: 'watermark.set', value: watermark }] } });
+    const out = [];
+    for (const ext of ['docx', 'odt']) {
+      await core('save_document', { path: `/tmp/nova-flows/design.${ext}` });
+      await core('new_document');
+      const back = await core('open_document', { path: `/tmp/nova-flows/design.${ext}` });
+      const close = ['marginTop', 'marginBottom', 'marginLeft', 'marginRight'].every((k) => Math.abs(back.page[k] - page[k]) <= 2);
+      out.push(close && back.page.background === page.background && same(back.page.border, page.border) && same(back.watermark, watermark) ? 'ok' : JSON.stringify([back.page, back.watermark]));
+    }
+    return out.every((o) => o === 'ok') ? OK("w:background, w:pgBorders e v:textpath no cabeçalho (.docx); fo:background-color, fo:border e draw:custom-shape (.odt). Validado no LibreOffice (testes do núcleo).") : FALHA(out.join(' | '));
+  } },
 
   // ───────────── Layout
   { area: 'Layout', name: 'Margens prontas (Normal, ABNT…) e personalizadas', run: async (h) => {
