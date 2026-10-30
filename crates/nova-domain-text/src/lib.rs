@@ -13,9 +13,9 @@ pub use design::{
     BorderStyle, PageBorder, Watermark, WatermarkLayout, BORDER_WIDTHS, MAX_WATERMARK_CHARS,
 };
 pub use format::{
-    is_hex_color, is_link, is_media_id, Align, BlockStyle, CellRef, ImageRef, ListKind, Mark,
-    MarkKind, ParaAttr, ParaAttrs, Paragraph, Span, TocEntry, HIGHLIGHT_COLORS, MAX_IMAGE_PT,
-    MAX_INDENT, MAX_TABLE_SIZE, MAX_TOC_LEVEL,
+    is_hex_color, is_link, is_media_id, is_note_id, Align, BlockStyle, CellRef, ImageRef, ListKind,
+    Mark, MarkKind, ParaAttr, ParaAttrs, Paragraph, Span, TocEntry, FOOTNOTE_CHAR,
+    HIGHLIGHT_COLORS, MAX_IMAGE_PT, MAX_INDENT, MAX_TABLE_SIZE, MAX_TOC_LEVEL,
 };
 
 /// Página do documento, em twips (1/20 de ponto, 1/1440 de polegada), como no
@@ -298,6 +298,10 @@ pub enum TextCommand {
     /// Cabeçalho e rodapé: `{"type":"headerFooter.set","value":{…}}`.
     #[serde(rename = "headerFooter.set")]
     SetHeaderFooter { value: HeadersFooters },
+    /// Texto de uma nota de rodapé: `{"type":"footnote.set","id":"n1","text":"…"}`;
+    /// `text: null` apaga a nota.
+    #[serde(rename = "footnote.set")]
+    SetFootnote { id: String, text: Option<String> },
     /// Tamanho do papel e margens (aba Layout): `{"type":"page.set","page":{…}}`.
     #[serde(rename = "page.set")]
     SetPage { page: PageSetup },
@@ -381,6 +385,10 @@ pub enum TextEvent {
     },
     WatermarkSet {
         value: Option<Watermark>,
+    },
+    FootnoteSet {
+        id: String,
+        text: Option<String>,
     },
 }
 
@@ -586,6 +594,16 @@ impl TextDocument {
                         &[(MarkKind::Link.key().to_string(), None)],
                     )?;
                 }
+                // A marca de nota só vale no caractere da chamada: texto digitado
+                // ao lado dela não vira nota.
+                if !text.chars().all(|c| c == FOOTNOTE_CHAR) {
+                    self.replica.format_text(
+                        block,
+                        offset,
+                        utf16_len(&text),
+                        &[(MarkKind::Footnote.key().to_string(), None)],
+                    )?;
+                }
                 TextEvent::TextInserted {
                     block,
                     offset,
@@ -708,6 +726,12 @@ impl TextDocument {
                 self.replica.set_settings(&value.to_settings());
                 TextEvent::HeaderFooterSet { value }
             }
+            TextCommand::SetFootnote { id, text } => {
+                validate_note(&id, text.as_deref())?;
+                self.replica
+                    .set_settings(&[(note_key(&id), text.clone().map(AttrValue::Text))]);
+                TextEvent::FootnoteSet { id, text }
+            }
             TextCommand::SetPage { page } => {
                 page.validate()?;
                 self.replica.set_settings(&page.to_settings());
@@ -814,6 +838,52 @@ impl TextDocument {
         Ok(())
     }
 
+    /// Textos das notas de rodapé gravadas, pelo id (inclusive notas sem chamada no texto).
+    pub fn footnote_texts(&self) -> std::collections::BTreeMap<String, String> {
+        self.replica
+            .settings()
+            .iter()
+            .filter_map(|(k, v)| match (k.strip_prefix(NOTE_PREFIX), v) {
+                (Some(id), AttrValue::Text(t)) if is_note_id(id) => {
+                    Some((id.to_string(), t.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Notas de rodapé na ordem das chamadas no texto: (id, texto). O número
+    /// de cada nota é a posição nesta lista mais um.
+    pub fn footnotes(&self) -> Vec<(String, String)> {
+        let texts = self.footnote_texts();
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for p in self.paragraphs() {
+            for span in &p.spans {
+                for mark in &span.marks {
+                    if let Mark::Footnote { id } = mark {
+                        if seen.insert(id.clone()) {
+                            out.push((id.clone(), texts.get(id).cloned().unwrap_or_default()));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Define as notas ao abrir um arquivo, sem entrar no desfazer.
+    pub fn load_footnotes(&mut self, notes: &[(String, String)]) -> Result<(), DomainError> {
+        let mut changes = Vec::new();
+        for (id, text) in notes {
+            validate_note(id, Some(text))?;
+            changes.push((note_key(id), Some(AttrValue::Text(text.clone()))));
+        }
+        self.replica.set_settings(&changes);
+        self.replica.clear_history();
+        Ok(())
+    }
+
     /// Tamanho do papel, margens, cor e borda da página.
     pub fn page_setup(&self) -> PageSetup {
         PageSetup::from_settings(&self.replica.settings())
@@ -913,6 +983,32 @@ impl TextDocument {
     pub fn apply_remote(&mut self, update: &[u8]) -> Result<(), DomainError> {
         Ok(self.replica.apply_update(update)?)
     }
+}
+
+/// Chave do texto de uma nota nas configurações do documento.
+const NOTE_PREFIX: &str = "fn:";
+
+fn note_key(id: &str) -> String {
+    format!("{NOTE_PREFIX}{id}")
+}
+
+/// Maior nota de rodapé, em caracteres.
+pub const MAX_NOTE_CHARS: usize = 5000;
+
+fn validate_note(id: &str, text: Option<&str>) -> Result<(), DomainError> {
+    if !is_note_id(id) {
+        return Err(DomainError::InvalidMark(format!(
+            "nota {id:?}: id de 1 a 32 letras ou dígitos"
+        )));
+    }
+    if let Some(t) = text {
+        if t.chars().count() > MAX_NOTE_CHARS || t.contains(['\n', '\r']) {
+            return Err(DomainError::InvalidAttr(format!(
+                "nota: até {MAX_NOTE_CHARS} caracteres numa linha (use U+000B para quebrar)"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_inline(text: &str) -> Result<(), DomainError> {

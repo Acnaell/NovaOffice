@@ -10,7 +10,12 @@ export type Mark =
   | { mark: "color"; value: string }
   | { mark: "highlight"; value: HighlightColor }
   | { mark: "vertAlign"; value: "superscript" | "subscript" }
-  | { mark: "link"; href: string };
+  | { mark: "link"; href: string }
+  /** Chamada de nota de rodapé: vai no caractere FOOTNOTE_CHAR; o texto fica em `DocView.footnotes`. */
+  | { mark: "footnote"; id: string };
+
+/** Caractere da chamada de nota de rodapé (uso privado do Unicode, igual ao núcleo). */
+export const FOOTNOTE_CHAR = "\uE000";
 
 /** Cores de realce do Word (nomes do OOXML, `w:highlight`). */
 export type HighlightColor =
@@ -136,6 +141,8 @@ export interface DocView {
   headerFooter: HeadersFooters;
   /** Marca d'água (aba Design); `null` ou ausente sem marca d'água. */
   watermark?: Watermark | null;
+  /** Texto das notas de rodapé, pelo id da marca `footnote` das chamadas. */
+  footnotes: Record<string, string>;
 }
 
 /** Texto de cabeçalho/rodapé: `{PAGE}` e `{NUMPAGES}` são os campos de número e total de páginas. */
@@ -210,6 +217,7 @@ export type TextCommand =
   | { type: "page.set"; page: PageSetup }
   | { type: "headerFooter.set"; value: HeadersFooters }
   | { type: "watermark.set"; value: Watermark | null }
+  | { type: "footnote.set"; id: string; text: string | null }
   | { type: "block.setStyle"; block: number; style: BlockStyle }
   | ({ type: "block.setAttr"; block: number } & ParaAttr)
   | { type: "history.undo" }
@@ -231,6 +239,7 @@ export interface ViewPatch {
   page?: PageSetup;
   headerFooter?: HeadersFooters;
   watermark?: Watermark | null;
+  footnotes?: Record<string, string>;
 }
 
 export interface DispatchResult {
@@ -244,7 +253,7 @@ export function applyPatch(view: DocView, patch: ViewPatch): DocView | null {
   blocks.splice(patch.start, patch.deleteCount, ...patch.blocks);
   if (blocks.length !== patch.blockCount) return null;
   const { canUndo, canRedo, path, title, dirty, format } = patch;
-  return { blocks, canUndo, canRedo, path, title, dirty, format, page: patch.page ?? view.page, headerFooter: patch.headerFooter ?? view.headerFooter, watermark: patch.watermark === undefined ? view.watermark : patch.watermark };
+  return { blocks, canUndo, canRedo, path, title, dirty, format, page: patch.page ?? view.page, headerFooter: patch.headerFooter ?? view.headerFooter, watermark: patch.watermark === undefined ? view.watermark : patch.watermark, footnotes: patch.footnotes ?? view.footnotes };
 }
 
 export interface FormatInfo {

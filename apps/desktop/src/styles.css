@@ -1896,6 +1896,97 @@ select {
   }
 }
 
+/* ---------- Notas de rodapé ---------- */
+
+/* Chamada: o caractere da nota fica invisível e o número (data-n) aparece sobrescrito. */
+.page .fn-ref {
+  font-size: 0;
+}
+
+.page .fn-ref::after {
+  content: attr(data-n);
+  font-size: 7.5pt;
+  vertical-align: super;
+  line-height: 0;
+  padding: 0 1px;
+}
+
+.fn-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.fn-area {
+  position: absolute;
+  transform: translateY(-100%);
+  padding-top: 10px;
+  pointer-events: auto;
+  color: var(--page-text);
+  font: 10pt/1.2 Calibri, Carlito, "Segoe UI", sans-serif;
+}
+
+/* O traço curto que separa o texto das notas, como no Word. */
+.fn-area::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 0;
+  width: 33%;
+  border-top: 1px solid #555;
+}
+
+.fn-item {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  padding: 1px 0;
+}
+
+.fn-num {
+  font-size: 7pt;
+  vertical-align: super;
+  min-width: 10px;
+}
+
+.fn-text {
+  flex: 1;
+  min-height: 1.2em;
+  white-space: pre-wrap;
+  outline: none;
+  border-radius: 2px;
+  cursor: text;
+}
+
+.fn-text:hover {
+  background: rgb(42 120 201 / 0.06);
+}
+
+.fn-text:focus {
+  background: rgb(42 120 201 / 0.09);
+  box-shadow: 0 0 0 1px rgb(42 120 201 / 0.35);
+}
+
+/* Lista para a impressão: o navegador pagina sozinho e as notas vão para o fim. */
+.fn-print {
+  display: none;
+}
+
+@media print {
+  .fn-layer {
+    display: none;
+  }
+
+  .fn-print {
+    display: block;
+    margin: 18pt 0 0;
+    padding: 6pt 0 0 18pt;
+    border-top: 1px solid #555;
+    font: 10pt/1.3 Calibri, Carlito, sans-serif;
+    white-space: pre-wrap;
+  }
+}
+
 /* ---------- Sumário ---------- */
 
 /* Título do sumário: como o "Título do Sumário" do Word. */

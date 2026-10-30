@@ -47,7 +47,7 @@ fn span_html(text: &str, marks: &[Mark]) -> String {
                 css.push(format!("font-size:{}pt", f64::from(*half_points) / 2.0))
             }
             Mark::Color { value } => css.push(format!("color:{value}")),
-            Mark::Link { .. } => {}
+            Mark::Link { .. } | Mark::Footnote { .. } => {}
             Mark::Highlight { value } => {
                 let hex = HIGHLIGHT
                     .iter()
@@ -206,6 +206,22 @@ pub fn export(doc: &TextDocument, title: &str) -> String {
     }
     if cell.is_some() {
         body.push_str("</td></tr></table>");
+    }
+    let notes = crate::notes::collect(doc);
+    let mut body = crate::notes::replace_calls(&body, &notes, |n| {
+        format!(r##"<sup><a href="#nota-{n}" id="chamada-{n}">{n}</a></sup>"##)
+    });
+    if !notes.texts.is_empty() {
+        body.push_str("<hr>\n<ol class=\"notas\">\n");
+        for (i, t) in notes.texts.iter().enumerate() {
+            let n = i + 1;
+            body.push_str(&format!(
+                r##"<li id="nota-{n}">{} <a href="#chamada-{n}">↩</a></li>"##,
+                esc(t).replace('\u{b}', "<br>")
+            ));
+            body.push('\n');
+        }
+        body.push_str("</ol>\n");
     }
     format!(
         "<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"generator\" content=\"NovaOffice\">\n<title>{}</title>\n<style>body{{max-width:210mm;margin:2.5cm auto;font-family:Calibri,Carlito,'Segoe UI',sans-serif;font-size:11pt;line-height:1.5}}blockquote{{border-left:3px solid #ccc;margin-left:0;padding-left:12pt;color:#4a4a46}}pre{{background:#f4f4f1;padding:4pt 8pt;font-family:Consolas,monospace;font-size:10pt}}</style>\n</head>\n<body>\n{body}</body>\n</html>\n",

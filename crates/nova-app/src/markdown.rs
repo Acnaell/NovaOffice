@@ -100,6 +100,15 @@ pub fn export(doc: &TextDocument) -> String {
         out.push_str(&line);
         i += 1;
     }
+    // Notas de rodapé no formato do GitHub: [^1] no texto e as definições no fim.
+    let notes = crate::notes::collect(doc);
+    let mut out = crate::notes::replace_calls(&out, &notes, |n| format!("[^{n}]"));
+    if !notes.texts.is_empty() {
+        out.push('\n');
+        for (i, t) in notes.texts.iter().enumerate() {
+            out.push_str(&format!("\n[^{}]: {}", i + 1, t.replace('\u{b}', " ")));
+        }
+    }
     out
 }
 

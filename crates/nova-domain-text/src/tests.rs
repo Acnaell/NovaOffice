@@ -1031,3 +1031,62 @@ fn sumario_vai_ao_crdt_e_volta() {
     doc.execute(TextCommand::Undo).unwrap();
     assert_eq!(doc.block_attrs(1).unwrap().toc, None);
 }
+
+#[test]
+fn nota_de_rodape_no_texto_e_nas_configuracoes() {
+    use crate::format::FOOTNOTE_CHAR;
+    let mut doc = TextDocument::from_plain_text(1, "Texto");
+    doc.execute(TextCommand::Batch {
+        commands: vec![
+            TextCommand::InsertText {
+                block: 0,
+                offset: 5,
+                text: FOOTNOTE_CHAR.to_string(),
+                marks: Some(vec![Mark::Footnote { id: "x1".into() }]),
+            },
+            TextCommand::SetFootnote {
+                id: "x1".into(),
+                text: Some("Nota".into()),
+            },
+        ],
+    })
+    .unwrap();
+    assert_eq!(
+        doc.footnotes(),
+        vec![("x1".to_string(), "Nota".to_string())]
+    );
+    // Digitar logo depois da chamada não estende a nota.
+    doc.execute(TextCommand::InsertText {
+        block: 0,
+        offset: 6,
+        text: " depois".into(),
+        marks: None,
+    })
+    .unwrap();
+    let spans = doc.block_spans(0).unwrap();
+    assert_eq!(spans.last().unwrap().text, " depois");
+    assert!(spans.last().unwrap().marks.is_empty());
+    // Id inválido e nota com quebra de parágrafo são recusados.
+    assert!(doc
+        .execute(TextCommand::SetFootnote {
+            id: "a b".into(),
+            text: Some("x".into())
+        })
+        .is_err());
+    assert!(doc
+        .execute(TextCommand::SetFootnote {
+            id: "x1".into(),
+            text: Some("a\nb".into())
+        })
+        .is_err());
+    // Apagar a chamada tira a nota da lista; desfazer a traz de volta.
+    doc.execute(TextCommand::DeleteText {
+        block: 0,
+        offset: 5,
+        len: 1,
+    })
+    .unwrap();
+    assert!(doc.footnotes().is_empty());
+    doc.execute(TextCommand::Undo).unwrap();
+    assert_eq!(doc.footnotes().len(), 1);
+}

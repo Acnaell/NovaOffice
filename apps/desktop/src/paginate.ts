@@ -31,7 +31,17 @@ export function unpaginate(root: HTMLElement): void {
   });
 }
 
-export function paginate(root: HTMLElement, g: Geometry, caretBlock: number): PageInfo {
+/**
+ * `notes(unit)`: altura das notas de rodapé chamadas naquele parágrafo (ou
+ * tabela); fica reservada no pé da página onde ele cair, mais o traço separador.
+ */
+export function paginate(
+  root: HTMLElement,
+  g: Geometry,
+  caretBlock: number,
+  notes?: (unit: HTMLElement) => number,
+  separator = 0,
+): PageInfo {
   unpaginate(root);
   const stride = g.pageHeight + g.gap;
   const start = (k: number) => k * stride + g.marginTop;
@@ -48,15 +58,19 @@ export function paginate(root: HTMLElement, g: Geometry, caretBlock: number): Pa
   let page = 0;
   let current = 1;
   let lastBottom = g.marginTop;
+  // Altura reservada às notas de rodapé no pé de cada página.
+  const reserved: number[] = [];
   for (let i = 0; i < units.length; i++) {
     const unit = units[i];
     let top = tops[i] + shift;
     const height = heights[i];
     page = Math.max(page, Math.floor(top / stride));
+    const noteH = notes ? notes(unit) : 0;
+    const need = (k: number) => (noteH ? noteH + (reserved[k] ? 0 : separator) : 0);
     const atPageStart = top <= start(page) + 1;
     const forced = i > 0 && unit.classList.contains("page-break") && !atPageStart;
-    const inGap = top > end(page);
-    const overflows = top + height > end(page) + 0.5 && height <= content && !atPageStart;
+    const inGap = top > end(page) - (reserved[page] ?? 0);
+    const overflows = top + height > end(page) - (reserved[page] ?? 0) - need(page) + 0.5 && height <= content && !atPageStart;
     if (forced || inGap || overflows) {
       const target = start(page + 1);
       const delta = target - top;
@@ -67,6 +81,7 @@ export function paginate(root: HTMLElement, g: Geometry, caretBlock: number): Pa
       top = target;
       page += 1;
     }
+    if (noteH) reserved[page] = (reserved[page] ?? separator) + noteH;
     lastBottom = top + height;
     const holds =
       unit.dataset.block === String(caretBlock) || !!unit.querySelector(`[data-block="${caretBlock}"]`);

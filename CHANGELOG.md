@@ -10,11 +10,6 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ### Adicionado
 
-- Aba Exibir como a do Word: zoom de 10% a 500% (− e + na barra de status, porcentagem com as
-  opções prontas, Ctrl + roda do mouse, 100%, Uma Página e Largura da Página) sem mudar a
-  paginação; régua horizontal com as margens da página; Painel de Navegação com os títulos
-  (Título 1 a 3), que leva o cursor ao título clicado; e Modo de Foco em tela inteira, só com o
-  documento (Esc volta).
 - Aba **Design** no Nova Text, entre Inserir e Layout, como no Word: **Cor da Página** (cores do
   tema, Mais Cores e Sem Cor), **Marca d'Água** (CONFIDENCIAL, NÃO COPIE e RASCUNHO na diagonal ou
   na horizontal, ou um texto seu, com cor e transparência) e **Bordas da Página** (caixa, sombra ou
@@ -24,6 +19,22 @@ A seção da versão é usada como texto da página de release no GitHub.
 ### Corrigido
 
 - Papel e margens de um .odt gravado pelo LibreOffice agora são lidos (antes valia o padrão).
+
+## [0.1.11] - 2026-10-30
+
+### Adicionado
+
+- Aba Exibir como a do Word: zoom de 10% a 500% (− e + na barra de status, porcentagem com as
+  opções prontas, Ctrl + roda do mouse, 100%, Uma Página e Largura da Página) sem mudar a
+  paginação; régua horizontal com as margens da página; Painel de Navegação com os títulos
+  (Título 1 a 3), que leva o cursor ao título clicado; e Modo de Foco em tela inteira, só com o
+  documento (Esc volta).
+- **Notas de rodapé** (Referências → Inserir Nota de Rodapé, Ctrl+Alt+F): número sobrescrito no
+  texto, numeração automática pela ordem e as notas no pé da página onde a chamada cai, editáveis
+  ali mesmo (Enter ou Esc voltam ao texto). Próxima Nota de Rodapé leva o cursor à chamada seguinte.
+  São lidas e gravadas em .docx (`footnotes.xml`) e .odt (`text:note`), validadas no LibreOffice.
+  Em Markdown viram `[^1]`; em HTML e texto, uma lista de notas no fim. Na impressão pelo navegador,
+  as notas saem no fim do documento.
 
 ## [0.1.10] - 2026-10-24
 
@@ -226,7 +237,8 @@ Primeira versão pública da NovaOffice: o app desktop com o editor Nova Text e 
 - Instaladores para Windows (`.exe` e `.msi`), macOS (`.dmg`, Intel e Apple Silicon) e Linux
   (`.AppImage`, `.deb` e `.rpm`), e o CLI para Windows, macOS e Linux (x86_64 e ARM64).
 
-[Não lançado]: https://github.com/Acnaell/novaoffice/compare/v0.1.10...HEAD
+[Não lançado]: https://github.com/Acnaell/novaoffice/compare/v0.1.11...HEAD
+[0.1.11]: https://github.com/Acnaell/novaoffice/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/Acnaell/novaoffice/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/Acnaell/novaoffice/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/Acnaell/novaoffice/compare/v0.1.7...v0.1.8

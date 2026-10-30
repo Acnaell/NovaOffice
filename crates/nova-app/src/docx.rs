@@ -42,7 +42,8 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
     }
     let page = doc.page_setup();
     let watermark = doc.watermark();
-    let (body, nums, links) = body_xml(&paragraphs, &images, &page);
+    let notes = doc.footnotes();
+    let (body, nums, links) = body_xml(&paragraphs, &images, &page, &notes);
     let media_names: Vec<String> = images
         .iter()
         .enumerate()
@@ -101,7 +102,19 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
             &format!("{}<w:body>", design::docx_background(color)),
             1,
         );
-        extra_files.push(("word/settings.xml", design::DOCX_SETTINGS.to_string()));
+    }
+    // Notas de rodapé: word/footnotes.xml (com os separadores).
+    if !notes.is_empty() {
+        extra_files.push(("word/footnotes.xml", footnotes_xml(&notes)));
+        extra_rels.push_str(r#"<Relationship Id="rIdFn" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>"#);
+        extra_types.push_str(r#"<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>"#);
+    }
+    // Configurações: o fundo da página (w:displayBackgroundShape) e os separadores das notas.
+    if page.background.is_some() || !notes.is_empty() {
+        extra_files.push((
+            "word/settings.xml",
+            settings_xml(page.background.is_some(), !notes.is_empty()),
+        ));
         extra_rels.push_str(r#"<Relationship Id="rIdSettings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>"#);
         extra_types.push_str(r#"<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>"#);
     }
@@ -149,6 +162,114 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         zip.write_all(data).expect("zip em memória");
     }
     zip.finish().expect("zip em memória").into_inner()
+}
+
+/// `word/footnotes.xml`: os separadores (ids -1 e 0) e uma nota por id (1, 2…).
+fn footnotes_xml(notes: &[(String, String)]) -> String {
+    let mut out = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>"#,
+    );
+    for (n, (_, text)) in notes.iter().enumerate() {
+        out.push_str(&format!(
+            r#"<w:footnote w:id="{}"><w:p><w:pPr><w:pStyle w:val="FootnoteText"/></w:pPr><w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>"#,
+            n + 1
+        ));
+        for (i, line) in text.split('\u{b}').enumerate() {
+            if i > 0 {
+                out.push_str("<w:r><w:br/></w:r>");
+            }
+            if !line.is_empty() {
+                out.push_str(&format!(
+                    r#"<w:r><w:t xml:space="preserve">{}</w:t></w:r>"#,
+                    esc(line)
+                ));
+            }
+        }
+        out.push_str("</w:p></w:footnote>");
+    }
+    out.push_str("</w:footnotes>");
+    out
+}
+
+/// `word/settings.xml`: mostrar a cor da página e os separadores das notas de rodapé.
+fn settings_xml(background: bool, footnotes: bool) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{}{}</w:settings>"#,
+        if background {
+            "<w:displayBackgroundShape/>"
+        } else {
+            ""
+        },
+        if footnotes {
+            r#"<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>"#
+        } else {
+            ""
+        }
+    )
+}
+
+/// Notas de rodapé de `word/footnotes.xml`: número → texto (sem os separadores).
+fn read_footnotes(xml: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+    let mut current: Option<(String, String, u32)> = None; // id, texto, parágrafos
+    let mut in_t = false;
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => match e.local_name().as_ref() {
+                b"footnote" => {
+                    current = match (attr(&e, b"id"), attr(&e, b"type")) {
+                        (Some(id), None) => Some((id, String::new(), 0)),
+                        _ => None,
+                    };
+                }
+                b"p" => {
+                    if let Some(c) = current.as_mut() {
+                        if c.2 > 0 && !c.1.is_empty() {
+                            c.1.push('\u{b}');
+                        }
+                        c.2 += 1;
+                    }
+                }
+                b"t" => in_t = true,
+                b"tab" => {
+                    if let Some(c) = current.as_mut() {
+                        c.1.push('\t');
+                    }
+                }
+                b"br" => {
+                    if let Some(c) = current.as_mut() {
+                        c.1.push('\u{b}');
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::Text(t)) if in_t => {
+                if let Some(c) = current.as_mut() {
+                    c.1.push_str(&t.unescape().map(|v| v.into_owned()).unwrap_or_default());
+                }
+            }
+            Ok(Event::End(e)) => match e.local_name().as_ref() {
+                b"t" => in_t = false,
+                b"footnote" => {
+                    if let Some((id, text, _)) = current.take() {
+                        let text: String = text
+                            .trim()
+                            .chars()
+                            .take(nova_domain_text::MAX_NOTE_CHARS)
+                            .collect();
+                        out.insert(id, text);
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    out
 }
 
 /// `w:hdr`/`w:ftr` com um parágrafo: texto, quebras de linha e os campos PAGE e
@@ -527,6 +648,7 @@ fn body_xml(
     paragraphs: &[Paragraph],
     images: &[(String, String, Vec<u8>)],
     page: &nova_domain_text::PageSetup,
+    notes: &[(String, String)],
 ) -> (String, Vec<Num>, Vec<String>) {
     let mut links: Vec<String> = Vec::new();
     let mut nums = vec![Num::Bullet];
@@ -645,6 +767,26 @@ fn body_xml(
                     out.push_str(&format!(r#"<w:hyperlink r:id="rId{}">"#, index + 10));
                 }
                 open_link = link;
+            }
+            if let Some(id) = span.marks.iter().find_map(|m| match m {
+                Mark::Footnote { id } => Some(id),
+                _ => None,
+            }) {
+                // Chamada de nota: w:footnoteReference com o número da nota (1, 2…).
+                if let Some(n) = notes.iter().position(|(i, _)| i == id) {
+                    let calls = span
+                        .text
+                        .chars()
+                        .filter(|c| *c == nova_domain_text::FOOTNOTE_CHAR)
+                        .count();
+                    for _ in 0..calls {
+                        out.push_str(&format!(
+                            r#"<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="{}"/></w:r>"#,
+                            n + 1
+                        ));
+                    }
+                }
+                continue;
             }
             run_xml(&mut out, span);
         }
@@ -836,12 +978,12 @@ const CORE_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?
 
 /// Estilos com os nomes internos do Word ("heading 1"…), que ele traduz para
 /// "Título 1" na interface em português. Tamanhos iguais aos do Nova Text.
-const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:uiPriority w:val="39"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOCHeading"><w:name w:val="TOC Heading"/><w:basedOn w:val="Heading1"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:qFormat/><w:pPr><w:outlineLvl w:val="9"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC2"><w:name w:val="toc 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="220"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC3"><w:name w:val="toc 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="440"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC4"><w:name w:val="toc 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="660"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC5"><w:name w:val="toc 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="880"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC6"><w:name w:val="toc 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="1100"/></w:pPr></w:style></w:styles>"#;
+const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:uiPriority w:val="39"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="TOCHeading"><w:name w:val="TOC Heading"/><w:basedOn w:val="Heading1"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:qFormat/><w:pPr><w:outlineLvl w:val="9"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC2"><w:name w:val="toc 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="220"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC3"><w:name w:val="toc 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="440"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC4"><w:name w:val="toc 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="660"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC5"><w:name w:val="toc 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="880"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC6"><w:name w:val="toc 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="1100"/></w:pPr></w:style></w:styles>"#;
 
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media, page, header_footer, watermark) = read_document(bytes)?;
+    let (paragraphs, media, page, header_footer, watermark, notes) = read_document(bytes)?;
     let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
         doc.put_media(&id, &mime, &data)?;
@@ -854,6 +996,9 @@ pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> 
     }
     if let Some(w) = watermark {
         doc.load_watermark(w)?;
+    }
+    if !notes.is_empty() {
+        doc.load_footnotes(&notes)?;
     }
     Ok(doc)
 }
@@ -1440,6 +1585,7 @@ type Document = (
     Option<nova_domain_text::PageSetup>,
     nova_domain_text::HeadersFooters,
     Option<nova_domain_text::Watermark>,
+    Vec<(String, String)>,
 );
 
 fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
@@ -1475,6 +1621,17 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         .collect();
     let mut media: Vec<Media> = Vec::new();
     // Cabeçalho e rodapé "default" e "Primeira Página Diferente" (do último w:sectPr).
+    // Notas de rodapé: o texto de cada uma, pelo número do w:footnoteReference.
+    let footnote_texts = match read_rels(&rels, "/footnotes").values().next() {
+        Some(target) => part(
+            &mut zip,
+            &format!("word/{}", target.trim_start_matches('/')),
+        )?
+        .map(|x| read_footnotes(&x))
+        .unwrap_or_default(),
+        None => HashMap::new(),
+    };
+    let mut notes: Vec<(String, String)> = Vec::new();
     let header_rels = read_rels(&rels, "/header");
     let footer_rels = read_rels(&rels, "/footer");
     let mut header_footer = nova_domain_text::HeadersFooters::default();
@@ -1678,8 +1835,28 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                         drawing_depth = 1;
                         drawing = (None, None);
                     }
-                    b"del" | b"instrText" | b"pict" | b"object" | b"footnoteReference"
-                    | b"endnoteReference" | b"commentReference"
+                    b"footnoteReference" if skip_depth == 0 => {
+                        if let Some(number) = attr(e, b"id") {
+                            let id = format!("n{}", notes.len() + 1);
+                            let text = footnote_texts.get(&number).cloned().unwrap_or_default();
+                            notes.push((id.clone(), text));
+                            // A chamada fica sem o sobrescrito do estilo: o número é desenhado à parte.
+                            let mut marks: Vec<Mark> = run
+                                .marks
+                                .iter()
+                                .filter(|m| !matches!(m, Mark::VertAlign { .. }))
+                                .cloned()
+                                .collect();
+                            marks.push(Mark::Footnote { id });
+                            let p = para.get_or_insert_with(Paragraph::default);
+                            p.spans.push(Span {
+                                text: nova_domain_text::FOOTNOTE_CHAR.to_string(),
+                                marks,
+                            });
+                        }
+                    }
+                    b"del" | b"instrText" | b"pict" | b"object" | b"endnoteReference"
+                    | b"commentReference"
                         if !empty =>
                     {
                         skip_depth = 1
@@ -1950,7 +2127,7 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
             }
         }
     }
-    Ok((out, media, page, header_footer, watermark))
+    Ok((out, media, page, header_footer, watermark, notes))
 }
 
 /// Cores que o Word e o LibreOffice dão aos links.

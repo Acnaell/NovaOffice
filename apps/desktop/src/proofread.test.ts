@@ -19,6 +19,7 @@ const doc: DocView = {
   format: null,
   page: DEFAULT_PAGE,
   headerFooter: DEFAULT_HEADER_FOOTER,
+  footnotes: {},
 };
 
 // "otro" (0:10-14) e "errro" (1:8-13)

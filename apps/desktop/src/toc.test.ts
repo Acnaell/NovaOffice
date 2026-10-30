@@ -5,7 +5,7 @@ import { findToc, insertToc, removeToc, tocItems, tocTargets, updateToc } from "
 import type { BlockStyle, BlockView, DocView, TextCommand, TocEntry } from "./types";
 import { DEFAULT_HEADER_FOOTER, DEFAULT_PAGE } from "./types";
 
-const doc = (...blocks: BlockView[]): DocView => ({ blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER });
+const doc = (...blocks: BlockView[]): DocView => ({ blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, footnotes: {} });
 const p = (text: string, style: BlockStyle = "paragraph", toc: TocEntry | null = null): BlockView => ({
   style,
   attrs: { ...DEFAULT_ATTRS, toc },
