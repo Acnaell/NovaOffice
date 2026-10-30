@@ -100,4 +100,11 @@ const md = [
 if (!only) writeFileSync(join(here, "RESULTADOS.md"), md);
 console.log(`\n${count("ok")} ok · ${count("parcial")} parciais · ${count("falha")} falhas · ${count("ausente")} ausentes`);
 stopAll();
+// No GitHub Actions, cada falha vira uma anotação (dá para ler sem baixar o log).
+if (process.env.GITHUB_ACTIONS) {
+  for (const r of results.filter((r) => r.status === "falha")) {
+    const text = `${r.area} — ${r.name}: ${r.obs}`.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+    console.log(`::error title=Fluxo com falha::${text}`);
+  }
+}
 process.exit(count("falha") > 0 ? 1 : 0);
