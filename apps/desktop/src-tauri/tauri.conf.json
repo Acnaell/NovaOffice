@@ -44,6 +44,18 @@
     "license": "MIT",
     "macOS": {
       "signingIdentity": "-"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJBMUE1QTk5OUQxOEU0NzkKUldSNTVCaWRtVm9hS3VuNHpZUTJ5L1VxaFFneDlaelVubndDc2hOSlpLMjlLNVc0TytrTUtpS0oK",
+      "endpoints": [
+        "https://github.com/Acnaell/NovaOffice/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

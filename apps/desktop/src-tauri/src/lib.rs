@@ -6,6 +6,7 @@
 mod app;
 mod editor;
 mod pdf;
+mod signed;
 mod spell;
 mod store;
 mod update;
@@ -154,8 +155,19 @@ async fn spell_ignore_all(
 // versão encontrada" e "instale a baixada"; endereços ficam deste lado.
 
 #[tauri::command]
-async fn check_update(updates: State<'_, Updates>) -> Result<Option<UpdateInfo>, String> {
-    let found = update::check()?;
+async fn check_update(
+    handle: tauri::AppHandle,
+    updates: State<'_, Updates>,
+    signed: State<'_, signed::Signed>,
+) -> Result<Option<UpdateInfo>, String> {
+    let mut found = update::check()?;
+    // Com o latest.json assinado, o app instala sozinho em qualquer sistema.
+    if let Some(info) = found.as_mut() {
+        if signed.find(&handle, &info.version).await {
+            info.signed = true;
+            info.can_install = true;
+        }
+    }
     *updates.found.lock().map_err(|e| e.to_string())? = found.clone();
     Ok(found)
 }
@@ -166,6 +178,10 @@ async fn download_update(
     updates: State<'_, Updates>,
 ) -> Result<(), String> {
     use tauri::Emitter;
+    let signed = handle.state::<signed::Signed>();
+    if signed.has_update() {
+        return signed.download(&handle).await;
+    }
     let found = updates.found.lock().map_err(|e| e.to_string())?.clone();
     let installer = found
         .and_then(|info| info.installer)
@@ -179,7 +195,14 @@ async fn download_update(
 
 /// Roda o instalador baixado e fecha o app (a interface já perguntou se salva).
 #[tauri::command]
-fn install_update(handle: tauri::AppHandle, updates: State<'_, Updates>) -> Result<(), String> {
+fn install_update(
+    handle: tauri::AppHandle,
+    updates: State<'_, Updates>,
+    signed: State<'_, signed::Signed>,
+) -> Result<(), String> {
+    if signed.downloaded() {
+        return signed.install(&handle);
+    }
     let path = updates
         .downloaded
         .lock()
@@ -195,6 +218,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|handle| {
             // Recentes e recuperação ficam na pasta de dados do app
             // (%APPDATA%\org.novaoffice.desktop no Windows).
@@ -207,6 +231,7 @@ pub fn run() {
                 .map(|dir| dir.join("dicionario.json"));
             handle.manage(Spelling::new(user_dictionary));
             handle.manage(Updates::default());
+            handle.manage(signed::Signed::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
