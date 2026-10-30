@@ -1,6 +1,6 @@
 // Fluxos básicos do Microsoft Word aplicados ao Nova Text.
 // status: ok | parcial (funciona com defeito/limitação) | falha (existe, mas quebrado) | ausente
-const { core } = require('./lib.cjs');
+const { core, zipList, zipRead } = require('./lib.cjs');
 
 const OK = (obs = '') => ({ status: 'ok', obs });
 const PARCIAL = (obs) => ({ status: 'parcial', obs });
@@ -1245,7 +1245,7 @@ const flows = [
       const back = await core('open_document', { path: `/tmp/nova-flows/notas.${ext}` });
       out.push(`${back.blocks[0].spans.map((s) => s.text).join('')}=${Object.values(back.footnotes).join('')}`);
     }
-    const files = require('child_process').execSync('unzip -l /tmp/nova-flows/notas.docx').toString();
+    const files = zipList('/tmp/nova-flows/notas.docx').join(' ');
     const ok = out.every((o) => o === 'Afirmação.\uE000=Fonte: IBGE, 2026.') && /footnotes\.xml/.test(files);
     return ok ? OK('word/footnotes.xml (w:footnoteReference) e text:note do .odt; validado no LibreOffice.') : FALHA(JSON.stringify(out));
   } },
@@ -1266,7 +1266,7 @@ const flows = [
       const back = await core('open_document', { path: `/tmp/nova-flows/sumario.${ext}` });
       out.push(back.blocks.slice(0, 2).map((b) => JSON.stringify(b.attrs.toc)).join(','));
     }
-    const xml = require('child_process').execSync('unzip -p /tmp/nova-flows/sumario.docx word/document.xml').toString();
+    const xml = zipRead('/tmp/nova-flows/sumario.docx', 'word/document.xml');
     const ok = out.every((o) => o === '{"level":0,"page":0},{"level":1,"page":2}') && /TOC \\o/.test(xml);
     return ok ? OK('Campo TOC do Word (estilos Sumário 1…) e índice do LibreOffice (text:table-of-content); validado no LibreOffice.') : FALHA(`${out} toc=${/TOC/.test(xml)}`);
   } },
@@ -1489,7 +1489,7 @@ const flows = [
     await core('save_document', { path: '/tmp/nova-flows/pagina.docx' });
     await core('new_document');
     const back = await core('open_document', { path: '/tmp/nova-flows/pagina.docx' });
-    const xml = require('child_process').execSync('unzip -p /tmp/nova-flows/pagina.docx word/document.xml').toString();
+    const xml = zipRead('/tmp/nova-flows/pagina.docx', 'word/document.xml');
     const ok = back.page.width === 16838 && back.page.marginLeft === 1701 && /w:orient="landscape"/.test(xml);
     return ok ? OK('w:pgSz e w:pgMar como no Word.') : FALHA(JSON.stringify(back.page));
   } },
@@ -1618,7 +1618,7 @@ const flows = [
     await core('save_document', { path: '/tmp/nova-flows/cabecalho.docx' });
     await core('new_document');
     const back = await core('open_document', { path: '/tmp/nova-flows/cabecalho.docx' });
-    const files = require('child_process').execSync('unzip -l /tmp/nova-flows/cabecalho.docx').toString();
+    const files = zipList('/tmp/nova-flows/cabecalho.docx').join(' ');
     const ok = back.headerFooter.header.text === 'Topo' && back.headerFooter.footer.text === '{PAGE}' && back.headerFooter.differentFirst && /header1\.xml/.test(files);
     return ok ? OK('word/header1.xml e footer1.xml com o campo PAGE e "Primeira Página Diferente"; também em .odt.') : FALHA(JSON.stringify(back.headerFooter));
   } },
