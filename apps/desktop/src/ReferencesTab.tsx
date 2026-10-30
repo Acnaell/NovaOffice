@@ -5,17 +5,21 @@
 import type { ReactNode, SVGProps } from "react";
 import { keepFocus, MenuButton, MenuItem } from "./controls";
 import { useI18n } from "./i18n";
+import { withShortcut, type CommandId, type Profile } from "./shortcuts";
 
 export interface ReferencesTabProps {
   hasToc: boolean;
   onInsertToc: () => void;
   onUpdateToc: () => void;
   onRemoveToc: () => void;
+  onCommand: (command: CommandId) => void;
+  profile: Profile;
 }
 
-export function ReferencesTab({ hasToc, onInsertToc, onUpdateToc, onRemoveToc }: ReferencesTabProps) {
+export function ReferencesTab({ hasToc, onInsertToc, onUpdateToc, onRemoveToc, onCommand, profile }: ReferencesTabProps) {
   const { t } = useI18n();
   return (
+    <>
     <RibbonGroup label={t("group.toc")}>
       <MenuButton
         label={t("toc.button")}
@@ -52,6 +56,22 @@ export function ReferencesTab({ hasToc, onInsertToc, onUpdateToc, onRemoveToc }:
         <span>{t("toc.update")}</span>
       </button>
     </RibbonGroup>
+    <RibbonGroup label={t("group.footnotes")}>
+      <button
+        className="big-button"
+        onMouseDown={keepFocus}
+        onClick={() => onCommand("references.footnote")}
+        title={withShortcut(t("cmd.references.footnote"), "references.footnote", profile)}
+      >
+        {referencesIcons.footnote}
+        <span>{t("cmd.references.footnote")}</span>
+      </button>
+      <button className="big-button" onMouseDown={keepFocus} onClick={() => onCommand("references.nextFootnote")} title={t("fn.nextTip")}>
+        {referencesIcons.nextFootnote}
+        <span>{t("cmd.references.nextFootnote")}</span>
+      </button>
+    </RibbonGroup>
+    </>
   );
 }
 
@@ -85,6 +105,23 @@ function Icon({ children, ...props }: SVGProps<SVGSVGElement> & { children: Reac
 }
 
 export const referencesIcons = {
+  /** Texto com um "1" sobrescrito e a nota no pé: Inserir Nota de Rodapé. */
+  footnote: (
+    <Icon>
+      <path d="M3 4h8M3 7.5h6" />
+      <path d="M12.5 3.5l1.5-1v4" strokeWidth="1.5" />
+      <path d="M3 13h14" strokeDasharray="2 1.6" strokeWidth="1.25" />
+      <path d="M3 16.5h4M9 16.5h8" />
+    </Icon>
+  ),
+  /** Seta para baixo até a próxima chamada: Próxima Nota de Rodapé. */
+  nextFootnote: (
+    <Icon>
+      <path d="M3 4h9M3 8h6" />
+      <path d="M15 4v10M12 11l3 3 3-3" />
+      <path d="M3 16.5h8" />
+    </Icon>
+  ),
   /** Linhas com pontilhado e número: Sumário. */
   toc: (
     <Icon>

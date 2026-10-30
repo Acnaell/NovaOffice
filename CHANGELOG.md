@@ -15,6 +15,12 @@ A seção da versão é usada como texto da página de release no GitHub.
   paginação; régua horizontal com as margens da página; Painel de Navegação com os títulos
   (Título 1 a 3), que leva o cursor ao título clicado; e Modo de Foco em tela inteira, só com o
   documento (Esc volta).
+- **Notas de rodapé** (Referências → Inserir Nota de Rodapé, Ctrl+Alt+F): número sobrescrito no
+  texto, numeração automática pela ordem e as notas no pé da página onde a chamada cai, editáveis
+  ali mesmo (Enter ou Esc voltam ao texto). Próxima Nota de Rodapé leva o cursor à chamada seguinte.
+  São lidas e gravadas em .docx (`footnotes.xml`) e .odt (`text:note`), validadas no LibreOffice.
+  Em Markdown viram `[^1]`; em HTML e texto, uma lista de notas no fim. Na impressão pelo navegador,
+  as notas saem no fim do documento.
 
 ## [0.1.10] - 2026-10-24
 

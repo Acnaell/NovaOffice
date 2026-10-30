@@ -102,13 +102,25 @@ fn text(bytes: &[u8]) -> String {
     }
 }
 
+use crate::notes;
+
 pub fn save(doc: &TextDocument, format: Format, title: &str) -> Vec<u8> {
     match format {
         Format::Nova => file::encode(doc),
         Format::Docx => docx::export(doc),
         Format::Odt => odt::export(doc),
         Format::Markdown => markdown::export(doc).into_bytes(),
-        Format::Text => doc.to_plain_text().replace('\u{b}', "\n").into_bytes(),
+        Format::Text => {
+            let notes = notes::collect(doc);
+            let mut text = notes::replace_calls(&doc.to_plain_text(), &notes, |n| format!("[{n}]"));
+            if !notes.texts.is_empty() {
+                text.push_str("\n\n");
+                for (i, t) in notes.texts.iter().enumerate() {
+                    text.push_str(&format!("\n[{}] {t}", i + 1));
+                }
+            }
+            text.replace('\u{b}', "\n").into_bytes()
+        }
         Format::Html => html::export(doc, title).into_bytes(),
     }
 }
@@ -363,5 +375,62 @@ mod tests {
         }
         let xml = String::from_utf8_lossy(&save(&doc, Format::Docx, "t")).to_string();
         assert!(!xml.is_empty());
+    }
+
+    #[test]
+    fn notas_de_rodape_vao_e_voltam() {
+        use nova_domain_text::{Mark, TextCommand, FOOTNOTE_CHAR};
+        let mut doc = TextDocument::from_plain_text(1, "Primeira frase.\nSegunda frase.");
+        let call = |block: u32, offset: u32, id: &str| TextCommand::InsertText {
+            block,
+            offset,
+            text: FOOTNOTE_CHAR.to_string(),
+            marks: Some(vec![Mark::Footnote { id: id.into() }]),
+        };
+        doc.execute(TextCommand::Batch {
+            commands: vec![
+                call(0, 15, "b"),
+                TextCommand::SetFootnote {
+                    id: "b".into(),
+                    text: Some("Fonte: IBGE, 2026.".into()),
+                },
+                call(1, 7, "a"),
+                TextCommand::SetFootnote {
+                    id: "a".into(),
+                    text: Some("Ver também\u{b}o anexo A.".into()),
+                },
+            ],
+        })
+        .unwrap();
+        let want = vec![
+            "Fonte: IBGE, 2026.".to_string(),
+            "Ver também\u{b}o anexo A.".to_string(),
+        ];
+        let texts = |d: &TextDocument| -> Vec<String> {
+            d.footnotes().into_iter().map(|(_, t)| t).collect()
+        };
+        assert_eq!(texts(&doc), want);
+        for format in [Format::Docx, Format::Odt, Format::Nova] {
+            let bytes = save(&doc, format, "t");
+            let back = open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
+            assert_eq!(texts(&back), want, "{format:?}");
+            assert_eq!(back.to_plain_text(), doc.to_plain_text(), "{format:?}");
+            assert!(!back.can_undo(), "{format:?}");
+        }
+        let md = String::from_utf8(save(&doc, Format::Markdown, "t")).unwrap();
+        assert!(
+            md.contains("Primeira frase.[^1]") && md.contains("[^2]: Ver também o anexo A."),
+            "{md}"
+        );
+        let txt = String::from_utf8(save(&doc, Format::Text, "t")).unwrap();
+        assert!(
+            txt.contains("Segunda[2] frase.") && txt.contains("[1] Fonte: IBGE, 2026."),
+            "{txt}"
+        );
+        let html = String::from_utf8(save(&doc, Format::Html, "t")).unwrap();
+        assert!(
+            html.contains(r##"<a href="#nota-1" id="chamada-1">1</a>"##),
+            "{html}"
+        );
     }
 }
