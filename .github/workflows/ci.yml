@@ -95,6 +95,8 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
+          # pdftotext: o fluxo "Exportar para PDF" lê o texto do PDF gerado.
+          sudo apt-get install -y poppler-utils
           npm run build
           npm run e2e
       - name: Relatório dos fluxos

@@ -938,7 +938,7 @@ const flows = [
     await h.settle(300);
     const printed = await h.p.evaluate(() => window.__printed);
     let text = '';
-    try { text = require('child_process').execFileSync('pdftotext', ['-raw', path, '-']).toString(); } catch { text = ''; }
+    try { text = require('child_process').execFileSync('pdftotext', ['-raw', path, '-']).toString(); } catch (e) { text = `sem pdftotext: ${e.message}`; }
     const status = await h.p.locator('.statusbar').innerText();
     const has = (s) => text.includes(s);
     const ok = !printed && has('Relatório final') && has('Fonte da nota.') && has('Cabeçalho Nova') && has('Página 1 de 1') && text.replace(/\s/g, '').includes('RASCUNHO') && /Exportado para/.test(status);
