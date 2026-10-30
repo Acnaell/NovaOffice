@@ -938,8 +938,15 @@ const flows = [
     await h.settle(300);
     const printed = await h.p.evaluate(() => window.__printed);
     let text = '';
-    try { text = require('child_process').execFileSync('pdftotext', ['-raw', path, '-']).toString(); } catch (e) { text = `sem pdftotext: ${e.message}`; }
+    let tool = true;
+    try { text = require('child_process').execFileSync('pdftotext', ['-raw', path, '-']).toString(); } catch { tool = false; }
     const status = await h.p.locator('.statusbar').innerText();
+    // Sem o pdftotext (poppler), como no Windows: confere só que o arquivo é um PDF.
+    if (!tool) {
+      const fs = require('fs');
+      const valid = fs.existsSync(path) && fs.readFileSync(path).subarray(0, 5).toString() === '%PDF-' && fs.statSync(path).size > 1000;
+      return valid && !printed && /Exportado para/.test(status) ? OK('PDF gravado sem a janela de impressão (sem pdftotext aqui: conferido só o arquivo).') : FALHA(JSON.stringify({ printed, valid, status }));
+    }
     const has = (s) => text.includes(s);
     const ok = !printed && has('Relatório final') && has('Fonte da nota.') && has('Cabeçalho Nova') && has('Página 1 de 1') && text.replace(/\s/g, '').includes('RASCUNHO') && /Exportado para/.test(status);
     return ok ? OK('Arquivo → Exportar → Criar PDF grava o .pdf sem a janela de impressão (WebView2 PrintToPdf no Windows; WebKitGTK no Linux), com cabeçalho, rodapé, nota e marca d\'água.') : FALHA(JSON.stringify({ printed, text: text.slice(0, 300), status }));
@@ -1602,7 +1609,15 @@ const flows = [
     const paper = fills('1 \\.949 \\.8');
     // A borda são gradientes (linear-gradient) nas caixas de margem: /Shading com a cor no dicionário.
     const line = (raw.match(/\.1843 \.3294 \.5882/g) || []).length;
-    const gray = fills('\\.7529 \\.7529 \\.7529');
+    // Marca d'água em cada página: pelo texto do PDF (pdftotext), página por página. O
+    // Chromium pode desenhar a camada repetida uma vez só e reaproveitá-la nas páginas,
+    // então contar as cores no conteúdo não basta.
+    let gray = fills('\\.7529 \\.7529 \\.7529');
+    try {
+      require('fs').writeFileSync('/tmp/nova-flows/design.pdf', pdf);
+      const text = require('child_process').execFileSync('pdftotext', ['-raw', '/tmp/nova-flows/design.pdf', '-']).toString();
+      gray = text.split('\f').filter((page) => page.replace(/\s/g, '').includes('CONFIDENCIAL')).length;
+    } catch { /* sem pdftotext: fica a contagem das cores */ }
     const alpha = /\/ca\s+\.5/.test(raw);
     await core('new_document'); await h.reload();
     const ok = pages > 1 && paper >= pages && line >= pages && gray >= pages && alpha;

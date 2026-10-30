@@ -18,6 +18,12 @@ A seção da versão é usada como texto da página de release no GitHub.
   Lidas e gravadas em .docx (fontes em `customXml`, campos CITATION e BIBLIOGRAPHY) e .odt
   (`text:bibliography-mark` e `text:bibliography`), validadas no LibreOffice.
 
+### Corrigido
+
+- **Criar PDF e Imprimir com o tema escuro**: as margens da página saíam pretas e as notas de
+  rodapé quase invisíveis; o papel agora sai sempre claro. O cursor e o sublinhado ondulado do
+  corretor também não vão mais para o PDF.
+
 ## [0.1.14] - 2026-10-30
 
 ### Adicionado
