@@ -1502,7 +1502,15 @@ const flows = [
     const paper = fills('1 \\.949 \\.8');
     // A borda são gradientes (linear-gradient) nas caixas de margem: /Shading com a cor no dicionário.
     const line = (raw.match(/\.1843 \.3294 \.5882/g) || []).length;
-    const gray = fills('\\.7529 \\.7529 \\.7529');
+    // Marca d'água em cada página: pelo texto do PDF (pdftotext), página por página. O
+    // Chromium pode desenhar a camada repetida uma vez só e reaproveitá-la nas páginas,
+    // então contar as cores no conteúdo não basta.
+    let gray = fills('\\.7529 \\.7529 \\.7529');
+    try {
+      require('fs').writeFileSync('/tmp/nova-flows/design.pdf', pdf);
+      const text = require('child_process').execFileSync('pdftotext', ['-raw', '/tmp/nova-flows/design.pdf', '-']).toString();
+      gray = text.split('\f').filter((page) => page.replace(/\s/g, '').includes('CONFIDENCIAL')).length;
+    } catch { /* sem pdftotext: fica a contagem das cores */ }
     const alpha = /\/ca\s+\.5/.test(raw);
     await core('new_document'); await h.reload();
     const ok = pages > 1 && paper >= pages && line >= pages && gray >= pages && alpha;
