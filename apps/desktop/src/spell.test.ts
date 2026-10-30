@@ -11,7 +11,7 @@ const p = (text: string): BlockView => ({
 });
 
 function doc(...blocks: BlockView[]): DocView {
-  return { blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER };
+  return { blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, footnotes: {} };
 }
 
 describe("idioma de revisão", () => {

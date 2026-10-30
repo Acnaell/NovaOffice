@@ -12,6 +12,7 @@ import { autoLink, autoList, changeIndent, isDark, linkOf, listMarkers } from ".
 import { moveToCell, tableGrid } from "./tables";
 import { paginate, unpaginate, type PageInfo } from "./paginate";
 import { screenPages, tocTargets } from "./toc";
+import { footnoteOf, footnoteOrder, FootnotesLayer, FootnotesPrint, NOTE_SEPARATOR, noteHeight, notesByPage, type PageNotes } from "./footnotes";
 import { HeaderFooterLayer, splitFields, type Part } from "./headerfooter";
 import {
   blockText,
@@ -69,6 +70,11 @@ interface Props {
   onHfEdit: (part: Part, page: number) => void;
   onHfChange: (part: Part, value: HeaderFooter) => void;
   onHfClose: () => void;
+  /** Nota de rodapé recém-inserida, que recebe o cursor. */
+  footnoteFocus: string | null;
+  onFootnoteFocused: () => void;
+  onFootnoteChange: (id: string, text: string) => void;
+  onFootnoteDone: () => void;
 }
 
 /** Distância do cabeçalho e do rodapé à borda do papel: 1,25 cm (708 twips), o padrão do Word. */
@@ -110,6 +116,7 @@ export function Editor(props: Props) {
   const { t } = useI18n();
   const page = props.view.page;
   const [pages, setPages] = useState(1);
+  const [notePages, setNotePages] = useState<PageNotes[]>([]);
   // Objeto estável: os parágrafos memorizados só redesenham quando mudam.
   const labels = useMemo(() => ({ pageBreak: t("insert.pageBreakMark"), followLink: t("insert.followLink") }), [t]);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -130,12 +137,32 @@ export function Editor(props: Props) {
   repaginate.current = () => {
     const root = rootRef.current;
     if (!root) return;
+    // Notas de rodapé: número de cada chamada antes de medir (o número ocupa espaço na linha).
+    const order = footnoteOrder(latest.current.view.blocks);
+    const refs = root.querySelectorAll<HTMLElement>(".fn-ref");
+    refs.forEach((el) => {
+      const n = String(order.indexOf(el.dataset.fn ?? "") + 1 || "");
+      if (el.dataset.n !== n) el.dataset.n = n;
+    });
+    const texts = latest.current.view.footnotes;
+    const width = px(page.width - page.marginLeft - page.marginRight);
+    const notesOf = refs.length
+      ? (unit: HTMLElement) => {
+          let h = 0;
+          unit.querySelectorAll<HTMLElement>(".fn-ref").forEach((el) => (h += noteHeight(texts[el.dataset.fn ?? ""] ?? "", width)));
+          return h;
+        }
+      : undefined;
     const info = paginate(
       root,
       { pageHeight: px(page.height), gap: SHEET_GAP, marginTop: px(page.marginTop), marginBottom: px(page.marginBottom) },
       latest.current.selection.focus.block,
+      notesOf,
+      NOTE_SEPARATOR,
     );
     setPages((n) => (n === info.pages ? n : info.pages));
+    const byPage = refs.length ? notesByPage(root, order) : [];
+    setNotePages((old) => (JSON.stringify(old) === JSON.stringify(byPage) ? old : byPage));
     // Sumário: o número da página de cada entrada é o da página real do título.
     const entries = root.querySelectorAll<HTMLElement>(".toc-entry");
     if (entries.length) {
@@ -573,6 +600,21 @@ export function Editor(props: Props) {
         labels={labels}
       />
     </div>
+      <FootnotesLayer
+        pages={notePages}
+        texts={props.view.footnotes}
+        pageHeight={px(page.height)}
+        gap={SHEET_GAP}
+        marginBottom={px(page.marginBottom)}
+        marginLeft={px(page.marginLeft)}
+        marginRight={px(page.marginRight)}
+        focus={props.footnoteFocus}
+        onFocused={props.onFootnoteFocused}
+        onChange={props.onFootnoteChange}
+        onDone={props.onFootnoteDone}
+        label={(n) => t("fn.noteLabel", { n })}
+      />
+      <FootnotesPrint order={footnoteOrder(props.view.blocks)} texts={props.view.footnotes} title={t("fn.listTitle")} />
       <HeaderFooterLayer
         value={props.headerFooter}
         pages={pages}
@@ -728,7 +770,8 @@ const Block = memo(function Block({
           <span
             key={j}
             style={spanStyle(span.marks)}
-            className={linkOf(span.marks) ? "link" : undefined}
+            data-fn={footnoteOf(span.marks) ?? undefined}
+            className={footnoteOf(span.marks) ? "fn-ref" : linkOf(span.marks) ? "link" : undefined}
             data-href={linkOf(span.marks) ?? undefined}
             title={linkOf(span.marks) ? `${linkOf(span.marks)}\n${labels.followLink}` : undefined}
           >

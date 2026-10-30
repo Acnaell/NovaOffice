@@ -38,6 +38,7 @@ const doc = (...blocks: BlockView[]): DocView => ({
   format: null,
   page: DEFAULT_PAGE,
   headerFooter: DEFAULT_HEADER_FOOTER,
+  footnotes: {},
 });
 
 const p = (spans: [string, Mark[]?][], attrs: Partial<ParaAttrs> = {}, style: BlockView["style"] = "paragraph"): BlockView => ({

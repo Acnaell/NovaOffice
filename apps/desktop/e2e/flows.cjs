@@ -1201,6 +1201,51 @@ const flows = [
       && updated.length === 5 && updated[4] === 'Anexo:3' && undone === 4 && /Página 2 de 3/.test(caretText) && /Título 1/.test(caretText);
     return ok ? OK('Títulos 1 a 3 com pontilhado e páginas reais; Atualizar refaz; Ctrl+clique leva ao título; vai para .docx/.odt como campo TOC.') : FALHA(`${first} cache=${cached} atualizado=${updated} desfeito=${undone} cursor=${caretText}`);
   } },
+  { area: 'Referências', name: 'Nota de rodapé (Ctrl+Alt+F): número no texto e nota no pé da página', run: async (h) => {
+    await h.reset(['Texto principal do trabalho', 'Segundo parágrafo']);
+    await h.select(0, 15);
+    await h.press('Control+Alt+F'); await h.settle(250);
+    const focused = await h.p.evaluate(() => document.activeElement?.classList.contains('fn-text'));
+    await h.p.keyboard.type('Fonte: IBGE, 2026.');
+    await h.press('Enter'); await h.settle(250);
+    const back = await h.p.evaluate(() => document.activeElement?.classList.contains('page'));
+    // Segunda nota pela faixa de opções, antes da primeira: a numeração muda sozinha.
+    await h.select(0, 5);
+    await h.p.locator('.tab', { hasText: 'Referências' }).click();
+    await h.p.locator('.big-button', { hasText: 'Inserir Nota de Rodapé' }).click(); await h.settle(250);
+    await h.p.keyboard.type('Nota anterior.');
+    await h.press('Escape'); await h.settle(250);
+    const doc = await h.doc();
+    const numbers = await h.p.evaluate(() => [...document.querySelectorAll('.fn-ref')].map((e) => e.dataset.n).join(','));
+    const area = await h.p.locator('.fn-area').innerText();
+    const texts = Object.values(doc.footnotes).sort();
+    // Desfazer: primeiro o texto digitado na nota, depois a nota inteira (chamada e nota).
+    await h.press('Control+z'); await h.settle(200);
+    const u1 = Object.values((await h.doc()).footnotes).sort().join('|');
+    await h.press('Control+z'); await h.settle(200);
+    const afterUndo = await h.p.locator('.fn-ref').count();
+    const ok = focused && back && numbers === '1,2' && /1\s*Nota anterior\.\s*2\s*Fonte: IBGE, 2026\./.test(area)
+      && texts.join('|') === 'Fonte: IBGE, 2026.|Nota anterior.' && u1 === '|Fonte: IBGE, 2026.' && afterUndo === 1;
+    return ok ? OK('Ctrl+Alt+F põe a chamada e o cursor na nota; Enter/Esc voltam ao texto; numeração automática; desfazer em dois passos (texto, nota).') : FALHA(JSON.stringify({ focused, back, numbers, area, texts, u1, afterUndo }));
+  } },
+  { area: 'Referências', name: 'Notas de rodapé salvas no .docx e no .odt', run: async () => {
+    await core('new_document');
+    await core('dispatch', { command: { type: 'batch', commands: [
+      { type: 'text.insert', block: 0, offset: 0, text: 'Afirmação.' },
+      { type: 'text.insert', block: 0, offset: 10, text: '\uE000', marks: [{ mark: 'footnote', id: 'a1' }] },
+      { type: 'footnote.set', id: 'a1', text: 'Fonte: IBGE, 2026.' },
+    ] } });
+    const out = [];
+    for (const ext of ['docx', 'odt']) {
+      await core('save_document', { path: `/tmp/nova-flows/notas.${ext}` });
+      await core('new_document');
+      const back = await core('open_document', { path: `/tmp/nova-flows/notas.${ext}` });
+      out.push(`${back.blocks[0].spans.map((s) => s.text).join('')}=${Object.values(back.footnotes).join('')}`);
+    }
+    const files = require('child_process').execSync('unzip -l /tmp/nova-flows/notas.docx').toString();
+    const ok = out.every((o) => o === 'Afirmação.\uE000=Fonte: IBGE, 2026.') && /footnotes\.xml/.test(files);
+    return ok ? OK('word/footnotes.xml (w:footnoteReference) e text:note do .odt; validado no LibreOffice.') : FALHA(JSON.stringify(out));
+  } },
   { area: 'Referências', name: 'Sumário salvo no .docx e no .odt', run: async () => {
     await core('new_document');
     const cmds = [

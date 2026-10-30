@@ -37,7 +37,7 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         .iter()
         .map(|(id, (path, ..))| (id.clone(), path.clone()))
         .collect();
-    let content = content_xml(&paragraphs, &paths);
+    let content = content_xml(&paragraphs, &paths, &doc.footnotes());
     let mut manifest = MANIFEST
         .trim_end_matches("</manifest:manifest>")
         .to_string();
@@ -442,8 +442,8 @@ fn text_props(marks: &[Mark]) -> String {
             } else {
                 r#" style:text-position="sub 58%""#
             }),
-            // O link é o elemento text:a, não um estilo.
-            Mark::Link { .. } => {}
+            // O link é o elemento text:a e a nota é text:note, não estilos.
+            Mark::Link { .. } | Mark::Footnote { .. } => {}
         }
     }
     p
@@ -498,7 +498,11 @@ fn para_props(a: &ParaAttrs) -> String {
     p
 }
 
-fn content_xml(paragraphs: &[Paragraph], pictures: &HashMap<String, String>) -> String {
+fn content_xml(
+    paragraphs: &[Paragraph],
+    pictures: &HashMap<String, String>,
+    notes: &[(String, String)],
+) -> String {
     let mut frames = 0;
     // Estilos automáticos: um por combinação de parágrafo e de marcas.
     let mut para_styles: Vec<(String, String)> = Vec::new(); // (chave, xml)
@@ -682,6 +686,28 @@ fn content_xml(paragraphs: &[Paragraph], pictures: &HashMap<String, String>) -> 
         }
         let mut at_start = true;
         for span in &p.spans {
+            // Nota de rodapé: o caractere da chamada vira um text:note com o texto da nota.
+            if let Some(id) = span.marks.iter().find_map(|m| match m {
+                Mark::Footnote { id } => Some(id),
+                _ => None,
+            }) {
+                let calls = span
+                    .text
+                    .chars()
+                    .filter(|c| *c == nova_domain_text::FOOTNOTE_CHAR)
+                    .count();
+                if let Some(n) = notes.iter().position(|(i, _)| i == id) {
+                    let text = odf_text(&notes[n].1, true);
+                    for _ in 0..calls {
+                        body.push_str(&format!(
+                            r#"<text:note text:id="ftn{n}" text:note-class="footnote"><text:note-citation>{}</text:note-citation><text:note-body><text:p text:style-name="Footnote">{text}</text:p></text:note-body></text:note>"#,
+                            n + 1
+                        ));
+                    }
+                }
+                at_start = false;
+                continue;
+            }
             let text = odf_text(&span.text, at_start);
             at_start = span.text.ends_with(['\u{b}', '\n']);
             let href = span.marks.iter().find_map(|m| match m {
@@ -806,12 +832,12 @@ const META: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-met
 
 /// Estilos comuns com os nomes do LibreOffice ("Heading 1"…, que ele mostra
 /// como "Título 1" em português) e os tamanhos do Nova Text.
-const STYLES: &str = r##"<?xml version="1.0" encoding="UTF-8"?><office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.3"><office:styles><style:default-style style:family="paragraph"><style:paragraph-properties fo:margin-bottom="8pt" fo:line-height="115%"/><style:text-properties fo:font-family="Calibri" fo:font-size="11pt" fo:language="pt" fo:country="BR"/></style:default-style><style:style style:name="Standard" style:family="paragraph" style:class="text"/><style:style style:name="Heading" style:family="paragraph" style:parent-style-name="Standard" style:next-style-name="Standard" style:class="text"><style:paragraph-properties fo:margin-top="12pt" fo:margin-bottom="6pt" fo:keep-with-next="always"/><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_1" style:display-name="Heading 1" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="1" style:class="text"><style:text-properties fo:font-size="20pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_2" style:display-name="Heading 2" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="2" style:class="text"><style:text-properties fo:font-size="16pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_3" style:display-name="Heading 3" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="3" style:class="text"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_4" style:display-name="Heading 4" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="4" style:class="text"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_5" style:display-name="Heading 5" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="5" style:class="text"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_6" style:display-name="Heading 6" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="6" style:class="text"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Quotations" style:family="paragraph" style:parent-style-name="Standard" style:class="html"><style:paragraph-properties fo:margin-left="1cm"/><style:text-properties fo:font-style="italic" fo:color="#4a4a46"/></style:style><style:style style:name="Preformatted_20_Text" style:display-name="Preformatted Text" style:family="paragraph" style:parent-style-name="Standard" style:class="html"><style:paragraph-properties fo:margin-bottom="0pt" fo:line-height="100%"/><style:text-properties fo:font-family="Consolas" fo:font-size="10pt"/></style:style></office:styles></office:document-styles>"##;
+const STYLES: &str = r##"<?xml version="1.0" encoding="UTF-8"?><office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.3"><office:styles><style:default-style style:family="paragraph"><style:paragraph-properties fo:margin-bottom="8pt" fo:line-height="115%"/><style:text-properties fo:font-family="Calibri" fo:font-size="11pt" fo:language="pt" fo:country="BR"/></style:default-style><style:style style:name="Standard" style:family="paragraph" style:class="text"/><style:style style:name="Heading" style:family="paragraph" style:parent-style-name="Standard" style:next-style-name="Standard" style:class="text"><style:paragraph-properties fo:margin-top="12pt" fo:margin-bottom="6pt" fo:keep-with-next="always"/><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_1" style:display-name="Heading 1" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="1" style:class="text"><style:text-properties fo:font-size="20pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_2" style:display-name="Heading 2" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="2" style:class="text"><style:text-properties fo:font-size="16pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_3" style:display-name="Heading 3" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="3" style:class="text"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_4" style:display-name="Heading 4" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="4" style:class="text"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_5" style:display-name="Heading 5" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="5" style:class="text"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading_20_6" style:display-name="Heading 6" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="6" style:class="text"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Quotations" style:family="paragraph" style:parent-style-name="Standard" style:class="html"><style:paragraph-properties fo:margin-left="1cm"/><style:text-properties fo:font-style="italic" fo:color="#4a4a46"/></style:style><style:style style:name="Preformatted_20_Text" style:display-name="Preformatted Text" style:family="paragraph" style:parent-style-name="Standard" style:class="html"><style:paragraph-properties fo:margin-bottom="0pt" fo:line-height="100%"/><style:text-properties fo:font-family="Consolas" fo:font-size="10pt"/></style:style><style:style style:name="Footnote" style:display-name="Footnote" style:family="paragraph" style:parent-style-name="Standard" style:class="extra"><style:paragraph-properties fo:margin-left="0.5cm" fo:margin-bottom="0pt" fo:text-indent="-0.5cm" fo:line-height="100%"/><style:text-properties fo:font-size="10pt"/></style:style></office:styles></office:document-styles>"##;
 
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media, page, header_footer) = read_document(bytes)?;
+    let (paragraphs, media, page, header_footer, notes) = read_document(bytes)?;
     let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
         doc.put_media(&id, &mime, &data)?;
@@ -821,6 +847,9 @@ pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> 
     }
     if header_footer != Default::default() && header_footer.validate().is_ok() {
         doc.load_header_footer(header_footer)?;
+    }
+    if !notes.is_empty() {
+        doc.load_footnotes(&notes)?;
     }
     Ok(doc)
 }
@@ -1138,7 +1167,17 @@ type Document = (
     Vec<crate::docx::Media>,
     Option<nova_domain_text::PageSetup>,
     nova_domain_text::HeadersFooters,
+    Vec<(String, String)>,
 );
+
+/// Nota de rodapé sendo lida: id, texto, profundidade dentro do text:note e
+/// profundidade do text:note-citation aberto (0 = fora dele).
+struct NoteRead {
+    id: String,
+    text: String,
+    depth: u32,
+    citation: u32,
+}
 
 fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     // Imagens do pacote (Pictures/…), lidas antes do texto.
@@ -1205,6 +1244,9 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     let mut cell_shading: Option<String> = None;
     // Sumário (text:table-of-content) e o título dele.
     let (mut in_toc, mut in_toc_title) = (false, false);
+    // Nota de rodapé sendo lida (text:note): o texto vai para a nota, não para o parágrafo.
+    let mut note: Option<NoteRead> = None;
+    let mut notes: Vec<(String, String)> = Vec::new();
 
     let push = |para: &mut Option<Paragraph>, marks: &[Vec<Mark>], text: &str| {
         let p = para.get_or_insert_with(Paragraph::default);
@@ -1225,6 +1267,24 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                 if skip > 0 {
                     if !empty {
                         skip += 1;
+                    }
+                    buf.clear();
+                    continue;
+                }
+                if let Some(n) = note.as_mut() {
+                    if !empty {
+                        n.depth += 1;
+                    }
+                    match e.local_name().as_ref() {
+                        b"note-citation" if !empty => n.citation = n.depth,
+                        b"p" | b"h" if !n.text.is_empty() => n.text.push('\u{b}'),
+                        b"line-break" => n.text.push('\u{b}'),
+                        b"tab" => n.text.push('\t'),
+                        b"s" => {
+                            let c: usize = attr(e, b"c").and_then(|v| v.parse().ok()).unwrap_or(1);
+                            n.text.push_str(&" ".repeat(c.min(100)));
+                        }
+                        _ => {}
                     }
                     buf.clear();
                     continue;
@@ -1250,6 +1310,24 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                                 .map(|cm| cm / 2.54 * 72.0)
                         };
                         frame = (pt(b"width").zip(pt(b"height")), None);
+                    }
+                    // Nota de rodapé (e de fim, que vira de rodapé): a chamada entra no texto.
+                    b"note" if !empty && para.is_some() => {
+                        let id = format!("n{}", notes.len() + 1);
+                        let mut marks = span_marks.last().cloned().unwrap_or_default();
+                        marks.retain(|m| m.kind() != nova_domain_text::MarkKind::Footnote);
+                        marks.push(Mark::Footnote { id: id.clone() });
+                        push(
+                            &mut para,
+                            &[marks],
+                            &nova_domain_text::FOOTNOTE_CHAR.to_string(),
+                        );
+                        note = Some(NoteRead {
+                            id,
+                            text: String::new(),
+                            depth: 1,
+                            citation: 0,
+                        });
                     }
                     b"note"
                     | b"annotation"
@@ -1398,6 +1476,24 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                     _ => {}
                 }
             }
+            Event::Text(t) if note.as_ref().is_some_and(|n| n.citation == 0) => {
+                let raw = t.unescape().map_err(|e| invalid(format!("XML: {e}")))?;
+                let n = note.as_mut().expect("nota aberta");
+                let mut last_space = n.text.ends_with(' ');
+                for ch in raw.chars() {
+                    if ch.is_whitespace() {
+                        if !last_space {
+                            n.text.push(' ');
+                        }
+                        last_space = true;
+                    } else {
+                        n.text.push(ch);
+                        last_space = false;
+                    }
+                }
+            }
+            // Texto da citação (o número da nota): a tela numera sozinha.
+            Event::Text(_) if note.is_some() => {}
             Event::Text(t) if in_body && skip == 0 && para.is_some() => {
                 let raw = t.unescape().map_err(|e| invalid(format!("XML: {e}")))?;
                 // Espaços em branco do XML se juntam num só (regra do ODF).
@@ -1416,6 +1512,23 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                 }
                 if !text.is_empty() {
                     push(&mut para, &span_marks, &text);
+                }
+            }
+            Event::End(_) if note.is_some() => {
+                let n = note.as_mut().expect("nota aberta");
+                if n.citation == n.depth {
+                    n.citation = 0;
+                }
+                n.depth -= 1;
+                if n.depth == 0 {
+                    let n = note.take().expect("nota aberta");
+                    let text: String = n
+                        .text
+                        .trim_matches(|c: char| c == ' ' || c == '\u{b}')
+                        .chars()
+                        .take(nova_domain_text::MAX_NOTE_CHARS)
+                        .collect();
+                    notes.push((n.id, text));
                 }
             }
             Event::End(e) => {
@@ -1510,7 +1623,7 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         out.push(Paragraph::default());
     }
     crate::docx::normalize(&mut out);
-    Ok((out, media, page, header_footer))
+    Ok((out, media, page, header_footer, notes))
 }
 
 #[cfg(test)]

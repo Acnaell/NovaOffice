@@ -2,7 +2,7 @@
 
 Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real com o núcleo Rust real.
 
-**122 funcionam · 2 parciais · 2 com falha · 3 ainda não existem**
+**127 funcionam · 1 parciais · 0 com falha · 3 ainda não existem**
 
 | | Área | Fluxo | Observação |
 | --- | --- | --- | --- |
@@ -50,7 +50,7 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Fonte | Tamanho da fonte: lista, digitar e Ctrl+Shift+> / < | 14 → 16 → 14 → 12, a lista do Word. |
 | ✅ | Fonte | Cor da fonte (paleta e botão repete a última cor) |  |
 | ✅ | Fonte | Realce (marca-texto) e Sem Cor |  |
-| ❌ | Fonte | Subscrito / sobrescrito (Ctrl+= / Ctrl+Shift+=) | Erro no teste: page.waitForSelector: Timeout 30000ms exceeded. |
+| ✅ | Fonte | Subscrito / sobrescrito (Ctrl+= / Ctrl+Shift+=) | Repetir o atalho desliga. |
 | ✅ | Fonte | Limpar formatação (Ctrl+Espaço e botão) |  |
 | ✅ | Fonte | Maiúsculas e minúsculas (Shift+F3 e menu Aa) |  |
 | ✅ | Fonte | Pincel de Formatação (clique e arraste) | Barra de status: "+" |
@@ -111,7 +111,9 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Inserir | Colar imagem (captura de tela) e mudar o tamanho com o mouse | A alça no canto mantém a proporção; Backspace apaga a imagem. |
 | ✅ | Inserir | Imagem salva em .docx e reaberta | Imagens do Word e do LibreOffice validadas à parte (testes do núcleo). |
 | ⬜ | Inserir | Comentários | Não há comentários. |
-| ❌ | Referências | Sumário automático com páginas, atualizar e Ctrl+clique | Erro no teste: page.waitForSelector: Timeout 30000ms exceeded. |
+| ✅ | Referências | Sumário automático com páginas, atualizar e Ctrl+clique | Títulos 1 a 3 com pontilhado e páginas reais; Atualizar refaz; Ctrl+clique leva ao título; vai para .docx/.odt como campo TOC. |
+| ✅ | Referências | Nota de rodapé (Ctrl+Alt+F): número no texto e nota no pé da página | Ctrl+Alt+F põe a chamada e o cursor na nota; Enter/Esc voltam ao texto; numeração automática; desfazer em dois passos (texto, nota). |
+| ✅ | Referências | Notas de rodapé salvas no .docx e no .odt | word/footnotes.xml (w:footnoteReference) e text:note do .odt; validado no LibreOffice. |
 | ✅ | Referências | Sumário salvo no .docx e no .odt | Campo TOC do Word (estilos Sumário 1…) e índice do LibreOffice (text:table-of-content); validado no LibreOffice. |
 | ✅ | Exibição | Página com tamanho A4 e margens; várias páginas | 5 folhas A4 (21 × 29,7 cm); nenhum parágrafo atravessa a margem de baixo; "Página 1 de 5" na barra de status. |
 | ⬜ | Exibição | Zoom (Ctrl + roda / controle de zoom) | Não há controle de zoom no app. |
@@ -133,5 +135,5 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Exibir | Régua com as margens da página | Alinhada ao papel e à margem, em qualquer zoom; fica ligada ao reabrir. |
 | ✅ | Exibir | Painel de Navegação: títulos e clique leva o cursor | Título 1 a 3, com a seção do cursor marcada. |
 | ✅ | Exibir | Modo de Foco em tela inteira; Esc volta | Esconde a faixa de opções e a barra de status; o documento continua editável. |
-| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 18 ms por tecla. |
-| 🟡 | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 70 ms por tecla: lento em documentos grandes (o DOM é recriado a cada tecla). |
+| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 14 ms por tecla. |
+| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 49 ms por tecla. |

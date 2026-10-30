@@ -57,6 +57,7 @@ import { fileToBase64, insertImage, resizeImage, setImage, TEXT_WIDTH_PT } from 
 import { defaultProofing, matchAt, matchText, parseProofing, SPELL_LANGUAGES, useSpelling, type Proofing } from "./spell";
 import { ReviewTab, useReviewShortcuts } from "./ReviewTab";
 import { ReferencesTab } from "./ReferencesTab";
+import { insertFootnote, newFootnoteId, nextFootnote } from "./footnotes";
 import { findToc, insertToc, removeToc, screenPages, updateToc } from "./toc";
 import { SpellingPane } from "./SpellingPane";
 import { AutoCorrectDialog } from "./AutoCorrectDialog";
@@ -91,7 +92,7 @@ const PARAGRAPH_SPACE = 12;
 /** Intervalo da recuperação automática (o Word usa 10 min; aqui é mais curto). */
 const AUTOSAVE_MS = 60_000;
 
-const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER };
+const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, footnotes: {} };
 
 /** Idioma de revisão escolhido na barra de status (sem escolha, segue o da interface). */
 const PROOFING_KEY = "nova.proofing";
@@ -471,6 +472,8 @@ export default function App() {
   // Durante a edição, o texto fica num rascunho; vai para o documento ao sair
   // (ou ao usar um botão da aba), num passo de desfazer.
   const [hfEditing, setHfEditing] = useState<{ part: Part; page: number } | null>(null);
+  // Nota de rodapé recém-inserida: o Editor põe o cursor nela.
+  const [footnoteFocus, setFootnoteFocus] = useState<string | null>(null);
   const [hfDraft, setHfDraft] = useState<HeadersFooters | null>(null);
   const hfDraftRef = useRef(hfDraft);
   hfDraftRef.current = hfDraft;
@@ -1195,6 +1198,13 @@ export default function App() {
         return setAutoCorrectOpen(true);
       case "review.wordCount":
         return setWordCountOpen(true);
+      case "references.footnote": {
+        const id = newFootnoteId();
+        run((_doc, sel) => insertFootnote(sel, id));
+        return setFootnoteFocus(id);
+      }
+      case "references.nextFootnote":
+        return run((doc, sel) => nextFootnote(doc, sel) ?? { command: null, selection: sel });
       default:
         return onStyle(command.slice("style.".length) as BlockStyle);
     }
@@ -1391,6 +1401,8 @@ export default function App() {
             onInsertToc={() => run((doc, sel) => insertToc(doc, sel, tocPages(), tocLabels))}
             onUpdateToc={() => run((doc, sel) => updateToc(doc, sel, tocPages(), tocLabels))}
             onRemoveToc={() => run((doc, sel) => removeToc(doc, sel))}
+            onCommand={onCommand}
+            profile={profile}
           />
         }
         viewTab={
@@ -1448,6 +1460,10 @@ export default function App() {
             onHfEdit={editHeaderFooter}
             onHfChange={(part, value) => setHfDraft((d) => ({ ...(d ?? view.headerFooter), [part]: value }))}
             onHfClose={closeHeaderFooter}
+            footnoteFocus={footnoteFocus}
+            onFootnoteFocused={() => setFootnoteFocus(null)}
+            onFootnoteChange={(id, text) => run((_doc, sel) => ({ command: { type: "footnote.set", id, text }, selection: sel }))}
+            onFootnoteDone={() => document.querySelector<HTMLElement>(".page")?.focus()}
             onPasteImage={pasteImage}
             onEscape={() => {
               if (painter) setPainter(null);

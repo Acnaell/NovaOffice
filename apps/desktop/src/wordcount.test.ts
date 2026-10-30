@@ -20,6 +20,7 @@ const doc = (...texts: string[]): DocView => ({
   format: null,
   page: DEFAULT_PAGE,
   headerFooter: DEFAULT_HEADER_FOOTER,
+  footnotes: {},
 });
 
 describe("textStats", () => {
