@@ -2,7 +2,7 @@
 
 Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real com o núcleo Rust real.
 
-**98 funcionam · 2 parciais · 0 com falha · 5 ainda não existem**
+**122 funcionam · 2 parciais · 2 com falha · 3 ainda não existem**
 
 | | Área | Fluxo | Observação |
 | --- | --- | --- | --- |
@@ -50,10 +50,10 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Fonte | Tamanho da fonte: lista, digitar e Ctrl+Shift+> / < | 14 → 16 → 14 → 12, a lista do Word. |
 | ✅ | Fonte | Cor da fonte (paleta e botão repete a última cor) |  |
 | ✅ | Fonte | Realce (marca-texto) e Sem Cor |  |
-| ✅ | Fonte | Subscrito / sobrescrito (Ctrl+= / Ctrl+Shift+=) | Repetir o atalho desliga. |
+| ❌ | Fonte | Subscrito / sobrescrito (Ctrl+= / Ctrl+Shift+=) | Erro no teste: page.waitForSelector: Timeout 30000ms exceeded. |
 | ✅ | Fonte | Limpar formatação (Ctrl+Espaço e botão) |  |
 | ✅ | Fonte | Maiúsculas e minúsculas (Shift+F3 e menu Aa) |  |
-| ✅ | Fonte | Pincel de Formatação (clique e arraste) | Barra de status: "Pincel de Formatação: selecione o texto que vai receber a formatação (Esc cancela)" |
+| ✅ | Fonte | Pincel de Formatação (clique e arraste) | Barra de status: "+" |
 | ✅ | Fonte | Copiar/colar formatação (Ctrl+Shift+C / Ctrl+Shift+V) |  |
 | ✅ | Parágrafo | Estilos de título por atalho (Ctrl+Alt+1) |  |
 | ✅ | Parágrafo | Estilos pela galeria da faixa de opções |  |
@@ -70,10 +70,20 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Parágrafo | Mostrar Tudo ¶ (Ctrl+Shift+8) | Espaços (·), tabulações (→) e ¶ aparecem sem entrar no texto. |
 | ✅ | Ferramentas | Localizar (Ctrl+L): painel, resultados e destaque | Enter vai para o próximo; Esc volta ao texto com a ocorrência selecionada. |
 | ✅ | Ferramentas | Substituir e Substituir Tudo (Ctrl+U) | "Concluído. 2 substituições feitas."; Ctrl+Z desfaz o Substituir Tudo de uma vez. |
-| 🟡 | Ferramentas | Verificação ortográfica | Usa o corretor do sistema/WebView (sublinhado vermelho); o idioma não acompanha o documento e não há verificação gramatical. Precisa ser confirmado no app instalado (WebView2/WebKit). |
-| ✅ | Ferramentas | Contagem de palavras | Página 1 de 1 · Texto normal · 3 palavras · 2 parágrafos · Alterações não salvas |
+| ✅ | Ortografia | Sublinhar palavras erradas enquanto digita | Dicionários do LibreOffice (nova-spell); ignora siglas, URLs e números, como o Word. |
+| ✅ | Ortografia | A palavra em digitação só é marcada ao sair dela |  |
+| ✅ | Ortografia | Sugestões no clique direito | 6 sugestões, a melhor primeiro; Ctrl+Z desfaz a troca. |
+| ✅ | Ortografia | Ignorar Tudo e Adicionar ao Dicionário | Todas as ocorrências deixam de ser marcadas; o dicionário do usuário vale para todos os idiomas. |
+| ✅ | Ortografia | Idioma de revisão na barra de status | Português (VERO), inglês (SCOWL), espanhol (RLA-ES) ou desligado; a escolha fica salva. |
+| ✅ | Ortografia | Idioma de revisão na aba Revisão (pt-BR, en-US, es-ES) | Revisão › Idioma; a barra de status acompanha a escolha. |
+| ✅ | Ortografia | Ortografia e Gramática (F7): painel percorre os erros um a um | Alterar, Ignorar uma vez e Ignorar Tudo, do cursor em diante; termina com "A verificação ortográfica foi concluída". |
+| ✅ | Ortografia | Ortografia e Gramática: Alterar Todas e a aba Revisão | Troca todas as ocorrências num único passo de desfazer; Esc fecha o painel. |
+| ✅ | Ferramentas | AutoCorreção: aspas inteligentes, travessão e substituições | Aspas “ ”, -- vira — e a lista de substituições do Word ((c) → ©, ... → …). |
+| ✅ | Ferramentas | Opções de AutoCorreção (Revisão › AutoCorreção) | Cada correção liga e desliga; a lista Substituir/Por é editável e fica salva. |
+| ✅ | Ferramentas | Contar Palavras (Revisão, Ctrl+Shift+G): páginas, palavras, caracteres, parágrafos e linhas | 5 linhas medidas na tela; com seleção, conta só o trecho. Páginas estimadas pela altura (ainda sem paginação). |
+| ✅ | Ferramentas | Contagem de palavras | Página 1 de 1 · Texto normal · 3 palavras · 2 parágrafos · Português (Brasil) · Inglês (EUA) · Espanhol (Espanha) · Não verificar ortografia · Alterações não salvas · − · 500% · 200% · 150% · 125% · 100% · 75% · 50% · 25% · Uma Página · Largura da Página · + |
 | ✅ | Ferramentas | Contagem de palavras com 1 parágrafo (plural) |  |
-| ⬜ | Ferramentas | Autocorreção (maiúscula no início da frase) | Não há autocorreção (maiúscula inicial, aspas inteligentes, -- → —). |
+| ✅ | Ferramentas | Autocorreção (maiúscula no início da frase) | Ao digitar o espaço depois da palavra, como no Word; Ctrl+Z logo depois desfaz só a correção. |
 | ✅ | Arquivo | Salvar (.docx padrão), fechar e reabrir preserva texto e formatação | Sugere "Sem título.docx" com "Documento do Word (*.docx)" primeiro; título da janela: "ciclo.docx — Nova Text" |
 | ✅ | Arquivo | Salvar como em cada formato (tela Arquivo) | odt:ok · nova:ok · md:ok · txt:ok · html:ok · docx:ok |
 | ✅ | Arquivo | Ctrl+B num documento novo pede onde salvar |  |
@@ -86,8 +96,8 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | 🟡 | Arquivo | Exportar para PDF | Pela janela de impressão do sistema ("Salvar como PDF"); ainda sem exportação direta para .pdf. |
 | ✅ | Arquivo | Imprimir (Ctrl+P) | Tela Imprimir → janela de impressão do sistema; só a página sai no papel. |
 | ✅ | Arquivo | Salvamento automático / recuperação | Cópia a cada minuto; ao abrir de novo, a tela inicial oferece Recuperar. |
-| ✅ | NovaOffice | Tela inicial ao abrir o programa | 6 aplicativos, Novo e Recentes; título "NovaOffice". |
-| ✅ | NovaOffice | Menu de aplicativos (grade ao lado do logo) | Nova Text, Nova Sheets, Nova Slides, Nova Draw, Nova Base, Nova Math; os outros 5 aparecem como "Em breve"; Esc fecha. |
+| ✅ | NovaOffice | Tela inicial ao abrir o programa | 8 aplicativos (com Nova Mail e Nova Drive), Novo e Recentes; título "NovaOffice". |
+| ✅ | NovaOffice | Menu de aplicativos (grade ao lado do logo) | Nova Text, Nova Sheets, Nova Slides, Nova Draw, Nova Base, Nova Math, Nova Mail, Nova Drive; os outros 7 aparecem como "Em breve"; Esc fecha. |
 | ✅ | Inserir | Quebra de Página (Ctrl+Enter) | Linha "Quebra de Página" na tela, página nova ao imprimir e no .docx/.odt; Backspace apaga a quebra. |
 | ✅ | Inserir | Link no texto selecionado (Ctrl+K) e Ctrl+clique | "exemplo.com" vira https://exemplo.com; Ctrl+clique abre no navegador. |
 | ✅ | Inserir | Link sem seleção, editar e remover |  |
@@ -100,8 +110,9 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Inserir | Imagem do computador (Inserir → Imagens), tamanho e alinhamento | 64×32 px entra com 48×24 pt (96 ppp, como o Word); aba Formato da Imagem com tamanho e alinhamento. |
 | ✅ | Inserir | Colar imagem (captura de tela) e mudar o tamanho com o mouse | A alça no canto mantém a proporção; Backspace apaga a imagem. |
 | ✅ | Inserir | Imagem salva em .docx e reaberta | Imagens do Word e do LibreOffice validadas à parte (testes do núcleo). |
-| ⬜ | Inserir | Cabeçalho, rodapé e número de página | Depende das páginas reais (aba Layout). |
 | ⬜ | Inserir | Comentários | Não há comentários. |
+| ❌ | Referências | Sumário automático com páginas, atualizar e Ctrl+clique | Erro no teste: page.waitForSelector: Timeout 30000ms exceeded. |
+| ✅ | Referências | Sumário salvo no .docx e no .odt | Campo TOC do Word (estilos Sumário 1…) e índice do LibreOffice (text:table-of-content); validado no LibreOffice. |
 | ✅ | Exibição | Página com tamanho A4 e margens; várias páginas | 5 folhas A4 (21 × 29,7 cm); nenhum parágrafo atravessa a margem de baixo; "Página 1 de 5" na barra de status. |
 | ⬜ | Exibição | Zoom (Ctrl + roda / controle de zoom) | Não há controle de zoom no app. |
 | ✅ | Exibição | Tema claro/escuro | Recurso que o Word não tem nesta forma. |
@@ -109,5 +120,18 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Layout | Margens prontas (Normal, ABNT…) e personalizadas | Inclui ABNT (3 cm em cima e à esquerda, 2 cm embaixo e à direita). |
 | ✅ | Layout | Orientação paisagem e tamanho do papel | Ofício em paisagem; Ctrl+Z desfaz a mudança de página. |
 | ✅ | Layout | Papel e margens salvos no .docx | w:pgSz e w:pgMar como no Word. |
-| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 10 ms por tecla. |
-| ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 27 ms por tecla. |
+| ✅ | Atualização | Aviso de versão nova ao abrir o app, com as Novidades | Faixa abaixo da faixa de opções; notas em Markdown numa caixa; links no navegador. |
+| ✅ | Atualização | Mesma versão ou pré-lançamento: sem aviso | Consulta ao abrir; 0.1.6 e 0.3.0-beta.1 não aparecem. |
+| ✅ | Atualização | Baixar e instalar (Windows): progresso, "Salvar alterações?" e instalador | Download com barra, pergunta antes de fechar e roda o instalador (/P no app). |
+| ✅ | Atualização | Instalador que não confere (SHA-256) não é instalado |  |
+| ✅ | Atualização | macOS e Linux: Baixar abre a página da release |  |
+| ✅ | Atualização | Arquivo → Sobre: versão, Procurar atualizações e Avisar sobre atualizações | Preferência guardada em localStorage. |
+| ✅ | Inserir | Cabeçalho e rodapé com número de página | Aba contextual, campos de página, duplo clique para editar; na impressão vai nas margens da página. |
+| ✅ | Inserir | Cabeçalho e rodapé salvos no .docx | word/header1.xml e footer1.xml com o campo PAGE e "Primeira Página Diferente"; também em .odt. |
+| ✅ | Exibir | Zoom na barra de status (−/+, porcentagem e Ctrl + roda) sem mudar as páginas | Páginas iguais em todos os níveis (Página 1 de 3); o zoom não fica salvo. |
+| ✅ | Exibir | 100%, Uma Página e Largura da Página | Uma Página 54%, Largura da Página 157%. |
+| ✅ | Exibir | Régua com as margens da página | Alinhada ao papel e à margem, em qualquer zoom; fica ligada ao reabrir. |
+| ✅ | Exibir | Painel de Navegação: títulos e clique leva o cursor | Título 1 a 3, com a seção do cursor marcada. |
+| ✅ | Exibir | Modo de Foco em tela inteira; Esc volta | Esconde a faixa de opções e a barra de status; o documento continua editável. |
+| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 18 ms por tecla. |
+| 🟡 | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 70 ms por tecla: lento em documentos grandes (o DOM é recriado a cada tecla). |
