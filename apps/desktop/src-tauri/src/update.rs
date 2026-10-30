@@ -57,8 +57,12 @@ pub struct UpdateInfo {
     /// Página da release, para o navegador (macOS, Linux ou sem instalador).
     pub page_url: String,
     pub installer: Option<Installer>,
-    /// Baixar e instalar pelo app: só no Windows, com instalador e checksum publicados.
+    /// Baixar e instalar pelo app: só no Windows, com instalador e checksum publicados,
+    /// ou em qualquer sistema com a atualização assinada (`latest.json`).
     pub can_install: bool,
+    /// Atualização assinada pelo plugin do Tauri: o app confere a assinatura e reinicia sozinho.
+    #[serde(default)]
+    pub signed: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -120,6 +124,7 @@ pub fn evaluate(json: &str, current: &str, windows: bool) -> Result<Option<Updat
     });
     Ok(Some(UpdateInfo {
         can_install: windows && installer.is_some(),
+        signed: false,
         version,
         notes: release.body.unwrap_or_default(),
         page_url: release.html_url,

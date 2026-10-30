@@ -29,6 +29,8 @@ pub struct DocView {
     pub footnotes: std::collections::BTreeMap<String, String>,
     /// Comentários (Revisão), pelo id da marca `comment` do trecho.
     pub comments: std::collections::BTreeMap<String, nova_domain_text::Comment>,
+    /// Fontes bibliográficas (Referências), pelo id da marca `citation` das chamadas.
+    pub sources: std::collections::BTreeMap<String, nova_domain_text::Source>,
 }
 
 #[derive(Debug, Serialize)]
@@ -68,6 +70,8 @@ pub struct ViewPatch {
     pub footnotes: std::collections::BTreeMap<String, String>,
     /// Comentários (Revisão), pelo id da marca `comment` do trecho.
     pub comments: std::collections::BTreeMap<String, nova_domain_text::Comment>,
+    /// Fontes bibliográficas (Referências), pelo id da marca `citation` das chamadas.
+    pub sources: std::collections::BTreeMap<String, nova_domain_text::Source>,
 }
 
 /// Faixa de parágrafos alterada, no documento atual: `[start, end)`. Cresce a
@@ -148,7 +152,8 @@ fn dirty_range(events: &[TextEvent]) -> Option<(u32, u32)> {
             | TextEvent::HeaderFooterSet { .. }
             | TextEvent::WatermarkSet { .. }
             | TextEvent::FootnoteSet { .. }
-            | TextEvent::CommentSet { .. } => return None,
+            | TextEvent::CommentSet { .. }
+            | TextEvent::SourceSet { .. } => return None,
         }
     }
     Some(dirty.0.unwrap_or((0, 0)))
@@ -240,6 +245,7 @@ impl Editor {
             watermark: view.watermark,
             footnotes: view.footnotes,
             comments: view.comments,
+            sources: view.sources,
         }
     }
 
@@ -268,6 +274,7 @@ impl Editor {
             watermark: doc.watermark(),
             footnotes: doc.footnote_texts(),
             comments: doc.comment_map(),
+            sources: doc.sources(),
         }
     }
 

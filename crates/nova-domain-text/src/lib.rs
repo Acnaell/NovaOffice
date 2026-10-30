@@ -6,10 +6,14 @@
 //!
 //! Offsets são unidades UTF-16 dentro de um bloco (parágrafo).
 
+mod citations;
 mod comments;
 mod design;
 mod format;
 
+pub use citations::{
+    citation_text, BibPart, Person, Source, SourceKind, CITATION_CHAR, MAX_SOURCE_FIELD,
+};
 pub use comments::{Comment, MAX_COMMENT_CHARS};
 
 pub use design::{
@@ -309,6 +313,13 @@ pub enum TextCommand {
     /// `value: null` apaga o comentário (a marca no texto sai à parte, com text.removeMark).
     #[serde(rename = "comment.set")]
     SetComment { id: String, value: Option<Comment> },
+    /// Fonte bibliográfica (Gerenciar Fontes): `{"type":"source.set","id":"s1","value":{…}}`;
+    /// `value: null` apaga a fonte (as chamadas no texto saem à parte).
+    #[serde(rename = "source.set")]
+    SetSource {
+        id: String,
+        value: Option<Box<Source>>,
+    },
     /// Tamanho do papel e margens (aba Layout): `{"type":"page.set","page":{…}}`.
     #[serde(rename = "page.set")]
     SetPage { page: PageSetup },
@@ -400,6 +411,10 @@ pub enum TextEvent {
     CommentSet {
         id: String,
         value: Option<Comment>,
+    },
+    SourceSet {
+        id: String,
+        value: Option<Box<Source>>,
     },
 }
 
@@ -518,6 +533,7 @@ impl TextDocument {
                 d.toc
                     .filter(TocEntry::is_valid)
                     .map(|t| ParaAttr::Toc(Some(t))),
+                d.bibliography.map(|b| ParaAttr::Bibliography(Some(b))),
             ];
             commands.extend(
                 changes
@@ -626,6 +642,15 @@ impl TextDocument {
                         offset,
                         utf16_len(&text),
                         &[(MarkKind::Footnote.key().to_string(), None)],
+                    )?;
+                }
+                // O mesmo vale para a chamada de citação.
+                if !text.chars().all(|c| c == CITATION_CHAR) {
+                    self.replica.format_text(
+                        block,
+                        offset,
+                        utf16_len(&text),
+                        &[(MarkKind::Citation.key().to_string(), None)],
                     )?;
                 }
                 TextEvent::TextInserted {
@@ -769,6 +794,20 @@ impl TextDocument {
                     value.as_ref().map(Comment::to_setting),
                 )]);
                 TextEvent::CommentSet { id, value }
+            }
+            TextCommand::SetSource { id, value } => {
+                match &value {
+                    Some(s) => s.validate(&id)?,
+                    None if !is_note_id(&id) => {
+                        return Err(DomainError::InvalidMark(format!("fonte {id:?}")))
+                    }
+                    None => {}
+                }
+                self.replica.set_settings(&[(
+                    citations::source_key(&id),
+                    value.as_deref().map(Source::to_setting),
+                )]);
+                TextEvent::SourceSet { id, value }
             }
             TextCommand::SetPage { page } => {
                 page.validate()?;
@@ -974,6 +1013,48 @@ impl TextDocument {
         for (id, c) in list {
             c.validate(id)?;
             changes.push((comments::comment_key(id), Some(c.to_setting())));
+        }
+        self.replica.set_settings(&changes);
+        self.replica.clear_history();
+        Ok(())
+    }
+
+    /// Fontes bibliográficas, pelo id (inclusive as que nenhuma citação usa).
+    pub fn sources(&self) -> std::collections::BTreeMap<String, Source> {
+        self.replica
+            .settings()
+            .iter()
+            .filter_map(|(k, v)| {
+                let id = k.strip_prefix(citations::SOURCE_PREFIX)?;
+                Source::from_setting(id, v).map(|s| (id.to_string(), s))
+            })
+            .collect()
+    }
+
+    /// Citações na ordem do texto: (id da fonte, página), uma por `CITATION_CHAR`.
+    pub fn citations(&self) -> Vec<(String, Option<String>)> {
+        let mut out = Vec::new();
+        for p in self.paragraphs() {
+            for span in &p.spans {
+                let mark = span.marks.iter().find_map(|m| match m {
+                    Mark::Citation { id, page } => Some((id.clone(), page.clone())),
+                    _ => None,
+                });
+                if let Some(mark) = mark {
+                    let n = span.text.chars().filter(|c| *c == CITATION_CHAR).count();
+                    out.extend(std::iter::repeat(mark).take(n));
+                }
+            }
+        }
+        out
+    }
+
+    /// Define as fontes ao abrir um arquivo, sem entrar no desfazer.
+    pub fn load_sources(&mut self, list: &[(String, Source)]) -> Result<(), DomainError> {
+        let mut changes = Vec::new();
+        for (id, s) in list {
+            s.validate(id)?;
+            changes.push((citations::source_key(id), Some(s.to_setting())));
         }
         self.replica.set_settings(&changes);
         self.replica.clear_history();

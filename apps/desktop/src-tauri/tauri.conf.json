@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "NovaOffice",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "identifier": "org.novaoffice.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -44,6 +44,18 @@
     "license": "MIT",
     "macOS": {
       "signingIdentity": "-"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJBMUE1QTk5OUQxOEU0NzkKUldSNTVCaWRtVm9hS3VuNHpZUTJ5L1VxaFFneDlaelVubndDc2hOSlpLMjlLNVc0TytrTUtpS0oK",
+      "endpoints": [
+        "https://github.com/Acnaell/NovaOffice/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

@@ -101,6 +101,7 @@ pub fn export(doc: &TextDocument) -> String {
         i += 1;
     }
     // Notas de rodapé no formato do GitHub: [^1] no texto e as definições no fim.
+    let out = crate::citations::replace(&out, &crate::citations::texts(doc), str::to_string);
     let notes = crate::notes::collect(doc);
     let mut out = crate::notes::replace_calls(&out, &notes, |n| format!("[^{n}]"));
     if !notes.texts.is_empty() {

@@ -3535,3 +3535,94 @@ select {
   position: absolute;
   inset: 6px;
 }
+
+/* ---------- Citações e Bibliografia ---------- */
+
+/* Chamada: o caractere da citação fica invisível e o texto gerado (data-text) aparece. */
+.page .cite-ref {
+  font-size: 0 !important;
+}
+
+.page .cite-ref::after {
+  content: attr(data-text);
+  font-size: var(--cite-size, 11pt);
+}
+
+.sources-dialog {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.source-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.source-row label {
+  flex: 1 1 120px;
+}
+
+.source-preview-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--chrome-muted);
+}
+
+.source-preview {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 6px;
+  background: var(--chrome-bg);
+  color: var(--chrome-text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.sources-label {
+  font-size: 12.5px;
+  color: var(--chrome-muted);
+}
+
+.sources-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--chrome-border);
+  border-radius: 6px;
+}
+
+.sources-list li {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--chrome-border);
+  cursor: default;
+}
+
+.sources-list li:last-child {
+  border-bottom: 0;
+}
+
+.sources-list li.selected {
+  background: var(--button-active);
+}
+
+.sources-list .source-preview {
+  padding: 2px 0 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+}
+
+.sources-cite {
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.sources-empty {
+  color: var(--chrome-muted);
+  font-size: 13px;
+}

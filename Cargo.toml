@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*", "apps/cli", "apps/desktop/src-tauri"]
 
 [workspace.package]
-version = "0.1.13"
+version = "0.1.14"
 edition = "2021"
 rust-version = "1.80"
 publish = false
@@ -29,6 +29,7 @@ tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-updater = "2"
 spellbook = "0.4"
 # Aviso de atualização: consulta ao GitHub, versão e checksum do instalador.
 ureq = "2"

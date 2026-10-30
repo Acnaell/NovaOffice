@@ -8,11 +8,31 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Citações e Bibliografia na ABNT** (Referências → Citações e Bibliografia): Gerenciar Fontes
+  cadastra livros, artigos, sites e teses (autor, título, ano, editora, local, URL, data de acesso),
+  com a prévia da referência. Inserir Citação põe a chamada autor-data, como (SILVA, 2026) ou
+  (SILVA, 2026, p. 12), que acompanha as mudanças na fonte. Bibliografia insere, atualiza e remove a
+  lista "REFERÊNCIAS" da NBR 6023 (ordem alfabética, sobrenome em maiúsculas, título em negrito).
+  Lidas e gravadas em .docx (fontes em `customXml`, campos CITATION e BIBLIOGRAPHY) e .odt
+  (`text:bibliography-mark` e `text:bibliography`), validadas no LibreOffice.
+
 ### Corrigido
 
 - **Criar PDF e Imprimir com o tema escuro**: as margens da página saíam pretas e as notas de
   rodapé quase invisíveis; o papel agora sai sempre claro. O cursor e o sublinhado ondulado do
   corretor também não vão mais para o PDF.
+
+## [0.1.14] - 2026-10-30
+
+### Adicionado
+
+- **Atualização assinada**: cada release publica um `latest.json` com a assinatura de cada
+  instalador, e o app só instala o que foi assinado com a chave da NovaOffice. O app baixa a versão
+  nova, confere a assinatura, instala e reinicia sozinho no Windows, no macOS e no AppImage do
+  Linux (.deb e .rpm seguem pelo sistema). Vale a partir da próxima versão; até lá, o aviso usa o
+  instalador conferido pelo `.sha256`, como antes.
 
 ## [0.1.13] - 2026-10-30
 
@@ -265,7 +285,8 @@ Primeira versão pública da NovaOffice: o app desktop com o editor Nova Text e 
 - Instaladores para Windows (`.exe` e `.msi`), macOS (`.dmg`, Intel e Apple Silicon) e Linux
   (`.AppImage`, `.deb` e `.rpm`), e o CLI para Windows, macOS e Linux (x86_64 e ARM64).
 
-[Não lançado]: https://github.com/Acnaell/novaoffice/compare/v0.1.13...HEAD
+[Não lançado]: https://github.com/Acnaell/novaoffice/compare/v0.1.14...HEAD
+[0.1.14]: https://github.com/Acnaell/novaoffice/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/Acnaell/novaoffice/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/Acnaell/novaoffice/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/Acnaell/novaoffice/compare/v0.1.10...v0.1.11
