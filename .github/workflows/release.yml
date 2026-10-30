@@ -177,6 +177,10 @@ jobs:
 
       - name: Compilar instaladores
         working-directory: apps/desktop
+        # A chave assina cada instalador para a atualização pelo app (latest.json).
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build --target ${{ matrix.target }}
 
       - name: Enviar instaladores
@@ -195,6 +199,24 @@ jobs:
             echo "::error::Nenhum instalador encontrado em $bundle"
             exit 1
           fi
+          # Assinaturas da atualização pelo app (só os formatos que o app instala sozinho).
+          sigs=("$bundle"/nsis/*.exe.sig "$bundle"/appimage/*.AppImage.sig)
+          # macOS: o .app.tar.gz tem o mesmo nome nas duas arquiteturas; vai com a arquitetura no nome.
+          arch="${{ matrix.target }}"; arch="${arch%%-*}"
+          for f in "$bundle"/macos/*.app.tar.gz; do
+            new="$bundle/macos/NovaOffice_${TAG#v}_${arch}.app.tar.gz"
+            mv "$f" "$new"
+            mv "$f.sig" "$new.sig"
+            files+=("$new")
+            sigs+=("$new.sig")
+          done
+          if [ ${#sigs[@]} -eq 0 ]; then
+            echo "::error::Nenhuma assinatura (.sig) em $bundle: confira os segredos TAURI_SIGNING_PRIVATE_KEY*"
+            exit 1
+          fi
+          for s in "${sigs[@]}"; do
+            gh release upload "$TAG" "$s" --clobber
+          done
           for f in "${files[@]}"; do
             if command -v sha256sum > /dev/null; then
               (cd "$(dirname "$f")" && sha256sum "$(basename "$f")" > "$(basename "$f").sha256")
@@ -221,6 +243,39 @@ jobs:
           cat *.sha256 | sort -k2 > SHA256SUMS.txt
           cat SHA256SUMS.txt
           gh release upload "$TAG" SHA256SUMS.txt --clobber
+          # latest.json: o que o app consulta para se atualizar sozinho (assinaturas minisign).
+          mkdir ../sigs && cd ../sigs
+          gh release download "$TAG" --pattern '*.sig'
+          gh release view "$TAG" --json body --jq .body > notes.md
+          python3 - <<'PY'
+          import datetime, glob, json, os
+          tag = os.environ["TAG"]
+          base = f"https://github.com/{os.environ['GH_REPO']}/releases/download/{tag}/"
+          kinds = {
+              "_x64-setup.exe.sig": ["windows-x86_64", "windows-x86_64-nsis"],
+              "_amd64.AppImage.sig": ["linux-x86_64", "linux-x86_64-appimage"],
+              "_x86_64.app.tar.gz.sig": ["darwin-x86_64", "darwin-x86_64-app"],
+              "_aarch64.app.tar.gz.sig": ["darwin-aarch64", "darwin-aarch64-app"],
+          }
+          platforms = {}
+          for sig in sorted(glob.glob("*.sig")):
+              for suffix, names in kinds.items():
+                  if sig.endswith(suffix):
+                      entry = {"signature": open(sig).read().strip(), "url": base + sig[: -len(".sig")]}
+                      for name in names:
+                          platforms[name] = entry
+          if "windows-x86_64" not in platforms:
+              raise SystemExit("latest.json sem o instalador do Windows")
+          latest = {
+              "version": tag.lstrip("v"),
+              "notes": open("notes.md").read().strip(),
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": platforms,
+          }
+          json.dump(latest, open("latest.json", "w"), ensure_ascii=False, indent=2)
+          print(json.dumps({k: v["url"] for k, v in platforms.items()}, indent=2))
+          PY
+          gh release upload "$TAG" latest.json --clobber
           # Tags com sufixo (v0.2.0-beta.1) viram pré-lançamento e não aparecem como "latest"
           if [[ "$TAG" == *-* ]]; then
             gh release edit "$TAG" --draft=false --prerelease

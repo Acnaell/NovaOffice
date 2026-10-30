@@ -8,6 +8,14 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Atualização assinada**: cada release publica um `latest.json` com a assinatura de cada
+  instalador, e o app só instala o que foi assinado com a chave da NovaOffice. O app baixa a versão
+  nova, confere a assinatura, instala e reinicia sozinho no Windows, no macOS e no AppImage do
+  Linux (.deb e .rpm seguem pelo sistema). Vale a partir da próxima versão; até lá, o aviso usa o
+  instalador conferido pelo `.sha256`, como antes.
+
 ## [0.1.13] - 2026-10-30
 
 ### Adicionado
