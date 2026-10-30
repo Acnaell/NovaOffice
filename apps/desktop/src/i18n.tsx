@@ -169,7 +169,7 @@ const ptBR = {
   "bs.printHint": "Abre a janela de impressão do sistema, com a escolha de impressora, páginas e cópias.",
   "bs.pdf": "Criar documento PDF",
   "bs.createPdf": "Criar PDF",
-  "bs.pdfHint": "Na janela de impressão, escolha \"Salvar como PDF\" (ou \"Microsoft Print to PDF\") como impressora.",
+  "bs.pdfHint": "Grava um .pdf com o papel, as margens, o cabeçalho, o rodapé e a marca d'água do documento, sem passar pela janela de impressão.",
   "bs.changeType": "Alterar tipo de arquivo",
   "bs.exportLead": "Salva uma cópia em outro formato; o documento aberto continua no arquivo atual.",
   "bs.recoveryTitle": "Documento recuperado",
@@ -323,6 +323,8 @@ const ptBR = {
   "status.saved": "Salvo",
   "status.savedTo": "Salvo em {path}",
   "status.exportedTo": "Exportado para {path}",
+  "status.exportingPdf": "Criando o PDF…",
+  "fmt.pdf": "Documento PDF (*.pdf)",
 
   "editor.label": "Documento",
 
@@ -658,7 +660,7 @@ const en: Messages = {
   "bs.printHint": "Opens the system print dialog, where you choose the printer, pages and copies.",
   "bs.pdf": "Create PDF document",
   "bs.createPdf": "Create PDF",
-  "bs.pdfHint": "In the print dialog, choose \"Save as PDF\" (or \"Microsoft Print to PDF\") as the printer.",
+  "bs.pdfHint": "Saves a .pdf with the document's paper size, margins, header, footer and watermark, without going through the print dialog.",
   "bs.changeType": "Change file type",
   "bs.exportLead": "Saves a copy in another format; the open document stays on its current file.",
   "bs.recoveryTitle": "Recovered document",
@@ -811,6 +813,8 @@ const en: Messages = {
   "status.saved": "Saved",
   "status.savedTo": "Saved to {path}",
   "status.exportedTo": "Exported to {path}",
+  "status.exportingPdf": "Creating the PDF…",
+  "fmt.pdf": "PDF document (*.pdf)",
 
   "editor.label": "Document",
 

@@ -5,6 +5,7 @@
 
 mod app;
 mod editor;
+mod pdf;
 mod spell;
 mod store;
 mod update;
@@ -46,6 +47,18 @@ fn save_document(app: State<'_, App>, path: Option<String>) -> Result<DocView, S
 #[tauri::command]
 fn export_document(app: State<'_, App>, path: String) -> Result<(), String> {
     app.export_document(&path)
+}
+
+/// Exporta o documento como PDF sem a janela de impressão. Sem suporte no
+/// sistema, devolve `pdf:unsupported` e a interface usa a impressão.
+#[tauri::command]
+async fn export_pdf(
+    webview: tauri::Webview,
+    app: State<'_, App>,
+    path: String,
+) -> Result<(), String> {
+    let page = app.snapshot().page;
+    pdf::export(&webview, std::path::PathBuf::from(path), page)
 }
 
 #[tauri::command]
@@ -203,6 +216,7 @@ pub fn run() {
             open_document,
             save_document,
             export_document,
+            export_pdf,
             formats,
             recent_documents,
             remove_recent,

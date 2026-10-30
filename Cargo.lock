@@ -2308,6 +2308,7 @@ dependencies = [
 name = "nova-desktop"
 version = "0.1.12"
 dependencies = [
+ "gtk",
  "nova-app",
  "nova-domain-text",
  "nova-spell",
@@ -2320,6 +2321,9 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "ureq",
+ "webkit2gtk",
+ "webview2-com",
+ "windows",
 ]
 
 [[package]]

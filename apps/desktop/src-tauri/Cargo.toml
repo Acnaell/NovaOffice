@@ -25,3 +25,12 @@ tauri-plugin-opener.workspace = true
 ureq.workspace = true
 semver.workspace = true
 sha2.workspace = true
+
+# Exportar para PDF direto (src/pdf.rs): as mesmas versões que o Tauri usa.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows = "0.62"
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+webkit2gtk = "2.0"
+gtk = "0.18"

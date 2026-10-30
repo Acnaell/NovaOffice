@@ -919,13 +919,30 @@ const flows = [
     return html.includes('Exportar isto') && d.path === null ? OK() : FALHA(`path=${d.path}`);
   } },
   { area: 'Arquivo', name: 'Exportar para PDF', run: async (h) => {
-    await h.reset(['x']);
-    await h.p.evaluate(() => { window.__printed = 0; });
+    await h.reset(['Relatório final', 'Texto do corpo com uma nota.']);
+    await core('dispatch', { command: { type: 'batch', commands: [
+      { type: 'block.setStyle', block: 0, style: 'heading1' },
+      { type: 'text.insert', block: 1, offset: 27, text: '\uE000', marks: [{ mark: 'footnote', id: 'p1' }] },
+      { type: 'footnote.set', id: 'p1', text: 'Fonte da nota.' },
+      { type: 'headerFooter.set', value: { header: { text: 'Cabeçalho Nova', align: 'left' }, footer: { text: 'Página {PAGE} de {NUMPAGES}', align: 'center' }, differentFirst: false } },
+      { type: 'watermark.set', value: { text: 'RASCUNHO', color: '#C0C0C0', semitransparent: true, layout: 'diagonal' } },
+    ] } });
+    await h.p.reload(); await h.p.waitForSelector('.page'); await h.settle(400);
+    const path = '/tmp/nova-flows/exportado.pdf';
+    require('fs').rmSync(path, { force: true });
+    await h.p.evaluate(() => { window.__printed = 0; window.__dialog.save = '/tmp/nova-flows/exportado.pdf'; });
     await h.p.locator('.tab-file').click();
     await h.p.locator('.bs-nav', { hasText: 'Exportar' }).click();
-    await h.p.locator('.bs-big', { hasText: 'Criar PDF' }).click(); await h.settle(200);
+    await h.p.locator('.bs-big', { hasText: 'Criar PDF' }).click();
+    for (let i = 0; i < 40 && !require('fs').existsSync(path); i++) await h.settle(250);
+    await h.settle(300);
     const printed = await h.p.evaluate(() => window.__printed);
-    return printed ? PARCIAL('Pela janela de impressão do sistema ("Salvar como PDF"); ainda sem exportação direta para .pdf.') : FALHA('Não abriu a impressão.');
+    let text = '';
+    try { text = require('child_process').execFileSync('pdftotext', ['-raw', path, '-']).toString(); } catch (e) { text = `sem pdftotext: ${e.message}`; }
+    const status = await h.p.locator('.statusbar').innerText();
+    const has = (s) => text.includes(s);
+    const ok = !printed && has('Relatório final') && has('Fonte da nota.') && has('Cabeçalho Nova') && has('Página 1 de 1') && text.replace(/\s/g, '').includes('RASCUNHO') && /Exportado para/.test(status);
+    return ok ? OK('Arquivo → Exportar → Criar PDF grava o .pdf sem a janela de impressão (WebView2 PrintToPdf no Windows; WebKitGTK no Linux), com cabeçalho, rodapé, nota e marca d\'água.') : FALHA(JSON.stringify({ printed, text: text.slice(0, 300), status }));
   } },
   { area: 'Arquivo', name: 'Imprimir (Ctrl+P)', run: async (h) => {
     await h.reset(['x']);

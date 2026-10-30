@@ -2,7 +2,7 @@
 
 Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real com o núcleo Rust real.
 
-**135 funcionam · 1 parciais · 0 com falha · 3 ainda não existem**
+**136 funcionam · 0 parciais · 0 com falha · 3 ainda não existem**
 
 | | Área | Fluxo | Observação |
 | --- | --- | --- | --- |
@@ -93,7 +93,7 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Arquivo | Abrir .txt / .md | Markdown vira títulos, negrito e listas. |
 | ✅ | Arquivo | Documentos recentes | 11 na lista; um clique reabre. |
 | ✅ | Arquivo | Exportar uma cópia (.html) sem mudar o arquivo atual |  |
-| 🟡 | Arquivo | Exportar para PDF | Pela janela de impressão do sistema ("Salvar como PDF"); ainda sem exportação direta para .pdf. |
+| ✅ | Arquivo | Exportar para PDF | Arquivo → Exportar → Criar PDF grava o .pdf sem a janela de impressão (WebView2 PrintToPdf no Windows; WebKitGTK no Linux), com cabeçalho, rodapé, nota e marca d'água. |
 | ✅ | Arquivo | Imprimir (Ctrl+P) | Tela Imprimir → janela de impressão do sistema; só a página sai no papel. |
 | ✅ | Arquivo | Salvamento automático / recuperação | Cópia a cada minuto; ao abrir de novo, a tela inicial oferece Recuperar. |
 | ✅ | NovaOffice | Tela inicial ao abrir o programa | 8 aplicativos (com Nova Mail e Nova Drive), Novo e Recentes; título "NovaOffice". |
@@ -143,5 +143,5 @@ Gerado por `npm run e2e` (apps/desktop/e2e). Cada fluxo dirige a interface real 
 | ✅ | Exibir | Régua com as margens da página | Alinhada ao papel e à margem, em qualquer zoom; fica ligada ao reabrir. |
 | ✅ | Exibir | Painel de Navegação: títulos e clique leva o cursor | Título 1 a 3, com a seção do cursor marcada. |
 | ✅ | Exibir | Modo de Foco em tela inteira; Esc volta | Esconde a faixa de opções e a barra de status; o documento continua editável. |
-| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 16 ms por tecla. |
+| ✅ | Desempenho | Digitar num documento longo (≈300 parágrafos) | 14 ms por tecla. |
 | ✅ | Desempenho | Digitar num documento muito longo (≈2.000 parágrafos) | 44 ms por tecla. |

@@ -12,6 +12,8 @@ export const api = {
   saveDocument: (path: string | null) => invoke<DocView>("save_document", { path }),
   /** Grava uma cópia em outro formato sem mudar o arquivo atual. */
   exportDocument: (path: string) => invoke<void>("export_document", { path }),
+  /** PDF direto do WebView; `pdf:unsupported` onde o sistema não deixa (a interface usa a impressão). */
+  exportPdf: (path: string) => invoke<void>("export_pdf", { path }),
   formats: () => invoke<FormatInfo[]>("formats"),
   recentDocuments: () => invoke<Recent[]>("recent_documents"),
   removeRecent: (path: string) => invoke<void>("remove_recent", { path }),
