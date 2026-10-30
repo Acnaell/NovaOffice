@@ -8,6 +8,14 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- Aba Exibir como a do Word: zoom de 10% a 500% (− e + na barra de status, porcentagem com as
+  opções prontas, Ctrl + roda do mouse, 100%, Uma Página e Largura da Página) sem mudar a
+  paginação; régua horizontal com as margens da página; Painel de Navegação com os títulos
+  (Título 1 a 3), que leva o cursor ao título clicado; e Modo de Foco em tela inteira, só com o
+  documento (Esc volta).
+
 ## [0.1.10] - 2026-10-24
 
 ### Alterado

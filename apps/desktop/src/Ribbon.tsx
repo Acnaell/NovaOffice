@@ -131,6 +131,8 @@ export interface RibbonProps {
   review: ReactNode;
   /** Conteúdo da aba Referências (ReferencesTab.tsx). */
   references: ReactNode;
+  /** Grupos da aba Exibir antes de Tema e Idioma (ViewTab.tsx). */
+  viewTab?: ReactNode;
 }
 
 /** Entrelinhas oferecidas no menu, em % (como no Word: 1,0 1,15 1,5 2,0 2,5 3,0). */
@@ -616,6 +618,7 @@ export function Ribbon(props: RibbonProps) {
     review: props.review,
     view: (
       <>
+        {props.viewTab}
         <Group label={t("group.theme")}>
           <div className="segmented" role="radiogroup" aria-label={t("group.theme")}>
             {THEME_MODES.map((mode) => (
