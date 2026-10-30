@@ -1726,6 +1726,23 @@ select {
     margin: 0;
   }
 
+  /* O papel é sempre claro: com o tema escuro, as margens do @page saíam
+     pretas (seguem o color-scheme da raiz) e as notas, em texto claro. */
+  :root,
+  :root[data-theme="dark"] {
+    color-scheme: light !important;
+    color: var(--page-text);
+  }
+
+  /* Cursor e sublinhado do corretor são da tela, não do papel. */
+  * {
+    caret-color: transparent !important;
+  }
+
+  ::highlight(nova-spell) {
+    text-decoration: none;
+  }
+
   html,
   body,
   #root,

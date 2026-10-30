@@ -8,6 +8,12 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Corrigido
+
+- **Criar PDF e Imprimir com o tema escuro**: as margens da página saíam pretas e as notas de
+  rodapé quase invisíveis; o papel agora sai sempre claro. O cursor e o sublinhado ondulado do
+  corretor também não vão mais para o PDF.
+
 ## [0.1.13] - 2026-10-30
 
 ### Adicionado
