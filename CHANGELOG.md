@@ -8,6 +8,8 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+## [0.1.15] - 2026-10-30
+
 ### Adicionado
 
 - **Citações e Bibliografia na ABNT** (Referências → Citações e Bibliografia): Gerenciar Fontes
@@ -285,7 +287,8 @@ Primeira versão pública da NovaOffice: o app desktop com o editor Nova Text e 
 - Instaladores para Windows (`.exe` e `.msi`), macOS (`.dmg`, Intel e Apple Silicon) e Linux
   (`.AppImage`, `.deb` e `.rpm`), e o CLI para Windows, macOS e Linux (x86_64 e ARM64).
 
-[Não lançado]: https://github.com/Acnaell/novaoffice/compare/v0.1.14...HEAD
+[Não lançado]: https://github.com/Acnaell/novaoffice/compare/v0.1.15...HEAD
+[0.1.15]: https://github.com/Acnaell/novaoffice/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/Acnaell/novaoffice/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/Acnaell/novaoffice/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/Acnaell/novaoffice/compare/v0.1.11...v0.1.12
