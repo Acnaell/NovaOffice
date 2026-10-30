@@ -61,11 +61,13 @@ import { ReferencesTab } from "./ReferencesTab";
 import { insertFootnote, newFootnoteId, nextFootnote } from "./footnotes";
 import { addComment, commentAt, commentTarget, deleteAllComments, deleteComment, initialsOf, newCommentId, nextComment, nowIso, type Pending } from "./comments";
 import { findToc, insertToc, removeToc, screenPages, updateToc } from "./toc";
+import { citedSources, findBibliography, insertBibliography, insertCitation, newSourceId, removeBibliography, updateBibliography } from "./citations";
+import { CitationDialog, SourcesDialog } from "./citations.tsx";
 import { SpellingPane } from "./SpellingPane";
 import { AutoCorrectDialog } from "./AutoCorrectDialog";
 import { WordCountDialog } from "./WordCountDialog";
 import { autoCorrect, loadAutoCorrect, storeAutoCorrect, type AutoCorrectOptions } from "./autocorrect";
-import type { Comment, Pos } from "./types";
+import type { Comment, Pos, Source } from "./types";
 import { SpellMenu } from "./SpellMenu";
 import { load, store } from "./storage";
 import { matchShortcut, profileFor } from "./shortcuts";
@@ -752,6 +754,9 @@ export default function App() {
   const [autoCorrectOptions, setAutoCorrectOptions] = useState<AutoCorrectOptions>(loadAutoCorrect);
   const [autoCorrectOpen, setAutoCorrectOpen] = useState(false);
   const [wordCountOpen, setWordCountOpen] = useState(false);
+  // Referências → Inserir Citação e Gerenciar Fontes.
+  const [citationOpen, setCitationOpen] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   // Uma tecla digitada chega como um text.insert de um caractere (sozinho ou
   // depois de apagar a seleção). A correção vai num comando próprio: Ctrl+Z
@@ -1375,6 +1380,10 @@ export default function App() {
   const hasToc = findToc(view.blocks) !== null;
   const tocPages = () => screenPages(document.querySelector<HTMLElement>(".page"));
   const tocLabels = { title: t("toc.title"), empty: t("toc.empty") };
+  // Bibliografia: título e aviso no idioma da interface.
+  const hasBibliography = findBibliography(view.blocks) !== null;
+  const bibLabels = { title: t("bib.title"), empty: t("bib.empty") };
+  const saveSource = (id: string, value: Source | null) => runCommand({ type: "source.set", id, value });
 
   return (
     <div className={`app${painter ? " painting" : ""}${focusMode ? " focus-mode" : ""}`}>
@@ -1532,6 +1541,12 @@ export default function App() {
             onInsertToc={() => run((doc, sel) => insertToc(doc, sel, tocPages(), tocLabels))}
             onUpdateToc={() => run((doc, sel) => updateToc(doc, sel, tocPages(), tocLabels))}
             onRemoveToc={() => run((doc, sel) => removeToc(doc, sel))}
+            hasBibliography={hasBibliography}
+            onInsertCitation={() => setCitationOpen(true)}
+            onManageSources={() => setSourcesOpen(true)}
+            onInsertBibliography={() => run((doc, sel) => insertBibliography(doc, sel, bibLabels))}
+            onUpdateBibliography={() => run((doc, sel) => updateBibliography(doc, sel, bibLabels))}
+            onRemoveBibliography={() => run((doc, sel) => removeBibliography(doc, sel))}
             onCommand={onCommand}
             profile={profile}
           />
@@ -1604,6 +1619,35 @@ export default function App() {
             }}
           />
         </div>
+        {citationOpen && (
+          <CitationDialog
+            sources={view.sources}
+            newId={newSourceId}
+            onSave={saveSource}
+            onInsert={(id, page) => {
+              setCitationOpen(false);
+              focusEditor();
+              run((_doc, sel) => insertCitation(sel, id, page));
+            }}
+            onClose={() => {
+              setCitationOpen(false);
+              focusEditor();
+            }}
+          />
+        )}
+        {sourcesOpen && (
+          <SourcesDialog
+            sources={view.sources}
+            cited={citedSources(view.blocks)}
+            newId={newSourceId}
+            onSave={saveSource}
+            onDelete={(id) => saveSource(id, null)}
+            onClose={() => {
+              setSourcesOpen(false);
+              focusEditor();
+            }}
+          />
+        )}
         {wordCountOpen && (
           <WordCountDialog
             view={view}

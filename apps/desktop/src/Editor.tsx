@@ -12,6 +12,7 @@ import { autoLink, autoList, changeIndent, isDark, linkOf, listMarkers } from ".
 import { moveToCell, tableGrid } from "./tables";
 import { paginate, unpaginate, type PageInfo } from "./paginate";
 import { screenPages, tocTargets } from "./toc";
+import { citationOf, citationText } from "./citations";
 import { commentOf, CommentsPane, usePendingHighlight, type CommentsPaneProps } from "./comments";
 import { footnoteOf, footnoteOrder, FootnotesLayer, FootnotesPrint, NOTE_SEPARATOR, noteHeight, notesByPage, type PageNotes } from "./footnotes";
 import { HeaderFooterLayer, splitFields, type Part } from "./headerfooter";
@@ -143,6 +144,14 @@ export function Editor(props: Props) {
   repaginate.current = () => {
     const root = rootRef.current;
     if (!root) return;
+    // Citações: o texto de cada chamada, "(SILVA, 2026)", no tamanho da letra em volta.
+    const sources = latest.current.view.sources ?? {};
+    root.querySelectorAll<HTMLElement>(".cite-ref").forEach((el) => {
+      const text = citationText(sources[el.dataset.cite ?? ""], el.dataset.page);
+      if (el.dataset.text !== text) el.dataset.text = text;
+      const size = el.style.fontSize || (el.parentElement ? getComputedStyle(el.parentElement).fontSize : "");
+      if (size && el.style.getPropertyValue("--cite-size") !== size) el.style.setProperty("--cite-size", size);
+    });
     // Notas de rodapé: número de cada chamada antes de medir (o número ocupa espaço na linha).
     const order = footnoteOrder(latest.current.view.blocks);
     const refs = root.querySelectorAll<HTMLElement>(".fn-ref");
@@ -782,7 +791,7 @@ const Block = memo(function Block({
     <Tag
       data-block={index}
       data-marker={marker ?? undefined}
-      className={`block block-${block.style}${marker ? ` list list-${block.attrs.list}` : ""}${block.attrs.pageBreakBefore ? " page-break" : ""}${tocClass(block)}`}
+      className={`block block-${block.style}${marker ? ` list list-${block.attrs.list}` : ""}${block.attrs.pageBreakBefore ? " page-break" : ""}${tocClass(block)}${block.attrs.bibliography ? ` bib-${block.attrs.bibliography}` : ""}`}
       data-page-break={block.attrs.pageBreakBefore ? labels.pageBreak : undefined}
       style={paragraphStyle(block.attrs)}
     >
@@ -796,7 +805,9 @@ const Block = memo(function Block({
             style={spanStyle(span.marks)}
             data-fn={footnoteOf(span.marks) ?? undefined}
             data-cm={commentOf(span.marks) ?? undefined}
-            className={[footnoteOf(span.marks) ? "fn-ref" : linkOf(span.marks) ? "link" : "", commentOf(span.marks) ? "cm" : ""].join(" ").trim() || undefined}
+            data-cite={citationOf(span.marks)?.id}
+            data-page={citationOf(span.marks)?.page}
+            className={[footnoteOf(span.marks) ? "fn-ref" : citationOf(span.marks) ? "cite-ref" : linkOf(span.marks) ? "link" : "", commentOf(span.marks) ? "cm" : ""].join(" ").trim() || undefined}
             data-href={linkOf(span.marks) ?? undefined}
             title={linkOf(span.marks) ? `${linkOf(span.marks)}\n${labels.followLink}` : undefined}
           >

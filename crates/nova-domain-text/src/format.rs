@@ -3,6 +3,7 @@
 use nova_crdt::{AttrValue, Span as CrdtSpan};
 use serde::{Deserialize, Serialize};
 
+use crate::citations::BibPart;
 use crate::DomainError;
 
 /// Formatação de caractere. Valores seguem as unidades do OOXML onde há
@@ -45,6 +46,13 @@ pub enum Mark {
     /// Trecho comentado; o comentário fica nas configurações do documento (`cm:<id>`).
     Comment {
         id: String,
+    },
+    /// Chamada de citação: vai no caractere `CITATION_CHAR`; a fonte fica nas
+    /// configurações do documento (`src:<id>`) e `page` é a página citada.
+    Citation {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        page: Option<String>,
     },
 }
 
@@ -103,6 +111,7 @@ pub enum MarkKind {
     Link,
     Footnote,
     Comment,
+    Citation,
 }
 
 impl MarkKind {
@@ -121,6 +130,7 @@ impl MarkKind {
             MarkKind::Link => "link",
             MarkKind::Footnote => "footnote",
             MarkKind::Comment => "comment",
+            MarkKind::Citation => "citation",
         }
     }
 }
@@ -140,6 +150,7 @@ impl Mark {
             Mark::Link { .. } => MarkKind::Link,
             Mark::Footnote { .. } => MarkKind::Footnote,
             Mark::Comment { .. } => MarkKind::Comment,
+            Mark::Citation { .. } => MarkKind::Citation,
         }
     }
 
@@ -152,6 +163,11 @@ impl Mark {
             | Mark::VertAlign { value } => AttrValue::Text(value.clone()),
             Mark::Link { href } => AttrValue::Text(href.clone()),
             Mark::Footnote { id } | Mark::Comment { id } => AttrValue::Text(id.clone()),
+            // No CRDT: `id` ou `id:página` (o id não tem `:`).
+            Mark::Citation { id, page } => AttrValue::Text(match page {
+                Some(p) => format!("{id}:{p}"),
+                None => id.clone(),
+            }),
             Mark::FontSize { half_points } => AttrValue::Number(f64::from(*half_points)),
         }
     }
@@ -183,6 +199,14 @@ impl Mark {
             Mark::Footnote { id } | Mark::Comment { id } if !is_note_id(id) => Err(
                 DomainError::InvalidMark(format!("nota {id:?}: id de 1 a 32 letras ou dígitos")),
             ),
+            Mark::Citation { id, .. } if !is_note_id(id) => Err(DomainError::InvalidMark(format!(
+                "citação {id:?}: id de 1 a 32 letras ou dígitos"
+            ))),
+            Mark::Citation {
+                page: Some(page), ..
+            } if !crate::citations::is_citation_page(page) => Err(DomainError::InvalidMark(
+                format!("página {page:?}: de 1 a 32 caracteres numa linha"),
+            )),
             _ => Ok(()),
         }
     }
@@ -210,6 +234,17 @@ impl Mark {
             }
             ("comment", AttrValue::Text(v)) if is_note_id(v) => {
                 Some(Mark::Comment { id: v.clone() })
+            }
+            ("citation", AttrValue::Text(v)) => {
+                let (id, page) = match v.split_once(':') {
+                    Some((id, page)) => (id, Some(page.to_string())),
+                    None => (v.as_str(), None),
+                };
+                let mark = Mark::Citation {
+                    id: id.to_string(),
+                    page,
+                };
+                mark.validate().is_ok().then_some(mark)
             }
             _ => None,
         }
@@ -394,6 +429,9 @@ pub struct ParaAttrs {
     /// Parágrafo do Sumário. Os parágrafos seguidos com `toc` formam o sumário.
     #[serde(default)]
     pub toc: Option<TocEntry>,
+    /// Parágrafo da Bibliografia (título ou entrada), gerado a partir das fontes.
+    #[serde(default)]
+    pub bibliography: Option<BibPart>,
 }
 
 /// Níveis de título que entram no Sumário (Título 1 a Título 6).
@@ -525,6 +563,7 @@ pub enum ParaAttr {
     Cell(Option<CellRef>),
     Image(Option<ImageRef>),
     Toc(Option<TocEntry>),
+    Bibliography(Option<BibPart>),
 }
 
 impl ParaAttr {
@@ -574,6 +613,10 @@ impl ParaAttr {
             ParaAttr::Cell(v) => ("cell", v.as_ref().map(|c| AttrValue::Text(c.encode()))),
             ParaAttr::Image(v) => ("image", v.as_ref().map(|i| AttrValue::Text(i.encode()))),
             ParaAttr::Toc(v) => ("toc", v.map(|t| AttrValue::Text(t.encode()))),
+            ParaAttr::Bibliography(v) => (
+                "bibliography",
+                v.map(|b| AttrValue::Text(b.as_str().into())),
+            ),
         };
         (key.to_string(), value)
     }
@@ -611,6 +654,10 @@ impl ParaAttrs {
             },
             toc: match map.get("toc") {
                 Some(AttrValue::Text(v)) => TocEntry::decode(v),
+                _ => None,
+            },
+            bibliography: match map.get("bibliography") {
+                Some(AttrValue::Text(v)) => BibPart::parse(v),
                 _ => None,
             },
             shading: match map.get("shading") {

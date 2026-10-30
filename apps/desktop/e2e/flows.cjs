@@ -1346,6 +1346,106 @@ const flows = [
     return ok ? OK('Campo TOC do Word (estilos Sumário 1…) e índice do LibreOffice (text:table-of-content); validado no LibreOffice.') : FALHA(`${out} toc=${/TOC/.test(xml)}`);
   } },
 
+  { area: 'Referências', name: 'Gerenciar Fontes e Inserir Citação (SILVA, 2026, p. 12)', run: async (h) => {
+    await h.reset(['Como afirma o autor.']);
+    await h.p.locator('.tab', { hasText: 'Referências' }).click();
+    await h.p.locator('.big-button', { hasText: 'Gerenciar Fontes' }).click(); await h.settle(150);
+    const dialog = h.p.locator('.modal.dialog');
+    await dialog.locator('button', { hasText: /^Nova$/ }).click(); await h.settle(150);
+    await dialog.locator('select[name=kind]').selectOption('book');
+    await dialog.locator('input[name=authors]').fill('Silva, João');
+    await dialog.locator('input[name=title]').fill('Metodologia científica: um guia');
+    await dialog.locator('input[name=year]').fill('2026');
+    await dialog.locator('input[name=place]').fill('São Paulo');
+    await dialog.locator('input[name=publisher]').fill('Atlas');
+    const preview = await dialog.locator('.source-preview').innerText();
+    const bold = await dialog.locator('.source-preview strong').innerText();
+    await dialog.locator('button', { hasText: /^OK$/ }).click(); await h.settle(200);
+    const listed = await dialog.locator('.sources-list li[data-source]').count();
+    await dialog.locator('button', { hasText: 'Fechar' }).click(); await h.settle(150);
+    // Inserir Citação no fim da frase, antes do ponto, com a página.
+    await h.select(0, 19);
+    await h.p.locator('.big-button', { hasText: 'Inserir Citação' }).click(); await h.settle(150);
+    await h.p.locator('.modal.dialog input[name=page]').fill('12');
+    await h.p.locator('.modal.dialog button', { hasText: /^Inserir$/ }).click(); await h.settle(300);
+    const shown = await h.p.evaluate(() => document.querySelector('.cite-ref')?.dataset.text);
+    const d = await h.doc();
+    const mark = d.blocks[0].spans.flatMap((s) => s.marks).find((m) => m.mark === 'citation');
+    const source = Object.values(d.sources || {})[0];
+    // Digitar depois da chamada não estende a citação; desfazer tira a chamada.
+    await h.type(' fim'); await h.settle(150);
+    const calls = (await h.doc()).blocks[0].spans.filter((s) => s.marks.some((m) => m.mark === 'citation')).map((s) => s.text.length);
+    await h.p.keyboard.press('Control+z'); await h.settle(150);
+    await h.p.keyboard.press('Control+z'); await h.settle(200);
+    const undone = (await h.doc()).blocks[0].spans.some((s) => s.marks.some((m) => m.mark === 'citation'));
+    const ok = listed === 1 && bold === 'Metodologia científica' && preview.startsWith('SILVA, João. Metodologia científica: um guia. São Paulo: Atlas, 2026.')
+      && shown === '(SILVA, 2026, p. 12)' && mark?.page === '12' && source?.authors?.[0]?.last === 'Silva' && calls.join() === '1' && !undone;
+    return ok ? OK('Fonte criada em Gerenciar Fontes (prévia da referência ABNT com o título em negrito); a chamada aparece como (SILVA, 2026, p. 12), só no caractere dela, e sai com Ctrl+Z.')
+      : FALHA(JSON.stringify({ listed, bold, preview, shown, mark, source, calls, undone }));
+  } },
+  { area: 'Referências', name: 'Bibliografia (REFERÊNCIAS) na ABNT: inserir, atualizar e remover', run: async (h) => {
+    await h.reset(['Texto do trabalho.']);
+    await core('dispatch', { command: { type: 'batch', commands: [
+      { type: 'source.set', id: 's1', value: { kind: 'book', authors: [{ last: 'Silva', first: 'João' }], title: 'Metodologia', year: '2026', place: 'São Paulo', publisher: 'Atlas' } },
+      { type: 'source.set', id: 's2', value: { kind: 'article', authors: [{ last: 'Almeida', first: 'Rui' }], title: 'Leitura digital', journal: 'Revista de Educação', volume: '29', issue: '2', pages: '15-30', year: '2024' } },
+    ] } });
+    await h.reload();
+    await h.select(0, 18);
+    await h.p.locator('.tab', { hasText: 'Referências' }).click();
+    const openMenu = async (item) => {
+      await h.p.locator('.big-button', { hasText: /^Bibliografia$/ }).click();
+      await h.p.locator('.popover .menu-item', { hasText: item }).click(); await h.settle(300);
+    };
+    await openMenu('Inserir Bibliografia');
+    const read = () => h.p.evaluate(() => ({
+      title: document.querySelector('.bib-title')?.textContent,
+      centered: document.querySelector('.bib-title') && getComputedStyle(document.querySelector('.bib-title')).textAlign,
+      entries: [...document.querySelectorAll('.bib-entry')].map((e) => e.textContent),
+      bold: [...document.querySelectorAll('.bib-entry span')].filter((s) => Number(getComputedStyle(s).fontWeight) >= 600).map((s) => s.textContent),
+    }));
+    const first = await read();
+    await core('dispatch', { command: { type: 'source.set', id: 's3', value: { kind: 'web', authors: [{ last: 'Instituto Brasileiro de Geografia e Estatística', first: '' }], title: 'Censo 2022', year: '2023', url: 'https://www.ibge.gov.br', accessed: '2026-10-30' } } });
+    await h.reload();
+    await h.p.locator('.tab', { hasText: 'Referências' }).click();
+    await openMenu('Atualizar Bibliografia');
+    const updated = await read();
+    await openMenu('Remover Bibliografia');
+    const removed = await read();
+    const ok = first.title === 'REFERÊNCIAS' && first.centered === 'center'
+      && first.entries.join('|') === 'ALMEIDA, Rui. Leitura digital. Revista de Educação, v. 29, n. 2, p. 15-30, 2024.|SILVA, João. Metodologia. São Paulo: Atlas, 2026.'
+      && first.bold.join('|') === 'Revista de Educação|Metodologia'
+      && updated.entries.length === 3 && updated.entries[1] === 'INSTITUTO BRASILEIRO DE GEOGRAFIA E ESTATÍSTICA. Censo 2022. 2023. Disponível em: https://www.ibge.gov.br. Acesso em: 30 out. 2026.'
+      && !removed.title && removed.entries.length === 0;
+    return ok ? OK('Título REFERÊNCIAS centralizado; entradas da NBR 6023 em ordem alfabética, com o destaque em negrito; Atualizar inclui fontes novas.')
+      : FALHA(JSON.stringify({ first, updated, removed }));
+  } },
+  { area: 'Referências', name: 'Citações e bibliografia salvas no .docx e no .odt', run: async () => {
+    await core('new_document');
+    await core('dispatch', { command: { type: 'batch', commands: [
+      { type: 'source.set', id: 'sil26', value: { kind: 'book', authors: [{ last: 'Silva', first: 'João' }], title: 'Metodologia', year: '2026', place: 'São Paulo', publisher: 'Atlas' } },
+      { type: 'text.insert', block: 0, offset: 0, text: 'Segundo o autor ' },
+      { type: 'text.insert', block: 0, offset: 16, text: '', marks: [{ mark: 'citation', id: 'sil26', page: '12' }] },
+      { type: 'block.insert', index: 1, text: 'REFERÊNCIAS', style: 'heading1' },
+      { type: 'block.setAttr', block: 1, attr: 'bibliography', value: 'title' },
+      { type: 'block.insert', index: 2, text: 'SILVA, João. Metodologia. São Paulo: Atlas, 2026.' },
+      { type: 'block.setAttr', block: 2, attr: 'bibliography', value: 'entry' },
+    ] } });
+    const out = [];
+    for (const ext of ['docx', 'odt']) {
+      await core('save_document', { path: `/tmp/nova-flows/citacoes.${ext}` });
+      await core('new_document');
+      const back = await core('open_document', { path: `/tmp/nova-flows/citacoes.${ext}` });
+      const mark = back.blocks[0].spans.flatMap((s) => s.marks).find((m) => m.mark === 'citation');
+      const src = mark && back.sources?.[mark.id];
+      out.push(`${src?.authors?.[0]?.last}:${src?.year}:${mark?.page}:${back.blocks.slice(1, 3).map((b) => b.attrs.bibliography).join(',')}`);
+    }
+    const files = zipList('/tmp/nova-flows/citacoes.docx').join(' ');
+    const xml = zipRead('/tmp/nova-flows/citacoes.docx', 'word/document.xml');
+    const ok = out.every((o) => o === 'Silva:2026:12:title,entry') && /customXml\/item1\.xml/.test(files) && /CITATION sil26/.test(xml) && /BIBLIOGRAPHY/.test(xml);
+    return ok ? OK('Fontes em customXml (b:Sources), campos CITATION e BIBLIOGRAPHY do Word; text:bibliography-mark e text:bibliography do .odt; validado no LibreOffice.')
+      : FALHA(`${JSON.stringify(out)} ${files}`);
+  } },
+
   // ───────────── Exibição
   { area: 'Exibição', name: 'Página com tamanho A4 e margens; várias páginas', run: async (h) => {
     const many = Array.from({ length: 120 }, (_, i) => `Parágrafo ${i + 1} com algum texto para ocupar espaço na página.`);

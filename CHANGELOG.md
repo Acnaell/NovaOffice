@@ -8,6 +8,16 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Citações e Bibliografia na ABNT** (Referências → Citações e Bibliografia): Gerenciar Fontes
+  cadastra livros, artigos, sites e teses (autor, título, ano, editora, local, URL, data de acesso),
+  com a prévia da referência. Inserir Citação põe a chamada autor-data, como (SILVA, 2026) ou
+  (SILVA, 2026, p. 12), que acompanha as mudanças na fonte. Bibliografia insere, atualiza e remove a
+  lista "REFERÊNCIAS" da NBR 6023 (ordem alfabética, sobrenome em maiúsculas, título em negrito).
+  Lidas e gravadas em .docx (fontes em `customXml`, campos CITATION e BIBLIOGRAPHY) e .odt
+  (`text:bibliography-mark` e `text:bibliography`), validadas no LibreOffice.
+
 ## [0.1.14] - 2026-10-30
 
 ### Adicionado
