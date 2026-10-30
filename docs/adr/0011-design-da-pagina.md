@@ -53,6 +53,10 @@ voltar no .docx e no .odt sem perder nada no Word nem no LibreOffice.
      o resto vai para `fo:padding`, para a área de texto não mudar. Marca d'água como o LibreOffice
      grava: `draw:custom-shape` fontwork no cabeçalho do estilo de página, com estilo gráfico de
      cor e opacidade.
+   - Com cabeçalho ou rodapé, o .odt grava como o LibreOffice grava um .docx: a margem do estilo
+     de página vai até o cabeçalho (708 twips, a distância do `w:pgMar w:header` do .docx) e o
+     cabeçalho ocupa o resto da margem do Nova (`fo:min-height`, com `style:dynamic-spacing`). O
+     texto começa na margem do Nova e a conversão para .docx devolve a mesma margem.
    - Ao abrir, valem também o que o LibreOffice grava: `v:fill` depois do texto, cor por nome
      (`red`, `silver`), `default-page-layout` antes da página e cabeçalho dentro da margem
      (`fo:min-height` somado à margem).

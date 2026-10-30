@@ -449,6 +449,63 @@ segunda linha",
         }
     }
 
+    /// Margens com cabeçalho e rodapé: o .odt grava a margem até o cabeçalho e o
+    /// cabeçalho no resto, como o LibreOffice grava um .docx; o texto começa na
+    /// margem do Nova (validado no LibreOffice: convertido para .docx, volta com
+    /// `w:top="1417" w:header="708"`, e não mais 1856).
+    #[test]
+    fn margem_com_cabecalho_vai_e_volta() {
+        use nova_domain_text::{HeaderFooter, HeadersFooters, PageSetup, TextCommand};
+        let line = |text: &str| HeaderFooter {
+            text: text.into(),
+            ..HeaderFooter::default()
+        };
+        // Margem padrão; margem pequena embaixo (o rodapé fica na metade dela); só cabeçalho.
+        for (top, bottom, footer) in [
+            (1417, 1417, "Rodapé {PAGE}"),
+            (2000, 600, "Rodapé"),
+            (1417, 1417, ""),
+        ] {
+            let mut doc = TextDocument::from_plain_text(1, "corpo");
+            let page = PageSetup {
+                margin_top: top,
+                margin_bottom: bottom,
+                ..PageSetup::default()
+            };
+            let hf = HeadersFooters {
+                header: line("Relatório {PAGE}"),
+                footer: line(footer),
+                ..HeadersFooters::default()
+            };
+            doc.execute(TextCommand::Batch {
+                commands: vec![
+                    TextCommand::SetPage { page: page.clone() },
+                    TextCommand::SetHeaderFooter { value: hf.clone() },
+                ],
+            })
+            .unwrap();
+            let bytes = save(&doc, Format::Odt, "t");
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+            let mut styles = String::new();
+            std::io::Read::read_to_string(&mut zip.by_name("styles.xml").unwrap(), &mut styles)
+                .unwrap();
+            // A margem do estilo de página vai até o cabeçalho (1,249 cm = 708 twips).
+            assert!(styles.contains(r#"fo:margin-top="1.249cm""#), "{styles}");
+            assert!(
+                styles.contains(r#"style:dynamic-spacing="true""#),
+                "{styles}"
+            );
+            let back = open(2, Path::new("x.odt"), &bytes).unwrap();
+            let got = back.page_setup();
+            assert!(
+                got.margin_top.abs_diff(top) <= 2 && got.margin_bottom.abs_diff(bottom) <= 2,
+                "{top} {bottom}: {got:?}"
+            );
+            assert_eq!(back.header_footer(), hf);
+            assert_eq!(back.to_plain_text(), "corpo");
+        }
+    }
+
     #[test]
     fn design_no_xml_como_o_word_e_o_libreoffice_gravam() {
         use nova_domain_text::{BorderStyle, PageBorder, PageSetup, TextCommand, Watermark};

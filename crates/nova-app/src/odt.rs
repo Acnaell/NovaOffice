@@ -83,6 +83,11 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
 
 /// Estilos fixos mais a página (papel, margens, cor e borda), o cabeçalho e o
 /// rodapé e a marca d'água do documento.
+/// Distância do cabeçalho e do rodapé à beira do papel (twips), a mesma do .docx.
+const HEADER_FOOTER_DISTANCE: u32 = 708;
+/// Parte da altura do cabeçalho que não é espaçamento (0,1 cm, como o LibreOffice).
+const HEADER_FOOTER_LINE: u32 = 57;
+
 fn styles_xml(
     page: &nova_domain_text::PageSetup,
     hf: &nova_domain_text::HeadersFooters,
@@ -104,6 +109,8 @@ fn styles_xml(
     let mut styles = String::new();
     let mut master = String::new();
     let mut layout_extra = String::new();
+    // Margens gravadas no estilo de página (sem o cabeçalho e o rodapé).
+    let mut outer_page = page.clone();
     // A marca d'água fica no cabeçalho (também no da primeira página), atrás do texto.
     let mut shape = String::new();
     if let Some(w) = watermark {
@@ -119,13 +126,21 @@ fn styles_xml(
             r#"<style:style style:name="{name}" style:family="paragraph"><style:paragraph-properties fo:text-align="{}"/></style:style>"#,
             align(value.align)
         ));
-        let margin = if tag == "header" {
-            "fo:margin-bottom"
+        // Como o LibreOffice grava um .docx: a margem do estilo de página vai até o
+        // cabeçalho (a distância do Word) e o cabeçalho ocupa o resto da margem do
+        // Nova, com o espaçamento dinâmico. Assim o texto começa onde começa no Nova.
+        let (margin, outer) = if tag == "header" {
+            ("fo:margin-bottom", &mut outer_page.margin_top)
         } else {
-            "fo:margin-top"
+            ("fo:margin-top", &mut outer_page.margin_bottom)
         };
+        let distance = HEADER_FOOTER_DISTANCE.min(*outer / 2);
+        let height = *outer - distance;
+        *outer = distance;
         layout_extra.push_str(&format!(
-            r#"<style:{tag}-style><style:header-footer-properties fo:min-height="0cm" {margin}="0.3cm"/></style:{tag}-style>"#
+            r#"<style:{tag}-style><style:header-footer-properties fo:min-height="{}" {margin}="{}" style:dynamic-spacing="true"/></style:{tag}-style>"#,
+            cm(height),
+            cm(height.saturating_sub(HEADER_FOOTER_LINE))
         ));
         let mut body = shape.to_string();
         let mut rest = value.text.as_str();
@@ -179,7 +194,7 @@ fn styles_xml(
         ));
     }
     // Cor e borda (aba Design); com borda, parte da margem vira enchimento.
-    let (design_props, margins) = design::odt_page_props(page);
+    let (design_props, margins) = design::odt_page_props(&outer_page);
     let layout = format!(
         r#"<office:automatic-styles>{styles}<style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="{}" fo:page-height="{}" style:print-orientation="{orientation}" fo:margin-top="{}" fo:margin-bottom="{}" fo:margin-left="{}" fo:margin-right="{}"{design_props}/>{layout_extra}</style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1">{master}</style:master-page></office:master-styles></office:document-styles>"#,
         cm(page.width),
@@ -1717,6 +1732,35 @@ mod tests {
             (border.style, border.color.as_str(), border.width),
             (nova_domain_text::BorderStyle::Shadow, "#2F5496", 12)
         );
+    }
+
+    /// Com cabeçalho e rodapé, a margem do estilo de página vai até eles (como o
+    /// LibreOffice grava um .docx) e o texto começa na margem do Nova: antes o
+    /// LibreOffice punha o cabeçalho dentro da margem e descia o texto.
+    #[test]
+    fn cabecalho_dentro_da_margem() {
+        let page = nova_domain_text::PageSetup::default();
+        let line = nova_domain_text::HeaderFooter {
+            text: "Relatório {PAGE}".into(),
+            ..Default::default()
+        };
+        let hf = nova_domain_text::HeadersFooters {
+            header: line.clone(),
+            footer: line,
+            ..Default::default()
+        };
+        let xml = styles_xml(&page, &hf, None);
+        assert!(xml.contains(r#"fo:margin-top="1.249cm" fo:margin-bottom="1.249cm""#));
+        assert!(xml.contains(r#"<style:header-style><style:header-footer-properties fo:min-height="1.251cm" fo:margin-bottom="1.150cm" style:dynamic-spacing="true"/>"#));
+        assert!(xml.contains(r#"<style:footer-style><style:header-footer-properties fo:min-height="1.251cm" fo:margin-top="1.150cm" style:dynamic-spacing="true"/>"#));
+        let back = read_page(&xml).unwrap();
+        assert_eq!(
+            (back.margin_top, back.margin_bottom),
+            (page.margin_top, page.margin_bottom)
+        );
+        // Sem cabeçalho nem rodapé, a margem é a do Nova.
+        let xml = styles_xml(&page, &Default::default(), None);
+        assert!(xml.contains(r#"fo:margin-top="2.499cm" fo:margin-bottom="2.499cm""#));
     }
 
     fn sample() -> TextDocument {

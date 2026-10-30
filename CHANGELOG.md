@@ -8,6 +8,11 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Corrigido
+
+- No .odt com cabeçalho ou rodapé, o texto começa na margem certa no LibreOffice (antes o cabeçalho
+  ficava dentro da margem e empurrava o texto para baixo, e a margem crescia ao converter para .docx).
+
 ## [0.1.12] - 2026-10-30
 
 ### Adicionado
