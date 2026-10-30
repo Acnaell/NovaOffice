@@ -544,6 +544,7 @@ fn alinhamento_recuo_espacamento_e_lista() {
             cell: None,
             image: None,
             toc: None,
+            bibliography: None,
         }
     );
     assert_eq!(doc.block_attrs(1).unwrap(), ParaAttrs::default());
@@ -1176,4 +1177,153 @@ fn comentario_no_texto_e_nas_configuracoes() {
     doc.execute(TextCommand::Undo).unwrap();
     assert_eq!(doc.comments().len(), 2);
     assert_eq!(Comment::initials_of("ana maria souza lima"), "AMS");
+}
+
+#[test]
+fn fonte_e_citacao_no_texto() {
+    use crate::{citation_text, Person, Source, SourceKind, CITATION_CHAR};
+    let livro = Source {
+        kind: SourceKind::Book,
+        authors: vec![Person {
+            last: "Silva".into(),
+            first: "João".into(),
+        }],
+        title: "Metodologia científica: um guia".into(),
+        year: "2026".into(),
+        publisher: "Atlas".into(),
+        place: "São Paulo".into(),
+        ..Default::default()
+    };
+    let mut doc = TextDocument::from_plain_text(1, "Segundo o autor.");
+    let cite = |page: Option<&str>| Mark::Citation {
+        id: "s1".into(),
+        page: page.map(Into::into),
+    };
+    doc.execute(TextCommand::Batch {
+        commands: vec![
+            TextCommand::SetSource {
+                id: "s1".into(),
+                value: Some(Box::new(livro.clone())),
+            },
+            TextCommand::InsertText {
+                block: 0,
+                offset: 15,
+                text: format!(" {CITATION_CHAR}"),
+                marks: Some(vec![cite(Some("12"))]),
+            },
+        ],
+    })
+    .unwrap();
+    // A marca só fica no caractere da chamada inteiro: " X" com espaço perde a marca.
+    assert!(doc.citations().is_empty());
+    doc.execute(TextCommand::InsertText {
+        block: 0,
+        offset: 16,
+        text: CITATION_CHAR.to_string(),
+        marks: Some(vec![cite(Some("12"))]),
+    })
+    .unwrap();
+    assert_eq!(
+        doc.citations(),
+        [("s1".to_string(), Some("12".to_string()))]
+    );
+    // Digitar logo depois da chamada não vira citação.
+    doc.execute(insert(0, 17, "x")).unwrap();
+    assert_eq!(doc.citations().len(), 1);
+    assert_eq!(doc.sources()["s1"], livro);
+    let s = doc.sources();
+    assert_eq!(
+        citation_text(s.get("s1"), Some("12")),
+        "(SILVA, 2026, p. 12)"
+    );
+    assert_eq!(citation_text(None, None), "(?)");
+    // Vários autores, et al. e sem autor.
+    let p = |l: &str| Person {
+        last: l.into(),
+        first: String::new(),
+    };
+    let dois = Source {
+        authors: vec![p("Silva"), p("Souza")],
+        ..livro.clone()
+    };
+    assert_eq!(citation_text(Some(&dois), None), "(SILVA; SOUZA, 2026)");
+    let quatro = Source {
+        authors: vec![p("Lima"), p("b"), p("c"), p("d")],
+        year: String::new(),
+        ..livro.clone()
+    };
+    assert_eq!(citation_text(Some(&quatro), None), "(LIMA et al., [s. d.])");
+    let anonimo = Source {
+        authors: vec![],
+        ..livro.clone()
+    };
+    assert_eq!(
+        citation_text(Some(&anonimo), None),
+        "(METODOLOGIA..., 2026)"
+    );
+    // Inválidas: sem título nem autor, data de acesso fora do ISO, página com quebra.
+    for bad in [
+        Source::default(),
+        Source {
+            accessed: "30/10/2026".into(),
+            ..livro.clone()
+        },
+    ] {
+        assert!(doc
+            .execute(TextCommand::SetSource {
+                id: "z".into(),
+                value: Some(Box::new(bad))
+            })
+            .is_err());
+    }
+    assert!(doc
+        .execute(TextCommand::ApplyMark {
+            block: 0,
+            offset: 0,
+            len: 1,
+            mark: Mark::Citation {
+                id: "s1".into(),
+                page: Some("a\nb".into()),
+            },
+        })
+        .is_err());
+    // Apagar e desfazer.
+    doc.execute(TextCommand::SetSource {
+        id: "s1".into(),
+        value: None,
+    })
+    .unwrap();
+    assert!(doc.sources().is_empty());
+    doc.execute(TextCommand::Undo).unwrap();
+    assert_eq!(doc.sources().len(), 1);
+    // A fonte vai e volta pelo estado (coedição, .nova).
+    let back = TextDocument::load(2, &doc.save()).unwrap();
+    assert_eq!(back.sources(), doc.sources());
+    assert_eq!(back.citations(), doc.citations());
+}
+
+#[test]
+fn paragrafo_da_bibliografia() {
+    use crate::BibPart;
+    let mut doc = TextDocument::from_plain_text(1, "REFERÊNCIAS\nSILVA, João.");
+    doc.execute(TextCommand::SetBlockAttr {
+        block: 1,
+        attr: ParaAttr::Bibliography(Some(BibPart::Entry)),
+    })
+    .unwrap();
+    assert_eq!(
+        doc.block_attrs(1).unwrap().bibliography,
+        Some(BibPart::Entry)
+    );
+    let json = serde_json::to_string(&TextCommand::SetBlockAttr {
+        block: 0,
+        attr: ParaAttr::Bibliography(Some(BibPart::Title)),
+    })
+    .unwrap();
+    assert_eq!(
+        json,
+        r#"{"type":"block.setAttr","block":0,"attr":"bibliography","value":"title"}"#
+    );
+    let back = TextDocument::from_paragraphs(2, &doc.paragraphs()).unwrap();
+    assert_eq!(back.paragraphs(), doc.paragraphs());
 }

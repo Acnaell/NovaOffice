@@ -112,7 +112,12 @@ pub fn save(doc: &TextDocument, format: Format, title: &str) -> Vec<u8> {
         Format::Markdown => markdown::export(doc).into_bytes(),
         Format::Text => {
             let notes = notes::collect(doc);
-            let mut text = notes::replace_calls(&doc.to_plain_text(), &notes, |n| format!("[{n}]"));
+            let text = crate::citations::replace(
+                &doc.to_plain_text(),
+                &crate::citations::texts(doc),
+                str::to_string,
+            );
+            let mut text = notes::replace_calls(&text, &notes, |n| format!("[{n}]"));
             if !notes.texts.is_empty() {
                 text.push_str("\n\n");
                 for (i, t) in notes.texts.iter().enumerate() {
@@ -765,5 +770,162 @@ segunda linha",
             assert_eq!(back.to_plain_text(), doc.to_plain_text(), "{format:?}");
             assert!(!back.can_undo(), "{format:?}");
         }
+    }
+    #[test]
+    fn citacoes_e_bibliografia_vao_e_voltam() {
+        use nova_domain_text::{
+            BibPart, BlockStyle, Mark, ParaAttr, Person, Source, SourceKind, TextCommand,
+            CITATION_CHAR,
+        };
+        let mut doc = TextDocument::from_plain_text(
+            1,
+            "Como diz o autor.\nREFERÊNCIAS\nSILVA, João. Metodologia científica. São Paulo: Atlas, 2026.",
+        );
+        let livro = Source {
+            kind: SourceKind::Book,
+            authors: vec![Person {
+                last: "Silva".into(),
+                first: "João".into(),
+            }],
+            title: "Metodologia científica".into(),
+            year: "2026".into(),
+            publisher: "Atlas".into(),
+            place: "São Paulo".into(),
+            edition: "2".into(),
+            ..Default::default()
+        };
+        let site = Source {
+            kind: SourceKind::Web,
+            authors: vec![Person {
+                last: "Instituto Brasileiro de Geografia e Estatística".into(),
+                first: String::new(),
+            }],
+            title: "Censo 2022".into(),
+            year: "2023".into(),
+            url: "https://www.ibge.gov.br/censo".into(),
+            accessed: "2026-10-30".into(),
+            ..Default::default()
+        };
+        let cite = |offset: u32, id: &str, page: Option<&str>| TextCommand::InsertText {
+            block: 0,
+            offset,
+            text: CITATION_CHAR.to_string(),
+            marks: Some(vec![Mark::Citation {
+                id: id.into(),
+                page: page.map(Into::into),
+            }]),
+        };
+        doc.execute(TextCommand::Batch {
+            commands: vec![
+                TextCommand::SetSource {
+                    id: "sil26".into(),
+                    value: Some(Box::new(livro.clone())),
+                },
+                TextCommand::SetSource {
+                    id: "ibge".into(),
+                    value: Some(Box::new(site.clone())),
+                },
+                cite(16, "sil26", Some("12")),
+                TextCommand::InsertText {
+                    block: 0,
+                    offset: 16,
+                    text: " ".into(),
+                    marks: Some(vec![]),
+                },
+                cite(18, "ibge", None),
+                TextCommand::SetBlockStyle {
+                    block: 1,
+                    style: BlockStyle::Heading1,
+                },
+                TextCommand::SetBlockAttr {
+                    block: 1,
+                    attr: ParaAttr::Bibliography(Some(BibPart::Title)),
+                },
+                TextCommand::SetBlockAttr {
+                    block: 2,
+                    attr: ParaAttr::Bibliography(Some(BibPart::Entry)),
+                },
+                TextCommand::ApplyMark {
+                    block: 2,
+                    offset: 13,
+                    len: 22,
+                    mark: Mark::Bold,
+                },
+            ],
+        })
+        .unwrap();
+        let cited = |d: &TextDocument| -> Vec<(Source, Option<String>)> {
+            let s = d.sources();
+            d.citations()
+                .into_iter()
+                .map(|(id, page)| (s[&id].clone(), page))
+                .collect()
+        };
+        let bib = |d: &TextDocument| -> Vec<(String, Option<BibPart>)> {
+            d.paragraphs()
+                .iter()
+                .map(|p| (p.text(), p.attrs.bibliography))
+                .collect()
+        };
+        let want = cited(&doc);
+        assert_eq!(want.len(), 2);
+        for format in [Format::Docx, Format::Odt, Format::Nova] {
+            let bytes = save(&doc, format, "t");
+            let back = open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
+            assert_eq!(cited(&back), want, "{format:?}");
+            assert_eq!(bib(&back), bib(&doc), "{format:?}");
+            assert_eq!(
+                back.paragraphs()[1].style,
+                BlockStyle::Heading1,
+                "{format:?}"
+            );
+            assert!(
+                back.paragraphs()[2]
+                    .spans
+                    .iter()
+                    .any(|s| s.marks.contains(&Mark::Bold)),
+                "{format:?}"
+            );
+            assert!(!back.can_undo(), "{format:?}");
+        }
+        // Fontes sem citação também vão no .docx (Gerenciar Fontes guarda todas).
+        doc.execute(TextCommand::SetSource {
+            id: "solta".into(),
+            value: Some(Box::new(Source {
+                title: "Sem citação".into(),
+                ..Default::default()
+            })),
+        })
+        .unwrap();
+        let back = open(2, Path::new("x.docx"), &save(&doc, Format::Docx, "t")).unwrap();
+        assert_eq!(back.sources().len(), 3);
+        // Nos formatos de texto, a chamada vira o texto dela.
+        let txt = String::from_utf8(save(&doc, Format::Text, "t")).unwrap();
+        assert!(
+            txt.starts_with(
+                "Como diz o autor (SILVA, 2026, p. 12)(INSTITUTO BRASILEIRO DE GEOGRAFIA E ESTATÍSTICA, 2023)."
+            ),
+            "{txt}"
+        );
+        let html = String::from_utf8(save(&doc, Format::Html, "t")).unwrap();
+        assert!(html.contains("(SILVA, 2026, p. 12)"), "{html}");
+        // O .docx tem o que o Word espera: campo CITATION, b:Sources e o campo BIBLIOGRAPHY.
+        let bytes = save(&doc, Format::Docx, "t");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut read = |name: &str| {
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut zip.by_name(name).unwrap(), &mut s).unwrap();
+            s
+        };
+        let document = read("word/document.xml");
+        assert!(
+            document.contains(r#"CITATION sil26 \l 1046 \p &quot;12&quot;"#),
+            "{document}"
+        );
+        assert!(document.contains("BIBLIOGRAPHY"));
+        assert!(document.contains(r#"<w:docPartGallery w:val="Bibliographies"/>"#));
+        let sources = read("customXml/item1.xml");
+        assert!(sources.contains("<b:Tag>sil26</b:Tag>") && sources.contains("<b:Corporate>"));
+        assert!(read("word/_rels/document.xml.rels").contains("../customXml/item1.xml"));
     }
 }

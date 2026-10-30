@@ -12,8 +12,8 @@ use std::io::{Cursor, Read, Write};
 
 use nova_crdt::ClientId;
 use nova_domain_text::{
-    Align, BlockStyle, ListKind, Mark, Paragraph, Span, TextDocument, HIGHLIGHT_COLORS, MAX_INDENT,
-    MAX_TABLE_SIZE,
+    Align, BibPart, BlockStyle, ListKind, Mark, Paragraph, Span, TextDocument, HIGHLIGHT_COLORS,
+    MAX_INDENT, MAX_TABLE_SIZE,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -44,7 +44,8 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
     let watermark = doc.watermark();
     let notes = doc.footnotes();
     let comments = doc.comments();
-    let (body, nums, links) = body_xml(&paragraphs, &images, &page, &notes, &comments);
+    let sources = doc.sources();
+    let (body, nums, links) = body_xml(&paragraphs, &images, &page, &notes, &comments, &sources);
     let media_names: Vec<String> = images
         .iter()
         .enumerate()
@@ -117,6 +118,23 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         ));
         extra_rels.push_str(r#"<Relationship Id="rIdCm" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/><Relationship Id="rIdCmEx" Type="http://schemas.microsoft.com/office/2011/relationships/commentsExtended" Target="commentsExtended.xml"/>"#);
         extra_types.push_str(r#"<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/>"#);
+    }
+    // Fontes bibliográficas: customXml/item1.xml (b:Sources), ligado ao documento.
+    if !sources.is_empty() {
+        extra_files.push((
+            "customXml/item1.xml",
+            crate::citations::docx_sources_xml(&sources),
+        ));
+        extra_files.push((
+            "customXml/itemProps1.xml",
+            crate::citations::DOCX_ITEM_PROPS.to_string(),
+        ));
+        extra_files.push((
+            "customXml/_rels/item1.xml.rels",
+            crate::citations::DOCX_ITEM_RELS.to_string(),
+        ));
+        extra_rels.push_str(r#"<Relationship Id="rIdSources" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" Target="../customXml/item1.xml"/>"#);
+        extra_types.push_str(r#"<Override PartName="/customXml/itemProps1.xml" ContentType="application/vnd.openxmlformats-officedocument.customXmlProperties+xml"/>"#);
     }
     if !notes.is_empty() {
         extra_files.push(("word/footnotes.xml", footnotes_xml(&notes)));
@@ -664,7 +682,14 @@ fn body_xml(
     page: &nova_domain_text::PageSetup,
     notes: &[(String, String)],
     comments: &[(String, nova_domain_text::Comment)],
+    sources: &std::collections::BTreeMap<String, nova_domain_text::Source>,
 ) -> (String, Vec<Num>, Vec<String>) {
+    // Bibliografia: um w:sdt da galeria "Bibliographies" em volta do título e das
+    // entradas, e as entradas dentro de um campo BIBLIOGRAPHY.
+    let is_bib = |p: Option<&Paragraph>| p.is_some_and(|p| p.attrs.bibliography.is_some());
+    let is_entry =
+        |p: Option<&Paragraph>| p.is_some_and(|p| p.attrs.bibliography == Some(BibPart::Entry));
+    let (mut bib_open, mut bib_field_open) = (false, false);
     let comment_ids = crate::comments::DocxIds::new(comments);
     // Comentário aberto (w:commentRangeStart já escrito): pode atravessar parágrafos.
     let mut open_comment: Option<&str> = None;
@@ -688,12 +713,19 @@ fn body_xml(
     let mut toc_open = false;
     for (index, p) in paragraphs.iter().enumerate() {
         table.before(&mut out, p);
+        if is_bib(Some(p)) && !bib_open {
+            out.push_str(BIB_SDT_BEGIN);
+            bib_open = true;
+        }
         out.push_str("<w:p>");
         let mut ppr = String::new();
         let a = &p.attrs;
         match a.toc {
             Some(entry) if entry.level == 0 => ppr.push_str(r#"<w:pStyle w:val="TOCHeading"/>"#),
             Some(entry) => ppr.push_str(&format!(r#"<w:pStyle w:val="TOC{}"/>"#, entry.level)),
+            None if a.bibliography == Some(BibPart::Entry) => {
+                ppr.push_str(r#"<w:pStyle w:val="Bibliography"/>"#)
+            }
             None => {
                 if let Some(id) = style_id(p.style) {
                     ppr.push_str(&format!(r#"<w:pStyle w:val="{id}"/>"#));
@@ -770,6 +802,10 @@ fn body_xml(
             out.push_str(TOC_FIELD_BEGIN);
             toc_open = true;
         }
+        if is_entry(Some(p)) && !bib_field_open {
+            out.push_str(BIB_FIELD_BEGIN);
+            bib_field_open = true;
+        }
         if let Some(image) = &p.attrs.image {
             if let Some(index) = images.iter().position(|(id, ..)| *id == image.id) {
                 drawing_xml(&mut out, image, index);
@@ -825,6 +861,39 @@ fn body_xml(
                 }
                 continue;
             }
+            if let Some((id, page)) = span.marks.iter().find_map(|m| match m {
+                Mark::Citation { id, page } => Some((id, page.as_deref())),
+                _ => None,
+            }) {
+                // Chamada de citação: campo CITATION num w:sdt de citação, como o Word,
+                // com o texto da chamada como resultado (na formatação do trecho).
+                let text = nova_domain_text::citation_text(sources.get(id), page);
+                let shown = Span {
+                    text,
+                    marks: span
+                        .marks
+                        .iter()
+                        .filter(|m| !matches!(m, Mark::Citation { .. }))
+                        .cloned()
+                        .collect(),
+                };
+                let calls = span
+                    .text
+                    .chars()
+                    .filter(|c| *c == nova_domain_text::CITATION_CHAR)
+                    .count();
+                for _ in 0..calls {
+                    out.push_str(&format!(
+                        r#"<w:sdt><w:sdtPr><w:citation/></w:sdtPr><w:sdtContent><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve">{}</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+                        esc(&crate::citations::docx_citation_instr(id, page))
+                    ));
+                    run_xml(&mut out, &shown);
+                    out.push_str(
+                        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:sdtContent></w:sdt>"#,
+                    );
+                }
+                continue;
+            }
             run_xml(&mut out, span);
         }
         if open_link.is_some() {
@@ -855,7 +924,15 @@ fn body_xml(
             out.push_str(r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#);
             toc_open = false;
         }
+        if bib_field_open && !is_entry(paragraphs.get(index + 1)) {
+            out.push_str(r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#);
+            bib_field_open = false;
+        }
         out.push_str("</w:p>");
+        if bib_open && !is_bib(paragraphs.get(index + 1)) {
+            out.push_str("</w:sdtContent></w:sdt>");
+            bib_open = false;
+        }
     }
     if table.finish(&mut out) {
         // O Word exige um parágrafo depois da última tabela do documento.
@@ -880,6 +957,12 @@ fn body_xml(
 
 /// Início do campo do Sumário (títulos 1 a 3, com links), antes do resultado.
 const TOC_FIELD_BEGIN: &str = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>"#;
+
+/// Início do bloco da Bibliografia (o `w:sdt` que o Word usa para ela).
+const BIB_SDT_BEGIN: &str = r#"<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Bibliographies"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent>"#;
+
+/// Início do campo da Bibliografia, antes das entradas.
+const BIB_FIELD_BEGIN: &str = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> BIBLIOGRAPHY \l 1046 </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>"#;
 
 /// Um `w:r`, com as propriedades na ordem que o esquema do Word exige.
 fn run_xml(out: &mut String, span: &Span) {
@@ -1027,12 +1110,12 @@ const CORE_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?
 
 /// Estilos com os nomes internos do Word ("heading 1"…), que ele traduz para
 /// "Título 1" na interface em português. Tamanhos iguais aos do Nova Text.
-const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:uiPriority w:val="39"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="TOCHeading"><w:name w:val="TOC Heading"/><w:basedOn w:val="Heading1"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:qFormat/><w:pPr><w:outlineLvl w:val="9"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC2"><w:name w:val="toc 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="220"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC3"><w:name w:val="toc 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="440"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC4"><w:name w:val="toc 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="660"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC5"><w:name w:val="toc 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="880"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC6"><w:name w:val="toc 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="1100"/></w:pPr></w:style></w:styles>"#;
+const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:uiPriority w:val="39"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="TOCHeading"><w:name w:val="TOC Heading"/><w:basedOn w:val="Heading1"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:qFormat/><w:pPr><w:outlineLvl w:val="9"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC2"><w:name w:val="toc 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="220"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC3"><w:name w:val="toc 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="440"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC4"><w:name w:val="toc 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="660"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC5"><w:name w:val="toc 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="880"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC6"><w:name w:val="toc 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="1100"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Bibliography"><w:name w:val="Bibliography"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="37"/><w:unhideWhenUsed/></w:style></w:styles>"#;
 
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media, page, header_footer, watermark, notes, comments) =
+    let (paragraphs, media, page, header_footer, watermark, notes, comments, sources) =
         read_document(bytes)?;
     let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
@@ -1052,6 +1135,9 @@ pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> 
     }
     if !comments.is_empty() {
         doc.load_comments(&comments)?;
+    }
+    if !sources.is_empty() {
+        doc.load_sources(&sources)?;
     }
     Ok(doc)
 }
@@ -1134,6 +1220,16 @@ fn toc_level(name: &str) -> Option<u8> {
     }
     let level: u8 = name.strip_prefix("toc ")?.trim().parse().ok()?;
     (level >= 1).then(|| level.min(nova_domain_text::MAX_TOC_LEVEL))
+}
+
+/// Parte da Bibliografia de um estilo pelo nome: "Bibliography" (Word) e
+/// "Bibliography 1" (LibreOffice) são entradas; "Bibliography Heading", o título.
+fn bib_part(name: &str) -> Option<BibPart> {
+    match name.to_lowercase().as_str() {
+        "bibliography" | "bibliography 1" => Some(BibPart::Entry),
+        "bibliography heading" => Some(BibPart::Title),
+        _ => None,
+    }
 }
 
 /// Tira o número de página do fim de uma entrada de sumário ("Introdução\t3").
@@ -1254,6 +1350,8 @@ struct StyleInfo {
     style: Option<BlockStyle>,
     /// Estilo de Sumário ("toc 1"… e "TOC Heading" = 0).
     toc: Option<u8>,
+    /// Estilo de Bibliografia ("Bibliography" do Word, "Bibliography 1" do LibreOffice).
+    bib: Option<BibPart>,
     num: Option<(u32, u8)>,
     based_on: Option<String>,
     rpr: Vec<Prop>,
@@ -1293,6 +1391,7 @@ impl Styles {
             style: chain.iter().rev().find_map(|s| s.style),
             num: chain.iter().rev().find_map(|s| s.num),
             toc: chain.last().and_then(|s| s.toc),
+            bib: chain.last().and_then(|s| s.bib),
             ..StyleInfo::default()
         }
     }
@@ -1371,6 +1470,7 @@ fn read_styles(xml: &str) -> Styles {
                     if let Some((id, name, mut info)) = current.take() {
                         info.style = style_from(&id, &name);
                         info.toc = toc_level(&name);
+                        info.bib = bib_part(&name);
                         info.num = num_lvl.0.map(|n| (n, num_lvl.1));
                         by_id.insert(id, info);
                     }
@@ -1640,7 +1740,79 @@ type Document = (
     Option<nova_domain_text::Watermark>,
     Vec<(String, String)>,
     Vec<(String, nova_domain_text::Comment)>,
+    Vec<(String, nova_domain_text::Source)>,
 );
+
+/// Campo aberto (`w:fldChar` begin) no corpo: a instrução lida até agora e,
+/// depois do separate, o que ele é para o Nova.
+#[derive(Default)]
+struct Field {
+    instr: String,
+    separated: bool,
+    kind: FieldKind,
+}
+
+#[derive(Default, PartialEq)]
+enum FieldKind {
+    #[default]
+    Other,
+    /// Citação de uma fonte conhecida: o resultado vira a chamada.
+    Citation(String, Option<String>),
+    Bibliography,
+}
+
+/// O que um campo é, pela instrução (fontes pela tag do Word).
+fn field_kind(instr: &str, tags: &HashMap<String, String>) -> FieldKind {
+    let word = instr.split_whitespace().next().unwrap_or("");
+    if word.eq_ignore_ascii_case("BIBLIOGRAPHY") {
+        return FieldKind::Bibliography;
+    }
+    match crate::citations::parse_citation_instr(instr) {
+        Some((tag, page)) => match tags.get(&tag) {
+            Some(id) => FieldKind::Citation(
+                id.clone(),
+                page.map(|p| p.chars().filter(|c| !c.is_control()).take(32).collect()),
+            ),
+            None => FieldKind::Other,
+        },
+        None => FieldKind::Other,
+    }
+}
+
+/// Fontes dos customXml com `b:Sources`: (id do Nova, fonte) e tag → id.
+fn read_sources(
+    zip: &mut ZipArchive<Cursor<&[u8]>>,
+) -> (
+    Vec<(String, nova_domain_text::Source)>,
+    HashMap<String, String>,
+) {
+    let names: Vec<String> = zip
+        .file_names()
+        .filter(|n| n.starts_with("customXml/item") && !n.contains("Props") && n.ends_with(".xml"))
+        .map(str::to_string)
+        .collect();
+    let mut taken = std::collections::HashSet::new();
+    let (mut list, mut tags) = (Vec::new(), HashMap::new());
+    for name in names {
+        let Ok(Some(xml)) = part(zip, &name) else {
+            continue;
+        };
+        if !xml.contains("officeDocument/2006/bibliography") {
+            continue;
+        }
+        for (tag, source) in crate::citations::read_docx_sources(&xml) {
+            if tags.contains_key(&tag) {
+                continue;
+            }
+            let id = crate::citations::id_from(&tag, &mut taken);
+            if source.validate(&id).is_ok() {
+                tags.insert(tag, id.clone());
+                list.push((id, source));
+            }
+        }
+    }
+    (list, tags)
+}
 
 fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     let mut zip =
@@ -1674,6 +1846,13 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         })
         .collect();
     let mut media: Vec<Media> = Vec::new();
+    // Fontes bibliográficas (customXml) e os campos abertos (citações, bibliografia).
+    let (sources, source_tags) = read_sources(&mut zip);
+    let mut fields: Vec<Field> = Vec::new();
+    let mut in_instr = false;
+    // w:sdt aninhados e a profundidade do w:sdt da Bibliografia (galeria "Bibliographies").
+    let (mut sdt_depth, mut bib_sdt) = (0u32, None::<u32>);
+    let mut bib_title_seen = false;
     // Cabeçalho e rodapé "default" e "Primeira Página Diferente" (do último w:sectPr).
     // Notas de rodapé: o texto de cada uma, pelo número do w:footnoteReference.
     let footnote_texts = match read_rels(&rels, "/footnotes").values().next() {
@@ -1778,6 +1957,9 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         if let Some(level) = info.toc {
             let page = if level > 0 { take_toc_page(&mut p) } else { 0 };
             p.attrs.toc = Some(nova_domain_text::TocEntry { level, page });
+        }
+        if info.bib.is_some() {
+            p.attrs.bibliography = info.bib;
         }
         // Lista: a do parágrafo, ou a herdada do estilo (Lista com Marcadores…).
         if let Some((num_id, lvl)) = para_num.or(info.num) {
@@ -1930,8 +2112,41 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                             });
                         }
                     }
-                    b"del" | b"instrText" | b"pict" | b"object" | b"endnoteReference"
-                    | b"commentReference"
+                    // Campos: a instrução diz o que é; o resultado de uma citação vira a chamada.
+                    b"fldChar" => match attr(e, b"fldCharType").as_deref() {
+                        Some("begin") => fields.push(Field::default()),
+                        Some("separate") => {
+                            if let Some(f) = fields.last_mut() {
+                                f.kind = field_kind(&f.instr, &source_tags);
+                                f.separated = true;
+                            }
+                        }
+                        Some("end") => {
+                            if let Some(mut f) = fields.pop() {
+                                if !f.separated {
+                                    f.kind = field_kind(&f.instr, &source_tags);
+                                }
+                                if let FieldKind::Citation(id, page) = f.kind {
+                                    let mut marks = run.marks.clone();
+                                    marks.retain(|m| !matches!(m, Mark::Link { .. }));
+                                    marks.push(Mark::Citation { id, page });
+                                    let p = para.get_or_insert_with(Paragraph::default);
+                                    p.spans.push(Span {
+                                        text: nova_domain_text::CITATION_CHAR.to_string(),
+                                        marks,
+                                    });
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    b"instrText" if !empty => in_instr = true,
+                    b"sdt" if !empty => sdt_depth += 1,
+                    b"docPartGallery" if attr(e, b"val").as_deref() == Some("Bibliographies") => {
+                        bib_sdt = Some(sdt_depth);
+                        bib_title_seen = false;
+                    }
+                    b"del" | b"pict" | b"object" | b"endnoteReference" | b"commentReference"
                         if !empty =>
                     {
                         skip_depth = 1
@@ -2084,8 +2299,8 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                     }
                     _ if in_rpr && !in_ppr => run.apply(&Prop::from(e), &theme),
                     b"t" if !empty => in_text = true,
-                    b"tab" if !in_ppr => push_text(&mut para, &run, "\t"),
-                    b"br" | b"cr" => {
+                    b"tab" if !in_ppr && !citing(&fields) => push_text(&mut para, &run, "\t"),
+                    b"br" | b"cr" if !citing(&fields) => {
                         if attr(e, b"type").as_deref() == Some("page") {
                             // Quebra de página no meio do parágrafo: o resto começa na página seguinte.
                             let p = para.get_or_insert_with(Paragraph::default);
@@ -2112,6 +2327,14 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                     _ => {}
                 }
             }
+            Event::Text(t) if in_instr && skip_depth == 0 => {
+                if let Some(f) = fields.last_mut() {
+                    f.instr
+                        .push_str(&t.unescape().map_err(|e| invalid(format!("XML: {e}")))?);
+                }
+            }
+            // O resultado de um campo de citação não entra: vira a chamada no fim do campo.
+            Event::Text(_) if in_text && citing(&fields) => {}
             Event::Text(t) if in_text && skip_depth == 0 => {
                 last_reference = None;
                 let text = t.unescape().map_err(|e| invalid(format!("XML: {e}")))?;
@@ -2153,6 +2376,13 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                 }
                 match e.local_name().as_ref() {
                     b"t" => in_text = false,
+                    b"instrText" => in_instr = false,
+                    b"sdt" => {
+                        if bib_sdt == Some(sdt_depth) {
+                            bib_sdt = None;
+                        }
+                        sdt_depth = sdt_depth.saturating_sub(1);
+                    }
                     b"pPr" => in_ppr = false,
                     b"rPr" => in_rpr = false,
                     b"tcPr" => in_tcpr = false,
@@ -2171,6 +2401,21 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                         let mut p = para.take().unwrap_or_default();
                         place_in_cell(&mut p, &cell, &cell_shading);
                         let mut p = finish(p, para_style.as_deref(), para_num);
+                        // Bibliografia: entradas no campo BIBLIOGRAPHY; antes dele, no
+                        // w:sdt da bibliografia, o título.
+                        let has_text = p.spans.iter().any(|s| !s.text.trim().is_empty());
+                        if fields.iter().any(|f| f.kind == FieldKind::Bibliography) && has_text {
+                            p.attrs.bibliography = Some(BibPart::Entry);
+                        } else if bib_sdt.is_some() && has_text && p.attrs.bibliography.is_none() {
+                            p.attrs.bibliography = Some(if bib_title_seen {
+                                BibPart::Entry
+                            } else {
+                                BibPart::Title
+                            });
+                        }
+                        if p.attrs.bibliography == Some(BibPart::Title) {
+                            bib_title_seen = true;
+                        }
                         // Imagens do parágrafo: cada uma num parágrafo próprio, antes do texto.
                         if !para_images.is_empty() {
                             let attrs = nova_domain_text::ParaAttrs {
@@ -2266,7 +2511,23 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         }
     }
     comments.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok((out, media, page, header_footer, watermark, notes, comments))
+    Ok((
+        out,
+        media,
+        page,
+        header_footer,
+        watermark,
+        notes,
+        comments,
+        sources,
+    ))
+}
+
+/// Dentro do resultado de um campo de citação (o texto dele não entra).
+fn citing(fields: &[Field]) -> bool {
+    fields
+        .iter()
+        .any(|f| f.separated && matches!(f.kind, FieldKind::Citation(..)))
 }
 
 /// Cores que o Word e o LibreOffice dão aos links.

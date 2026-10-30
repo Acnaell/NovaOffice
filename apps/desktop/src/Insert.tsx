@@ -7,7 +7,7 @@ import type { PageSetup } from "./types";
 import { useI18n } from "./i18n";
 
 /** Caixa modal no estilo das do Word; Esc ou Cancelar fecha. */
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function Modal({ title, className = "", onClose, children }: { title: string; className?: string; onClose: () => void; children: ReactNode }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -21,7 +21,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   }, [onClose]);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal dialog" role="dialog" aria-modal="true" aria-label={title}>
+      <div className={`modal dialog ${className}`.trim()} role="dialog" aria-modal="true" aria-label={title}>
         <div className="dialog-title">{title}</div>
         {children}
       </div>

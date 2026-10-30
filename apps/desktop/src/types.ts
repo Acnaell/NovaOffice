@@ -14,10 +14,15 @@ export type Mark =
   /** Chamada de nota de rodapé: vai no caractere FOOTNOTE_CHAR; o texto fica em `DocView.footnotes`. */
   | { mark: "footnote"; id: string }
   /** Trecho comentado; o comentário fica em `DocView.comments`. */
-  | { mark: "comment"; id: string };
+  | { mark: "comment"; id: string }
+  /** Chamada de citação: vai no caractere CITATION_CHAR; a fonte fica em `DocView.sources`. */
+  | { mark: "citation"; id: string; page?: string };
 
 /** Caractere da chamada de nota de rodapé (uso privado do Unicode, igual ao núcleo). */
 export const FOOTNOTE_CHAR = "\uE000";
+
+/** Caractere da chamada de citação (uso privado do Unicode, igual ao núcleo). */
+export const CITATION_CHAR = "\uE001";
 
 /** Cores de realce do Word (nomes do OOXML, `w:highlight`). */
 export type HighlightColor =
@@ -82,7 +87,11 @@ export interface ParaAttrs {
   image: ImageRef | null;
   /** Parágrafo do Sumário (título = nível 0); o texto é o do título do documento. */
   toc: TocEntry | null;
+  /** Parágrafo da Bibliografia (título ou entrada), gerado a partir das fontes. */
+  bibliography?: BibPart | null;
 }
+
+export type BibPart = "title" | "entry";
 
 export interface TocEntry {
   /** 0 = título do sumário; 1 a 6 = nível do título. */
@@ -116,7 +125,8 @@ export type ParaAttr =
   | { attr: "pageBreakBefore"; value: boolean }
   | { attr: "cell"; value: CellRef | null }
   | { attr: "image"; value: ImageRef | null }
-  | { attr: "toc"; value: TocEntry | null };
+  | { attr: "toc"; value: TocEntry | null }
+  | { attr: "bibliography"; value: BibPart | null };
 
 export const MAX_INDENT = 8;
 
@@ -147,6 +157,39 @@ export interface DocView {
   footnotes: Record<string, string>;
   /** Comentários (Revisão), pelo id; respostas têm `parent`. */
   comments: Record<string, Comment>;
+  /** Fontes bibliográficas (Referências), pelo id da marca `citation`. */
+  sources?: Record<string, Source>;
+}
+
+export type SourceKind = "book" | "article" | "web" | "thesis";
+
+/** Autor: sobrenome e prenomes; entidade (empresa, órgão) só com `last`. */
+export interface Person {
+  last: string;
+  first: string;
+}
+
+/** Fonte bibliográfica (nova-domain-text `Source`); campos vazios podem faltar. */
+export interface Source {
+  kind: SourceKind;
+  authors?: Person[];
+  /** Título; o que vem depois de ": " é o subtítulo. */
+  title: string;
+  year?: string;
+  /** Editora (livro) ou nome do site. */
+  publisher?: string;
+  place?: string;
+  edition?: string;
+  journal?: string;
+  volume?: string;
+  issue?: string;
+  pages?: string;
+  institution?: string;
+  /** Tese: "Tese (Doutorado em Educação)". */
+  degree?: string;
+  url?: string;
+  /** Data de acesso, AAAA-MM-DD. */
+  accessed?: string;
 }
 
 /** Comentário (nova-domain-text `Comment`). */
@@ -235,6 +278,7 @@ export type TextCommand =
   | { type: "watermark.set"; value: Watermark | null }
   | { type: "footnote.set"; id: string; text: string | null }
   | { type: "comment.set"; id: string; value: Comment | null }
+  | { type: "source.set"; id: string; value: Source | null }
   | { type: "block.setStyle"; block: number; style: BlockStyle }
   | ({ type: "block.setAttr"; block: number } & ParaAttr)
   | { type: "history.undo" }
@@ -258,6 +302,7 @@ export interface ViewPatch {
   watermark?: Watermark | null;
   footnotes?: Record<string, string>;
   comments?: Record<string, Comment>;
+  sources?: Record<string, Source>;
 }
 
 export interface DispatchResult {
@@ -271,7 +316,7 @@ export function applyPatch(view: DocView, patch: ViewPatch): DocView | null {
   blocks.splice(patch.start, patch.deleteCount, ...patch.blocks);
   if (blocks.length !== patch.blockCount) return null;
   const { canUndo, canRedo, path, title, dirty, format } = patch;
-  return { blocks, canUndo, canRedo, path, title, dirty, format, page: patch.page ?? view.page, headerFooter: patch.headerFooter ?? view.headerFooter, watermark: patch.watermark === undefined ? view.watermark : patch.watermark, footnotes: patch.footnotes ?? view.footnotes, comments: patch.comments ?? view.comments };
+  return { blocks, canUndo, canRedo, path, title, dirty, format, page: patch.page ?? view.page, headerFooter: patch.headerFooter ?? view.headerFooter, watermark: patch.watermark === undefined ? view.watermark : patch.watermark, footnotes: patch.footnotes ?? view.footnotes, comments: patch.comments ?? view.comments, sources: patch.sources ?? view.sources };
 }
 
 export interface FormatInfo {

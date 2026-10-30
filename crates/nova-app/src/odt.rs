@@ -8,7 +8,8 @@ use std::io::{Cursor, Read, Write};
 
 use nova_crdt::ClientId;
 use nova_domain_text::{
-    Align, BlockStyle, ListKind, Mark, ParaAttrs, Paragraph, Span, TextDocument, MAX_INDENT,
+    Align, BibPart, BlockStyle, ListKind, Mark, ParaAttrs, Paragraph, Span, TextDocument,
+    MAX_INDENT,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -37,7 +38,13 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         .iter()
         .map(|(id, (path, ..))| (id.clone(), path.clone()))
         .collect();
-    let content = content_xml(&paragraphs, &paths, &doc.footnotes(), &doc.comments());
+    let content = content_xml(
+        &paragraphs,
+        &paths,
+        &doc.footnotes(),
+        &doc.comments(),
+        &doc.sources(),
+    );
     let mut manifest = MANIFEST
         .trim_end_matches("</manifest:manifest>")
         .to_string();
@@ -193,6 +200,9 @@ fn styles_xml(
             f64::from(level - 1) * 0.39
         ));
     }
+    // Estilos e configuração da Bibliografia (os nomes do LibreOffice).
+    contents.push_str(crate::citations::ODT_BIB_CONFIG);
+    contents.push_str(r#"<style:style style:name="Bibliography_20_Heading" style:display-name="Bibliography Heading" style:family="paragraph" style:parent-style-name="Heading" style:next-style-name="Standard" style:class="index"><style:paragraph-properties fo:text-align="center"/><style:text-properties fo:font-size="16pt" fo:font-weight="bold"/></style:style><style:style style:name="Bibliography_20_1" style:display-name="Bibliography 1" style:family="paragraph" style:parent-style-name="Standard" style:class="index"/>"#);
     // Cor e borda (aba Design); com borda, parte da margem vira enchimento.
     let (design_props, margins) = design::odt_page_props(&outer_page);
     let layout = format!(
@@ -515,7 +525,10 @@ fn text_props(marks: &[Mark]) -> String {
                 r#" style:text-position="sub 58%""#
             }),
             // O link é o elemento text:a e a nota é text:note, não estilos.
-            Mark::Link { .. } | Mark::Footnote { .. } | Mark::Comment { .. } => {}
+            Mark::Link { .. }
+            | Mark::Footnote { .. }
+            | Mark::Comment { .. }
+            | Mark::Citation { .. } => {}
         }
     }
     p
@@ -575,6 +588,7 @@ fn content_xml(
     pictures: &HashMap<String, String>,
     notes: &[(String, String)],
     comments: &[(String, nova_domain_text::Comment)],
+    sources: &std::collections::BTreeMap<String, nova_domain_text::Source>,
 ) -> String {
     // Comentário aberto (office:annotation já escrito): pode atravessar parágrafos.
     let mut open_comment: Option<String> = None;
@@ -607,10 +621,19 @@ fn content_xml(
             ..p.attrs.clone()
         };
         let props = para_props(&attrs);
-        let toc_parent = p.attrs.toc.map(|t| match t.level {
-            0 => "Contents_20_Heading".to_string(),
-            n => format!("Contents_20_{n}"),
-        });
+        let toc_parent = p
+            .attrs
+            .toc
+            .map(|t| match t.level {
+                0 => "Contents_20_Heading".to_string(),
+                n => format!("Contents_20_{n}"),
+            })
+            .or_else(|| {
+                p.attrs.bibliography.map(|b| match b {
+                    BibPart::Title => "Bibliography_20_Heading".to_string(),
+                    BibPart::Entry => "Bibliography_20_1".to_string(),
+                })
+            });
         let parent = toc_parent.as_deref().unwrap_or(parent_style(p.style));
         let key = format!("{parent}|{props}");
         let index = styles
@@ -661,6 +684,8 @@ fn content_xml(
 
     let mut toc_open = false;
     let mut tocs = 0;
+    let mut bib_open = false;
+    let mut bibs = 0;
     for (index, p) in paragraphs.iter().enumerate() {
         let cell = p.attrs.cell.as_ref();
         let key = cell.map(|c| (c.table.clone(), c.row, c.col));
@@ -752,8 +777,29 @@ fn content_xml(
                 r#"<text:index-title text:name="Sumário{tocs}_Head">"#
             ));
         }
+        // Bibliografia: um text:bibliography com o título e as entradas no index-body.
+        let bib = p
+            .attrs
+            .bibliography
+            .filter(|_| cell.is_none() && toc.is_none());
+        if bib.is_some() && !bib_open {
+            bibs += 1;
+            body.push_str(&format!(
+                r#"<text:bibliography text:name="Bibliografia{bibs}" text:protected="false"><text:bibliography-source>{BIB_TEMPLATES}</text:bibliography-source><text:index-body>"#
+            ));
+            bib_open = true;
+        }
+        let bib_title = bib == Some(BibPart::Title);
+        if bib_title {
+            body.push_str(&format!(
+                r#"<text:index-title text:name="Bibliografia{bibs}_Head">"#
+            ));
+        }
         let name = para_style_name(&mut para_styles, p);
-        let heading_level = p.style.heading_level().filter(|_| toc.is_none());
+        let heading_level = p
+            .style
+            .heading_level()
+            .filter(|_| toc.is_none() && bib.is_none());
         let (open_tag, close_tag) = match heading_level {
             Some(level) => (
                 format!(r#"<text:h text:style-name="{name}" text:outline-level="{level}">"#),
@@ -808,6 +854,41 @@ fn content_xml(
                         body.push_str(&format!(
                             r#"<text:note text:id="ftn{n}" text:note-class="footnote"><text:note-citation>{}</text:note-citation><text:note-body><text:p text:style-name="Footnote">{text}</text:p></text:note-body></text:note>"#,
                             n + 1
+                        ));
+                    }
+                }
+                at_start = false;
+                continue;
+            }
+            // Citação: cada chamada vira um text:bibliography-mark com os dados da fonte.
+            if let Some((id, page)) = span.marks.iter().find_map(|m| match m {
+                Mark::Citation { id, page } => Some((id, page.as_deref())),
+                _ => None,
+            }) {
+                let source = sources.get(id);
+                let mark = crate::citations::odt_mark(
+                    source,
+                    &nova_domain_text::citation_text(source, page),
+                );
+                let props = text_props(&span.marks);
+                for ch in span.text.chars() {
+                    if ch != nova_domain_text::CITATION_CHAR {
+                        continue;
+                    }
+                    if props.is_empty() {
+                        body.push_str(&mark);
+                    } else {
+                        let index =
+                            text_styles
+                                .iter()
+                                .position(|s| *s == props)
+                                .unwrap_or_else(|| {
+                                    text_styles.push(props.clone());
+                                    text_styles.len() - 1
+                                });
+                        body.push_str(&format!(
+                            r#"<text:span text:style-name="T{}">{mark}</text:span>"#,
+                            index + 1
                         ));
                     }
                 }
@@ -872,6 +953,16 @@ fn content_xml(
             body.push_str("</text:index-body></text:table-of-content>");
             toc_open = false;
         }
+        if bib_title {
+            body.push_str("</text:index-title>");
+        }
+        let next_in_bib = paragraphs.get(index + 1).is_some_and(|n| {
+            n.attrs.bibliography.is_some() && n.attrs.cell.is_none() && n.attrs.toc.is_none()
+        });
+        if bib_open && !next_in_bib {
+            body.push_str("</text:index-body></text:bibliography>");
+            bib_open = false;
+        }
     }
     close_to(&mut body, &mut open, 0);
     if let Some((table, _, col)) = open_cell {
@@ -920,6 +1011,9 @@ fn content_xml(
 /// Modelos do Sumário (níveis 1 a 3): texto, tab com pontilhado e número da página.
 const TOC_TEMPLATES: &str = r#"<text:index-title-template text:style-name="Contents_20_Heading">Sumário</text:index-title-template><text:table-of-content-entry-template text:outline-level="1" text:style-name="Contents_20_1"><text:index-entry-link-start/><text:index-entry-chapter/><text:index-entry-text/><text:index-entry-tab-stop style:type="right" style:leader-char="."/><text:index-entry-page-number/><text:index-entry-link-end/></text:table-of-content-entry-template><text:table-of-content-entry-template text:outline-level="2" text:style-name="Contents_20_2"><text:index-entry-link-start/><text:index-entry-chapter/><text:index-entry-text/><text:index-entry-tab-stop style:type="right" style:leader-char="."/><text:index-entry-page-number/><text:index-entry-link-end/></text:table-of-content-entry-template><text:table-of-content-entry-template text:outline-level="3" text:style-name="Contents_20_3"><text:index-entry-link-start/><text:index-entry-chapter/><text:index-entry-text/><text:index-entry-tab-stop style:type="right" style:leader-char="."/><text:index-entry-page-number/><text:index-entry-link-end/></text:table-of-content-entry-template>"#;
 
+/// Modelos da Bibliografia: autor, título e ano (o LibreOffice usa ao atualizar).
+const BIB_TEMPLATES: &str = r#"<text:index-title-template text:style-name="Bibliography_20_Heading">REFERÊNCIAS</text:index-title-template><text:bibliography-entry-template text:bibliography-type="book" text:style-name="Bibliography_20_1"><text:index-entry-bibliography text:bibliography-data-field="author"/><text:index-entry-span>. </text:index-entry-span><text:index-entry-bibliography text:bibliography-data-field="title"/><text:index-entry-span>. </text:index-entry-span><text:index-entry-bibliography text:bibliography-data-field="address"/><text:index-entry-span>: </text:index-entry-span><text:index-entry-bibliography text:bibliography-data-field="publisher"/><text:index-entry-span>, </text:index-entry-span><text:index-entry-bibliography text:bibliography-data-field="year"/><text:index-entry-span>.</text:index-entry-span></text:bibliography-entry-template>"#;
+
 fn list_styles() -> String {
     const BULLETS: [&str; 3] = ["•", "◦", "▪"];
     let mut out = String::from(r#"<text:list-style style:name="L1">"#);
@@ -955,7 +1049,7 @@ const STYLES: &str = r##"<?xml version="1.0" encoding="UTF-8"?><office:document-
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media, page, header_footer, watermark, notes, comments) =
+    let (paragraphs, media, page, header_footer, watermark, notes, comments, sources) =
         read_document(bytes)?;
     let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
@@ -975,6 +1069,9 @@ pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> 
     }
     if !comments.is_empty() {
         doc.load_comments(&comments)?;
+    }
+    if !sources.is_empty() {
+        doc.load_sources(&sources)?;
     }
     Ok(doc)
 }
@@ -1295,6 +1392,7 @@ type Document = (
     Option<nova_domain_text::Watermark>,
     Vec<(String, String)>,
     Vec<(String, nova_domain_text::Comment)>,
+    Vec<(String, nova_domain_text::Source)>,
 );
 
 /// Nota de rodapé sendo lida: id, texto, profundidade dentro do text:note e
@@ -1373,6 +1471,13 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     let mut cell_shading: Option<String> = None;
     // Sumário (text:table-of-content) e o título dele.
     let (mut in_toc, mut in_toc_title) = (false, false);
+    // Bibliografia (text:bibliography) e o título dela.
+    let (mut in_bib, mut in_bib_title) = (false, false);
+    // Citação sendo lida (text:bibliography-mark): os atributos e o texto dela;
+    // as fontes lidas e o id do Nova de cada identificador.
+    let mut bib_mark: Option<(Vec<(String, String)>, String)> = None;
+    let mut sources: Vec<(String, nova_domain_text::Source)> = Vec::new();
+    let mut taken_ids = std::collections::HashSet::new();
     // Nota de rodapé sendo lida (text:note): o texto vai para a nota, não para o parágrafo.
     let mut note: Option<NoteRead> = None;
     // Comentários: o que está sendo lido, os lidos, onde cada trecho começa e termina.
@@ -1542,6 +1647,40 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                     }
                     b"table-of-content" if !empty => in_toc = true,
                     b"index-title" if !empty && in_toc => in_toc_title = true,
+                    b"bibliography" if !empty => in_bib = true,
+                    b"index-title" if !empty && in_bib => in_bib_title = true,
+                    b"bibliography-mark" if para.is_some() => {
+                        let attrs = e
+                            .attributes()
+                            .flatten()
+                            .map(|a| {
+                                (
+                                    String::from_utf8_lossy(a.key.local_name().as_ref())
+                                        .into_owned(),
+                                    a.unescape_value()
+                                        .map(|v| v.into_owned())
+                                        .unwrap_or_default(),
+                                )
+                            })
+                            .collect();
+                        bib_mark = Some((attrs, String::new()));
+                        if empty {
+                            let (attrs, text) = bib_mark.take().expect("citação aberta");
+                            match read_citation(&attrs, &text, &mut sources, &mut taken_ids) {
+                                Some(mark) => {
+                                    let mut marks = span_marks.last().cloned().unwrap_or_default();
+                                    marks.push(mark);
+                                    push(
+                                        &mut para,
+                                        &[marks],
+                                        &nova_domain_text::CITATION_CHAR.to_string(),
+                                    );
+                                }
+                                None if !text.is_empty() => push(&mut para, &span_marks, &text),
+                                None => {}
+                            }
+                        }
+                    }
                     b"table" if !empty && e.name().as_ref() == b"table:table" => {
                         tbl_depth += 1;
                         if tbl_depth == 1 {
@@ -1624,6 +1763,20 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                                 style = BlockStyle::Paragraph;
                             }
                             attrs.toc = Some(nova_domain_text::TocEntry { level, page: 0 });
+                        }
+                        // Bibliografia: o título fica como Título 1 (entra no Sumário, como pede a ABNT).
+                        if in_bib && cell.is_none() && attrs.toc.is_none() {
+                            let part = if in_bib_title {
+                                BibPart::Title
+                            } else {
+                                BibPart::Entry
+                            };
+                            style = if part == BibPart::Title {
+                                BlockStyle::Heading1
+                            } else {
+                                BlockStyle::Paragraph
+                            };
+                            attrs.bibliography = Some(part);
                         }
                         para = Some(Paragraph {
                             style,
@@ -1719,6 +1872,13 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
             }
             // Texto da citação (o número da nota): a tela numera sozinha.
             Event::Text(_) if note.is_some() => {}
+            // Texto da chamada de citação: a tela gera o dela; daqui só sai a página.
+            Event::Text(t) if bib_mark.is_some() => {
+                let raw = t.unescape().map_err(|e| invalid(format!("XML: {e}")))?;
+                if let Some((_, text)) = bib_mark.as_mut() {
+                    text.push_str(&raw);
+                }
+            }
             Event::Text(t) if in_body && skip == 0 && para.is_some() => {
                 let raw = t.unescape().map_err(|e| invalid(format!("XML: {e}")))?;
                 // Espaços em branco do XML se juntam num só (regra do ODF).
@@ -1806,7 +1966,28 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                         }
                     }
                     b"table-of-content" => in_toc = false,
-                    b"index-title" => in_toc_title = false,
+                    b"index-title" => {
+                        in_toc_title = false;
+                        in_bib_title = false;
+                    }
+                    b"bibliography" => in_bib = false,
+                    b"bibliography-mark" => {
+                        if let Some((attrs, text)) = bib_mark.take() {
+                            match read_citation(&attrs, &text, &mut sources, &mut taken_ids) {
+                                Some(mark) => {
+                                    let mut marks = span_marks.last().cloned().unwrap_or_default();
+                                    marks.push(mark);
+                                    push(
+                                        &mut para,
+                                        &[marks],
+                                        &nova_domain_text::CITATION_CHAR.to_string(),
+                                    );
+                                }
+                                None if !text.is_empty() => push(&mut para, &span_marks, &text),
+                                None => {}
+                            }
+                        }
+                    }
                     b"p" | b"h" => {
                         if let Some(mut p) = para.take() {
                             if let Some(mut entry) = p.attrs.toc.filter(|t| t.level > 0) {
@@ -1854,7 +2035,50 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     crate::comments::apply_ranges(&mut out, &comment_ranges);
     comments.retain(|(id, c)| c.validate(id).is_ok());
     crate::docx::normalize(&mut out);
-    Ok((out, media, page, header_footer, watermark, notes, comments))
+    Ok((
+        out,
+        media,
+        page,
+        header_footer,
+        watermark,
+        notes,
+        comments,
+        sources,
+    ))
+}
+
+/// Marca de citação a partir de um `text:bibliography-mark`: a fonte (marcas com
+/// os mesmos dados são a mesma fonte, mesmo com páginas diferentes) e a página,
+/// tirada do texto da marca. `None` se a marca não tem dados de fonte (o
+/// LibreOffice faz assim com campos CITATION de um .docx): fica o texto dela.
+fn read_citation(
+    attrs: &[(String, String)],
+    text: &str,
+    sources: &mut Vec<(String, nova_domain_text::Source)>,
+    taken: &mut std::collections::HashSet<String>,
+) -> Option<Mark> {
+    let identifier = attrs
+        .iter()
+        .find(|(k, _)| k == "identifier")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
+    let source = crate::citations::odt_read_mark(attrs);
+    if source.authors.is_empty() && source.year.is_empty() && source.url.is_empty() {
+        return None;
+    }
+    let id = match sources.iter().find(|(_, s)| *s == source) {
+        Some((id, _)) => id.clone(),
+        None => {
+            let id = crate::citations::id_from(&identifier, taken);
+            source.validate(&id).ok()?;
+            sources.push((id.clone(), source));
+            id
+        }
+    };
+    Some(Mark::Citation {
+        id,
+        page: crate::citations::page_from_text(text),
+    })
 }
 
 #[cfg(test)]
