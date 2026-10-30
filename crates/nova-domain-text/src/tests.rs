@@ -1090,3 +1090,90 @@ fn nota_de_rodape_no_texto_e_nas_configuracoes() {
     doc.execute(TextCommand::Undo).unwrap();
     assert_eq!(doc.footnotes().len(), 1);
 }
+
+#[test]
+fn comentario_no_texto_e_nas_configuracoes() {
+    use crate::Comment;
+    let c = |text: &str, parent: Option<&str>| Comment {
+        author: "Ana".into(),
+        initials: "A".into(),
+        date: "2026-10-30T10:00:00Z".into(),
+        text: text.into(),
+        done: false,
+        parent: parent.map(Into::into),
+    };
+    let mut doc = TextDocument::from_plain_text(1, "Texto comentado");
+    doc.execute(TextCommand::Batch {
+        commands: vec![
+            TextCommand::ApplyMark {
+                block: 0,
+                offset: 6,
+                len: 9,
+                mark: Mark::Comment { id: "k".into() },
+            },
+            TextCommand::SetComment {
+                id: "k".into(),
+                value: Some(c("Revisar", None)),
+            },
+            TextCommand::SetComment {
+                id: "r".into(),
+                value: Some(c("Feito", Some("k"))),
+            },
+        ],
+    })
+    .unwrap();
+    let ids: Vec<String> = doc.comments().into_iter().map(|(id, _)| id).collect();
+    assert_eq!(ids, ["k", "r"]);
+    // Digitar logo depois do trecho não estende o comentário; dentro dele, sim.
+    doc.execute(TextCommand::InsertText {
+        block: 0,
+        offset: 15,
+        text: " depois".into(),
+        marks: None,
+    })
+    .unwrap();
+    doc.execute(TextCommand::InsertText {
+        block: 0,
+        offset: 8,
+        text: "X".into(),
+        marks: None,
+    })
+    .unwrap();
+    let spans = doc.block_spans(0).unwrap();
+    let marked: String = spans
+        .iter()
+        .filter(|s| !s.marks.is_empty())
+        .map(|s| s.text.as_str())
+        .collect();
+    assert_eq!(marked, "coXmentado");
+    // Inválidos: autor vazio, quebra de parágrafo, resposta a si mesmo, data estranha.
+    for bad in [
+        Comment {
+            author: " ".into(),
+            ..c("x", None)
+        },
+        c("a\nb", None),
+        c("x", Some("z")),
+        Comment {
+            date: "ontem".into(),
+            ..c("x", None)
+        },
+    ] {
+        assert!(doc
+            .execute(TextCommand::SetComment {
+                id: "z".into(),
+                value: Some(bad)
+            })
+            .is_err());
+    }
+    // Apagar e desfazer.
+    doc.execute(TextCommand::SetComment {
+        id: "r".into(),
+        value: None,
+    })
+    .unwrap();
+    assert_eq!(doc.comments().len(), 1);
+    doc.execute(TextCommand::Undo).unwrap();
+    assert_eq!(doc.comments().len(), 2);
+    assert_eq!(Comment::initials_of("ana maria souza lima"), "AMS");
+}

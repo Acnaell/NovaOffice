@@ -5,7 +5,7 @@ import { caret, deleteBackward, deleteForward } from "./model";
 import type { BlockView, DocView, ImageRef } from "./types";
 import { DEFAULT_HEADER_FOOTER, DEFAULT_PAGE } from "./types";
 
-const doc = (...blocks: BlockView[]): DocView => ({ blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, footnotes: {} });
+const doc = (...blocks: BlockView[]): DocView => ({ blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, footnotes: {}, comments: {} });
 const p = (text: string, attrs: Partial<BlockView["attrs"]> = {}): BlockView => ({
   style: "paragraph",
   attrs: { ...DEFAULT_ATTRS, ...attrs },

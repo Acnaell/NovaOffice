@@ -47,7 +47,7 @@ fn span_html(text: &str, marks: &[Mark]) -> String {
                 css.push(format!("font-size:{}pt", f64::from(*half_points) / 2.0))
             }
             Mark::Color { value } => css.push(format!("color:{value}")),
-            Mark::Link { .. } | Mark::Footnote { .. } => {}
+            Mark::Link { .. } | Mark::Footnote { .. } | Mark::Comment { .. } => {}
             Mark::Highlight { value } => {
                 let hex = HIGHLIGHT
                     .iter()

@@ -7,7 +7,7 @@ import { DEFAULT_HEADER_FOOTER, DEFAULT_PAGE, FOOTNOTE_CHAR, type BlockView, typ
 const ref = (id: string): Span => ({ text: FOOTNOTE_CHAR, marks: [{ mark: "footnote", id }] });
 const t = (text: string): Span => ({ text, marks: [] });
 const p = (...spans: Span[]): BlockView => ({ style: "paragraph", attrs: { ...DEFAULT_ATTRS }, spans });
-const doc = (...blocks: BlockView[]): DocView => ({ blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, footnotes: {} });
+const doc = (...blocks: BlockView[]): DocView => ({ blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, footnotes: {}, comments: {} });
 
 describe("notas de rodapé", () => {
   it("numera pela ordem da primeira chamada", () => {

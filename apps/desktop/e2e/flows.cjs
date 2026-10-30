@@ -1231,6 +1231,64 @@ const flows = [
       && texts.join('|') === 'Fonte: IBGE, 2026.|Nota anterior.' && u1 === '|Fonte: IBGE, 2026.' && afterUndo === 1;
     return ok ? OK('Ctrl+Alt+F põe a chamada e o cursor na nota; Enter/Esc voltam ao texto; numeração automática; desfazer em dois passos (texto, nota).') : FALHA(JSON.stringify({ focused, back, numbers, area, texts, u1, afterUndo }));
   } },
+  { area: 'Revisão', name: 'Comentários (Ctrl+Alt+M): balão, resposta, resolver e excluir', run: async (h) => {
+    await h.reset(['Texto principal do trabalho final', 'Segundo parágrafo']);
+    await h.select(0, 6, 0, 15);
+    await h.press('Control+Alt+M'); await h.settle(250);
+    if (await h.p.locator('.cm-name').count()) await h.p.locator('.cm-name').fill('Ana Souza');
+    await h.p.locator('.cm-card.active .cm-input').fill('Rever este termo.');
+    await h.p.locator('.cm-card.active .cm-input').press('Control+Enter'); await h.settle(300);
+    let doc = await h.doc();
+    const [id, first] = Object.entries(doc.comments)[0] ?? [];
+    const marked = doc.blocks[0].spans.filter((s) => s.marks.some((m) => m.mark === 'comment')).map((s) => s.text).join('');
+    // Resposta no balão.
+    await h.p.locator('.cm-card').first().click(); await h.settle(150);
+    await h.p.locator('.cm-card.active .cm-input').fill('Troquei por "central".');
+    await h.p.locator('.cm-card.active .cm-btn.primary').click(); await h.settle(300);
+    doc = await h.doc();
+    const reply = Object.values(doc.comments).find((c) => c.parent === id);
+    // Resolver e desfazer.
+    await h.p.locator('.cm-card.active .cm-tool').first().click(); await h.settle(250);
+    const done = (await h.doc()).comments[id]?.done;
+    await h.p.locator('.page').focus();
+    await h.press('Control+z'); await h.settle(250);
+    const undone = (await h.doc()).comments[id]?.done;
+    // Excluir pela faixa de opções: comentário, resposta e destaque somem.
+    await h.select(0, 8);
+    await h.p.locator('.tab', { hasText: 'Revisão' }).click();
+    await h.p.locator('.menu-button', { hasText: 'Excluir' }).click();
+    await h.p.locator('.menu-item', { hasText: /^Excluir$/ }).click(); await h.settle(300);
+    doc = await h.doc();
+    const left = Object.keys(doc.comments).length + doc.blocks[0].spans.filter((s) => s.marks.some((m) => m.mark === 'comment')).length;
+    const ok = first?.author === 'Ana Souza' && first?.text === 'Rever este termo.' && marked === 'principal' && reply?.text === 'Troquei por "central".'
+      && done === true && undone === false && left === 0;
+    return ok ? OK('Novo Comentário no trecho selecionado, resposta, Resolver (com desfazer) e Excluir pela faixa.') : FALHA(JSON.stringify({ first, marked, reply, done, undone, left }));
+  } },
+  { area: 'Revisão', name: 'Comentários salvos no .docx e no .odt', run: async () => {
+    await core('new_document');
+    const c = (text, extra = {}) => ({ author: 'Ana Souza', initials: 'AS', date: '2026-10-30T14:45:00Z', text, done: false, ...extra });
+    await core('dispatch', { command: { type: 'batch', commands: [
+      { type: 'text.insert', block: 0, offset: 0, text: 'O relatório ficou pronto.' },
+      { type: 'text.applyMark', block: 0, offset: 2, len: 9, mark: { mark: 'comment', id: 'a1' } },
+      { type: 'comment.set', id: 'a1', value: c('Conferir os números.') },
+      { type: 'comment.set', id: 'r1', value: c('Conferi.', { parent: 'a1', author: 'Bruno Lima', initials: 'BL' }) },
+      { type: 'text.applyMark', block: 0, offset: 18, len: 6, mark: { mark: 'comment', id: 'b1' } },
+      { type: 'comment.set', id: 'b1', value: c('Quando?', { done: true }) },
+    ] } });
+    const out = [];
+    for (const ext of ['docx', 'odt']) {
+      await core('save_document', { path: `/tmp/nova-flows/comentarios.${ext}` });
+      await core('new_document');
+      const back = await core('open_document', { path: `/tmp/nova-flows/comentarios.${ext}` });
+      const list = Object.values(back.comments);
+      const root = Object.entries(back.comments).find(([, v]) => v.text === 'Conferir os números.');
+      const marked = back.blocks[0].spans.filter((s) => s.marks.some((m) => m.mark === 'comment')).map((s) => s.text).join('|');
+      out.push(`${list.length} ${marked} ${list.find((v) => v.text === 'Conferi.')?.parent === root?.[0]} ${list.find((v) => v.text === 'Quando?')?.done}`);
+    }
+    const files = zipList('/tmp/nova-flows/comentarios.docx').join(' ');
+    const ok = out.every((o) => o === '3 relatório|pronto true true') && /comments\.xml/.test(files) && /commentsExtended\.xml/.test(files);
+    return ok ? OK('word/comments.xml + commentsExtended.xml (respostas e resolvido) e office:annotation do .odt; validado no LibreOffice.') : FALHA(JSON.stringify(out));
+  } },
   { area: 'Referências', name: 'Notas de rodapé salvas no .docx e no .odt', run: async () => {
     await core('new_document');
     await core('dispatch', { command: { type: 'batch', commands: [

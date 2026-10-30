@@ -41,7 +41,7 @@ describe("aba Design", () => {
   });
 
   it("o remendo da visão traz e tira a marca d'água", () => {
-    const view: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, watermark: null, footnotes: {} };
+    const view: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, watermark: null, footnotes: {}, comments: {} };
     const patch: ViewPatch = { format: null, start: 0, deleteCount: 0, blocks: [], blockCount: 0, canUndo: true, canRedo: false, path: null, title: "t", dirty: true };
     expect(applyPatch(view, { ...patch, watermark: DEFAULT_WATERMARK })?.watermark).toEqual(DEFAULT_WATERMARK);
     const on = { ...view, watermark: DEFAULT_WATERMARK };

@@ -24,7 +24,7 @@ import { DEFAULT_HEADER_FOOTER, DEFAULT_PAGE } from "./types";
 const bold: Mark = { mark: "bold" };
 
 function doc(...blocks: BlockView[]): DocView {
-  return { blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, footnotes: {} };
+  return { blocks, canUndo: false, canRedo: false, path: null, title: "t", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, footnotes: {}, comments: {} };
 }
 
 const p = (...spans: [string, Mark[]?][]): BlockView => ({

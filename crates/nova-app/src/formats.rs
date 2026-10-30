@@ -669,4 +669,101 @@ segunda linha",
         .unwrap();
         assert!(settings.contains("displayBackgroundShape") && settings.contains("footnotePr"));
     }
+
+    #[test]
+    fn comentarios_vao_e_voltam() {
+        use nova_domain_text::{Comment, Mark, TextCommand};
+        let mut doc = TextDocument::from_plain_text(1, "Primeira frase.\nSegunda frase longa.");
+        let comment = |text: &str, parent: Option<&str>, done: bool| Comment {
+            author: "Ana Souza".into(),
+            initials: "AS".into(),
+            date: "2026-10-30T14:45:00Z".into(),
+            text: text.into(),
+            done,
+            parent: parent.map(Into::into),
+        };
+        doc.execute(TextCommand::Batch {
+            commands: vec![
+                // "frase.\nSegunda" atravessa os dois parágrafos.
+                TextCommand::ApplyMark {
+                    block: 0,
+                    offset: 9,
+                    len: 6,
+                    mark: Mark::Comment { id: "a".into() },
+                },
+                TextCommand::ApplyMark {
+                    block: 1,
+                    offset: 0,
+                    len: 7,
+                    mark: Mark::Comment { id: "a".into() },
+                },
+                TextCommand::SetComment {
+                    id: "a".into(),
+                    value: Some(comment("Revisar\u{b}esta parte.", None, true)),
+                },
+                TextCommand::SetComment {
+                    id: "r".into(),
+                    value: Some(comment("Concordo.", Some("a"), false)),
+                },
+                TextCommand::ApplyMark {
+                    block: 1,
+                    offset: 14,
+                    len: 5,
+                    mark: Mark::Comment { id: "b".into() },
+                },
+                TextCommand::SetComment {
+                    id: "b".into(),
+                    value: Some(comment("Outra palavra?", None, false)),
+                },
+            ],
+        })
+        .unwrap();
+        let summary = |d: &TextDocument| -> Vec<String> {
+            let list = d.comments();
+            let id_of = |id: &str| list.iter().position(|(i, _)| i == id).unwrap_or(99);
+            let mut out: Vec<String> = list
+                .iter()
+                .map(|(_, c)| {
+                    format!(
+                        "{}|{}|{}|{}|{}|{:?}",
+                        c.author,
+                        c.initials,
+                        c.date,
+                        c.text,
+                        c.done,
+                        c.parent.as_deref().map(id_of)
+                    )
+                })
+                .collect();
+            // Trechos marcados: texto de cada parágrafo com o comentário.
+            for p in d.paragraphs() {
+                let marked: String = p
+                    .spans
+                    .iter()
+                    .filter(|s| s.marks.iter().any(|m| matches!(m, Mark::Comment { .. })))
+                    .map(|s| s.text.as_str())
+                    .collect();
+                out.push(marked);
+            }
+            out
+        };
+        let want = summary(&doc);
+        assert_eq!(
+            want,
+            [
+                "Ana Souza|AS|2026-10-30T14:45:00Z|Revisar\u{b}esta parte.|true|None",
+                "Ana Souza|AS|2026-10-30T14:45:00Z|Concordo.|false|Some(0)",
+                "Ana Souza|AS|2026-10-30T14:45:00Z|Outra palavra?|false|None",
+                "frase.",
+                "Segundalonga",
+            ]
+        );
+        for format in [Format::Docx, Format::Odt, Format::Nova] {
+            let bytes = save(&doc, format, "t");
+            let back = open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
+            assert_eq!(summary(&back), want, "{format:?}");
+            assert_eq!(back.to_plain_text(), doc.to_plain_text(), "{format:?}");
+            assert!(!back.can_undo(), "{format:?}");
+        }
+    }
 }

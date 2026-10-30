@@ -42,6 +42,10 @@ pub enum Mark {
     Footnote {
         id: String,
     },
+    /// Trecho comentado; o comentário fica nas configurações do documento (`cm:<id>`).
+    Comment {
+        id: String,
+    },
 }
 
 /// Caractere da chamada de nota de rodapé (uso privado do Unicode).
@@ -98,6 +102,7 @@ pub enum MarkKind {
     VertAlign,
     Link,
     Footnote,
+    Comment,
 }
 
 impl MarkKind {
@@ -115,6 +120,7 @@ impl MarkKind {
             MarkKind::VertAlign => "vertAlign",
             MarkKind::Link => "link",
             MarkKind::Footnote => "footnote",
+            MarkKind::Comment => "comment",
         }
     }
 }
@@ -133,6 +139,7 @@ impl Mark {
             Mark::VertAlign { .. } => MarkKind::VertAlign,
             Mark::Link { .. } => MarkKind::Link,
             Mark::Footnote { .. } => MarkKind::Footnote,
+            Mark::Comment { .. } => MarkKind::Comment,
         }
     }
 
@@ -144,7 +151,7 @@ impl Mark {
             | Mark::Highlight { value }
             | Mark::VertAlign { value } => AttrValue::Text(value.clone()),
             Mark::Link { href } => AttrValue::Text(href.clone()),
-            Mark::Footnote { id } => AttrValue::Text(id.clone()),
+            Mark::Footnote { id } | Mark::Comment { id } => AttrValue::Text(id.clone()),
             Mark::FontSize { half_points } => AttrValue::Number(f64::from(*half_points)),
         }
     }
@@ -173,9 +180,9 @@ impl Mark {
             Mark::Link { href } if !is_link(href) => Err(DomainError::InvalidMark(format!(
                 "link {href:?}: use http(s)://, mailto:, tel:, ftp:// ou file://"
             ))),
-            Mark::Footnote { id } if !is_note_id(id) => Err(DomainError::InvalidMark(format!(
-                "nota {id:?}: id de 1 a 32 letras ou dígitos"
-            ))),
+            Mark::Footnote { id } | Mark::Comment { id } if !is_note_id(id) => Err(
+                DomainError::InvalidMark(format!("nota {id:?}: id de 1 a 32 letras ou dígitos")),
+            ),
             _ => Ok(()),
         }
     }
@@ -200,6 +207,9 @@ impl Mark {
             ("link", AttrValue::Text(v)) if is_link(v) => Some(Mark::Link { href: v.clone() }),
             ("footnote", AttrValue::Text(v)) if is_note_id(v) => {
                 Some(Mark::Footnote { id: v.clone() })
+            }
+            ("comment", AttrValue::Text(v)) if is_note_id(v) => {
+                Some(Mark::Comment { id: v.clone() })
             }
             _ => None,
         }

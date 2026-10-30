@@ -50,6 +50,12 @@ export type CommandId =
   | "review.spelling"
   | "review.autocorrect"
   | "review.wordCount"
+  | "review.newComment"
+  | "review.deleteComment"
+  | "review.deleteAllComments"
+  | "review.prevComment"
+  | "review.nextComment"
+  | "review.showComments"
   | "references.footnote"
   | "references.nextFootnote"
   | "style.paragraph"
@@ -94,6 +100,7 @@ const COMMON: Bindings = {
   "para.showMarks": ["Ctrl+Shift+8"],
   "review.spelling": ["F7"],
   "review.wordCount": ["Ctrl+Shift+G"],
+  "review.newComment": ["Ctrl+Alt+M"],
   "references.footnote": ["Ctrl+Alt+F"],
   "style.paragraph": ["Ctrl+Alt+0"],
   "style.heading1": ["Ctrl+Alt+1"],
