@@ -13,9 +13,11 @@ export interface ReviewTabProps {
   profile: Profile;
   onProofing: (proofing: Proofing) => void;
   onCommand: (command: CommandId) => void;
+  showComments: boolean;
+  hasComments: boolean;
 }
 
-export function ReviewTab({ proofing, profile, onProofing, onCommand }: ReviewTabProps) {
+export function ReviewTab({ proofing, profile, onProofing, onCommand, showComments, hasComments }: ReviewTabProps) {
   const { t } = useI18n();
   const button = (command: CommandId, icon: ReactNode) => (
     <button
@@ -34,6 +36,57 @@ export function ReviewTab({ proofing, profile, onProofing, onCommand }: ReviewTa
         {button("review.spelling", reviewIcons.spelling)}
         {button("review.autocorrect", reviewIcons.autocorrect)}
         {button("review.wordCount", reviewIcons.wordCount)}
+      </RibbonGroup>
+      <RibbonGroup label={t("group.comments")}>
+        {button("review.newComment", reviewIcons.newComment)}
+        <MenuButton
+          label={t("cm.deleteMenu")}
+          title={t("cm.deleteTip")}
+          className="big-button"
+          disabled={!hasComments}
+          render={(close) => (
+            <>
+              <MenuItem
+                onSelect={() => {
+                  close();
+                  onCommand("review.deleteComment");
+                }}
+              >
+                {t("cmd.review.deleteComment")}
+              </MenuItem>
+              <MenuItem
+                onSelect={() => {
+                  close();
+                  onCommand("review.deleteAllComments");
+                }}
+              >
+                {t("cmd.review.deleteAllComments")}
+              </MenuItem>
+            </>
+          )}
+        >
+          {reviewIcons.deleteComment}
+          <span>{t("cm.deleteMenu")}</span>
+        </MenuButton>
+        <div className="stack">
+          <button className="small-button" onMouseDown={keepFocus} disabled={!hasComments} onClick={() => onCommand("review.prevComment")}>
+            {reviewIcons.prevComment}
+            <span>{t("cmd.review.prevComment")}</span>
+          </button>
+          <button className="small-button" onMouseDown={keepFocus} disabled={!hasComments} onClick={() => onCommand("review.nextComment")}>
+            {reviewIcons.nextComment}
+            <span>{t("cmd.review.nextComment")}</span>
+          </button>
+          <button
+            className={`small-button${showComments ? " active" : ""}`}
+            aria-pressed={showComments}
+            onMouseDown={keepFocus}
+            onClick={() => onCommand("review.showComments")}
+          >
+            {reviewIcons.showComments}
+            <span>{t("cmd.review.showComments")}</span>
+          </button>
+        </div>
       </RibbonGroup>
       <RibbonGroup label={t("group.language")}>
         <MenuButton
@@ -123,6 +176,41 @@ function Icon({ children, ...props }: SVGProps<SVGSVGElement> & { children: Reac
 }
 
 export const reviewIcons = {
+  /** Balão de fala com "+": Novo Comentário. */
+  newComment: (
+    <Icon>
+      <path d="M3.5 4.5h13v9h-7l-4 3v-3h-2z" />
+      <path d="M10 6.8v4.4M7.8 9h4.4" />
+    </Icon>
+  ),
+  /** Balão de fala com "×": Excluir comentário. */
+  deleteComment: (
+    <Icon>
+      <path d="M3.5 4.5h13v9h-7l-4 3v-3h-2z" />
+      <path d="M8.2 7.2l3.6 3.6M11.8 7.2l-3.6 3.6" />
+    </Icon>
+  ),
+  /** Balão com seta para cima: Comentário Anterior. */
+  prevComment: (
+    <Icon>
+      <path d="M3.5 4.5h13v9h-7l-4 3v-3h-2z" />
+      <path d="M10 11.5v-5M7.8 8.7L10 6.5l2.2 2.2" />
+    </Icon>
+  ),
+  /** Balão com seta para baixo: Próximo Comentário. */
+  nextComment: (
+    <Icon>
+      <path d="M3.5 4.5h13v9h-7l-4 3v-3h-2z" />
+      <path d="M10 6.5v5M7.8 9.3L10 11.5l2.2-2.2" />
+    </Icon>
+  ),
+  /** Dois balões: Mostrar Comentários. */
+  showComments: (
+    <Icon>
+      <path d="M2.5 3.5h10v7h-5l-3 2.5v-2.5h-2z" />
+      <path d="M14.5 7.5h3v7h-2v2.5l-3-2.5h-4.5v-2" />
+    </Icon>
+  ),
   /** "123" sobre linhas de texto: Contar Palavras. */
   wordCount: (
     <Icon strokeWidth="1.5">

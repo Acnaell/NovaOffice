@@ -8,6 +8,15 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Comentários** (Revisão → Novo Comentário, Ctrl+Alt+M): o trecho selecionado (ou a palavra do
+  cursor) fica destacado e o balão aparece na margem direita, com autor, data e iniciais. Dá para
+  responder, editar (clique duplo), resolver, reabrir e excluir; Anterior e Próximo andam pelos
+  comentários e Mostrar Comentários esconde a coluna. Lidos e gravados em .docx (`comments.xml` e
+  `commentsExtended.xml`) e .odt (`office:annotation`), com respostas e resolvido, validados no
+  LibreOffice nos dois sentidos.
+
 ### Corrigido
 
 - No .odt com cabeçalho ou rodapé, o texto começa na margem certa no LibreOffice (antes o cabeçalho

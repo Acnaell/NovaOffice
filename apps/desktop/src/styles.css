@@ -33,6 +33,10 @@
   --page-bg: #ffffff;
   --page-text: #1d1d1b;
   --page-shadow: 0 1px 3px rgb(29 45 61 / 0.14), 0 4px 16px rgb(29 45 61 / 0.07);
+  /* Trecho comentado (o papel é sempre claro). */
+  --cm-mark: rgb(240 127 156 / 0.18);
+  --cm-line: rgb(214 83 120 / 0.55);
+  --cm-active: rgb(240 127 156 / 0.42);
 
   color-scheme: light;
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -1893,6 +1897,269 @@ select {
 
   .page .link {
     color: inherit;
+  }
+}
+
+/* ---------- Comentários ---------- */
+
+/* Papel e coluna de balões lado a lado, centralizados juntos. */
+.paper-row {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 20px;
+  min-width: min-content;
+}
+
+.paper-row > .paper {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.page .cm {
+  background: var(--cm-mark);
+  border-bottom: 2px solid var(--cm-line);
+}
+
+.paper-row.hide-comments .page .cm {
+  background: none;
+  border-bottom: none;
+}
+
+::highlight(nova-comment) {
+  background-color: var(--cm-active);
+}
+
+.comments-pane {
+  position: relative;
+  flex: 0 0 280px;
+  align-self: stretch;
+}
+
+.scroller .comments-pane {
+  zoom: var(--zoom, 1);
+}
+
+.cm-card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  padding: 10px 12px;
+  background: var(--ribbon-bg);
+  color: var(--chrome-text);
+  border: 1px solid var(--chrome-border);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgb(29 45 61 / 0.08);
+  font-size: 13px;
+  line-height: 1.4;
+  transition: top 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cm-card:not(.active) {
+  cursor: pointer;
+}
+
+.cm-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 2px 10px rgb(29 45 61 / 0.16);
+  z-index: 1;
+}
+
+.cm-card.done:not(.active) {
+  opacity: 0.6;
+}
+
+.cm-card.done:not(.active) .cm-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cm-entry + .cm-entry {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--chrome-border);
+}
+
+.cm-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  padding-right: 52px;
+}
+
+.cm-entry:not(.first) .cm-head {
+  padding-right: 0;
+}
+
+.cm-avatar {
+  flex: 0 0 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  background: hsl(var(--hue) 45% 42%);
+}
+
+.cm-author {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cm-date {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--chrome-muted);
+  font-size: 11.5px;
+}
+
+.cm-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cm-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.cm-card:not(.active):not(:hover) .cm-tool {
+  visibility: hidden;
+}
+
+.cm-tool {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.cm-tool:hover {
+  background: var(--button-hover);
+}
+
+.cm-tool svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cm-badge {
+  margin-right: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--chrome-muted);
+  background: var(--button-hover);
+}
+
+.cm-card.done .cm-head {
+  padding-right: 120px;
+}
+
+.cm-more {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--chrome-muted);
+}
+
+.cm-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.cm-entry .cm-composer {
+  margin-top: 2px;
+}
+
+.cm-input,
+.cm-name {
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  color: inherit;
+  background: var(--chrome-bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: 6px;
+  resize: none;
+  overflow: hidden;
+}
+
+.cm-input:focus,
+.cm-name:focus {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.cm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.cm-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.cm-btn:hover:not(:disabled) {
+  background: var(--button-hover);
+}
+
+.cm-btn.primary {
+  color: var(--ribbon-bg);
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.cm-btn.primary:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+.cm-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Na impressão, só o texto: sem balões nem destaque. */
+@media print {
+  .comments-pane {
+    display: none;
+  }
+
+  .page .cm {
+    background: none;
+    border-bottom: none;
+  }
+
+  .paper-row {
+    display: block;
   }
 }
 

@@ -27,6 +27,8 @@ pub struct DocView {
     pub watermark: Option<nova_domain_text::Watermark>,
     /// Texto das notas de rodapé, pelo id da marca `footnote` das chamadas.
     pub footnotes: std::collections::BTreeMap<String, String>,
+    /// Comentários (Revisão), pelo id da marca `comment` do trecho.
+    pub comments: std::collections::BTreeMap<String, nova_domain_text::Comment>,
 }
 
 #[derive(Debug, Serialize)]
@@ -64,6 +66,8 @@ pub struct ViewPatch {
     pub watermark: Option<nova_domain_text::Watermark>,
     /// Texto das notas de rodapé, pelo id da marca `footnote` das chamadas.
     pub footnotes: std::collections::BTreeMap<String, String>,
+    /// Comentários (Revisão), pelo id da marca `comment` do trecho.
+    pub comments: std::collections::BTreeMap<String, nova_domain_text::Comment>,
 }
 
 /// Faixa de parágrafos alterada, no documento atual: `[start, end)`. Cresce a
@@ -143,7 +147,8 @@ fn dirty_range(events: &[TextEvent]) -> Option<(u32, u32)> {
             | TextEvent::PageSet { .. }
             | TextEvent::HeaderFooterSet { .. }
             | TextEvent::WatermarkSet { .. }
-            | TextEvent::FootnoteSet { .. } => return None,
+            | TextEvent::FootnoteSet { .. }
+            | TextEvent::CommentSet { .. } => return None,
         }
     }
     Some(dirty.0.unwrap_or((0, 0)))
@@ -234,6 +239,7 @@ impl Editor {
             header_footer: view.header_footer,
             watermark: view.watermark,
             footnotes: view.footnotes,
+            comments: view.comments,
         }
     }
 
@@ -261,6 +267,7 @@ impl Editor {
             header_footer: doc.header_footer(),
             watermark: doc.watermark(),
             footnotes: doc.footnote_texts(),
+            comments: doc.comment_map(),
         }
     }
 

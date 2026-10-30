@@ -19,9 +19,10 @@ export function fragmentOf(doc: DocView, sel: Selection): Fragment {
     const block = doc.blocks[b];
     const start = b === from.block ? from.offset : 0;
     const end = b === to.block ? to.offset : blockText(block).length;
+    // O comentário fica com o trecho original: a cópia sai sem ele.
     const spans = pieces(doc, { block: b, offset: start }, { block: b, offset: end }).map((p) => ({
       text: p.text,
-      marks: p.marks,
+      marks: p.marks.filter((m) => m.mark !== "comment"),
     }));
     out.push({ style: block.style, attrs: block.attrs, spans });
   }

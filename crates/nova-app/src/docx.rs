@@ -43,7 +43,8 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
     let page = doc.page_setup();
     let watermark = doc.watermark();
     let notes = doc.footnotes();
-    let (body, nums, links) = body_xml(&paragraphs, &images, &page, &notes);
+    let comments = doc.comments();
+    let (body, nums, links) = body_xml(&paragraphs, &images, &page, &notes, &comments);
     let media_names: Vec<String> = images
         .iter()
         .enumerate()
@@ -104,6 +105,19 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         );
     }
     // Notas de rodapé: word/footnotes.xml (com os separadores).
+    // Comentários: word/comments.xml e, para resolvido e respostas, commentsExtended.xml.
+    if !comments.is_empty() {
+        extra_files.push((
+            "word/comments.xml",
+            crate::comments::docx_comments_xml(&comments),
+        ));
+        extra_files.push((
+            "word/commentsExtended.xml",
+            crate::comments::docx_comments_ext_xml(&comments),
+        ));
+        extra_rels.push_str(r#"<Relationship Id="rIdCm" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/><Relationship Id="rIdCmEx" Type="http://schemas.microsoft.com/office/2011/relationships/commentsExtended" Target="commentsExtended.xml"/>"#);
+        extra_types.push_str(r#"<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/>"#);
+    }
     if !notes.is_empty() {
         extra_files.push(("word/footnotes.xml", footnotes_xml(&notes)));
         extra_rels.push_str(r#"<Relationship Id="rIdFn" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>"#);
@@ -458,7 +472,7 @@ fn drawing_xml(out: &mut String, image: &nova_domain_text::ImageRef, index: usiz
     ));
 }
 
-fn esc(text: &str) -> String {
+pub(crate) fn esc(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
         match ch {
@@ -649,7 +663,17 @@ fn body_xml(
     images: &[(String, String, Vec<u8>)],
     page: &nova_domain_text::PageSetup,
     notes: &[(String, String)],
+    comments: &[(String, nova_domain_text::Comment)],
 ) -> (String, Vec<Num>, Vec<String>) {
+    let comment_ids = crate::comments::DocxIds::new(comments);
+    // Comentário aberto (w:commentRangeStart já escrito): pode atravessar parágrafos.
+    let mut open_comment: Option<&str> = None;
+    let comment_of = |span: &'_ Span| -> Option<String> {
+        span.marks.iter().find_map(|m| match m {
+            Mark::Comment { id } if comments.iter().any(|(c, _)| c == id) => Some(id.clone()),
+            _ => None,
+        })
+    };
     let mut links: Vec<String> = Vec::new();
     let mut nums = vec![Num::Bullet];
     let mut out = String::from(DOC_START);
@@ -754,6 +778,19 @@ fn body_xml(
         // Trechos vizinhos com o mesmo link ficam num só w:hyperlink.
         let mut open_link: Option<&str> = None;
         for span in &p.spans {
+            let comment = comment_of(span);
+            if comment.as_deref() != open_comment {
+                if let Some(id) = open_comment {
+                    comment_ids.close(id, &mut out);
+                }
+                if let Some(id) = &comment {
+                    comment_ids.open(id, &mut out);
+                }
+                open_comment = comment
+                    .as_deref()
+                    .and_then(|id| comments.iter().find(|(c, _)| c == id))
+                    .map(|(c, _)| c.as_str());
+            }
             let link = link_of(span);
             if link != open_link {
                 if open_link.is_some() {
@@ -792,6 +829,18 @@ fn body_xml(
         }
         if open_link.is_some() {
             out.push_str("</w:hyperlink>");
+        }
+        // O comentário continua no parágrafo seguinte se ele começa no mesmo comentário.
+        if let Some(id) = open_comment {
+            let continues = paragraphs
+                .get(index + 1)
+                .and_then(|n| n.spans.first())
+                .and_then(comment_of)
+                .is_some_and(|next| next == id);
+            if !continues {
+                comment_ids.close(id, &mut out);
+                open_comment = None;
+            }
         }
         if let Some(entry) = toc_entry {
             out.push_str(&format!(
@@ -978,12 +1027,13 @@ const CORE_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?
 
 /// Estilos com os nomes internos do Word ("heading 1"…), que ele traduz para
 /// "Título 1" na interface em português. Tamanhos iguais aos do Nova Text.
-const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:uiPriority w:val="39"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="TOCHeading"><w:name w:val="TOC Heading"/><w:basedOn w:val="Heading1"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:qFormat/><w:pPr><w:outlineLvl w:val="9"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC2"><w:name w:val="toc 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="220"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC3"><w:name w:val="toc 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="440"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC4"><w:name w:val="toc 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="660"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC5"><w:name w:val="toc 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="880"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC6"><w:name w:val="toc 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="1100"/></w:pPr></w:style></w:styles>"#;
+const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="4A4A46"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:uiPriority w:val="39"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="TOCHeading"><w:name w:val="TOC Heading"/><w:basedOn w:val="Heading1"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:qFormat/><w:pPr><w:outlineLvl w:val="9"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC2"><w:name w:val="toc 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="220"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC3"><w:name w:val="toc 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="440"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC4"><w:name w:val="toc 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="660"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC5"><w:name w:val="toc 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="880"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="TOC6"><w:name w:val="toc 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="100"/><w:ind w:left="1100"/></w:pPr></w:style></w:styles>"#;
 
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media, page, header_footer, watermark, notes) = read_document(bytes)?;
+    let (paragraphs, media, page, header_footer, watermark, notes, comments) =
+        read_document(bytes)?;
     let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
         doc.put_media(&id, &mime, &data)?;
@@ -999,6 +1049,9 @@ pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> 
     }
     if !notes.is_empty() {
         doc.load_footnotes(&notes)?;
+    }
+    if !comments.is_empty() {
+        doc.load_comments(&comments)?;
     }
     Ok(doc)
 }
@@ -1030,7 +1083,7 @@ fn part(zip: &mut ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Option<String
 }
 
 /// Valor de um atributo pelo nome local (`w:val` → `val`).
-fn attr(e: &BytesStart, name: &[u8]) -> Option<String> {
+pub(crate) fn attr(e: &BytesStart, name: &[u8]) -> Option<String> {
     e.attributes().flatten().find_map(|a| {
         (a.key.local_name().as_ref() == name).then(|| {
             a.unescape_value()
@@ -1586,6 +1639,7 @@ type Document = (
     nova_domain_text::HeadersFooters,
     Option<nova_domain_text::Watermark>,
     Vec<(String, String)>,
+    Vec<(String, nova_domain_text::Comment)>,
 );
 
 fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
@@ -1632,6 +1686,27 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         None => HashMap::new(),
     };
     let mut notes: Vec<(String, String)> = Vec::new();
+    // Comentários: w:id → (id no Nova, comentário); os trechos abertos (w:commentRangeStart).
+    let comment_part = |zip: &mut ZipArchive<Cursor<&[u8]>>, kind: &str| -> Option<String> {
+        let target = read_rels(&rels, kind).into_values().next()?;
+        part(zip, &format!("word/{}", target.trim_start_matches('/'))).ok()?
+    };
+    let docx_comments = match comment_part(&mut zip, "/comments") {
+        Some(xml) => {
+            let ext = comment_part(&mut zip, "/commentsExtended");
+            crate::comments::read_docx_comments(&xml, ext.as_deref())
+        }
+        None => HashMap::new(),
+    };
+    let mut comment_stack: Vec<String> = Vec::new();
+    // Comentários que marcaram algum trecho e os que se sobrepuseram (para achar
+    // respostas gravadas sem commentsExtended, como faz o LibreOffice).
+    let mut comment_marked: std::collections::HashSet<String> = Default::default();
+    let mut comment_overlaps: Vec<(String, String)> = Vec::new();
+    // Comentários com trecho (w:commentRangeStart) e a última referência sem texto depois dela.
+    let mut comment_ranged: std::collections::HashSet<String> = Default::default();
+    let mut last_reference: Option<String> = None;
+    let mut point_replies: Vec<(String, String)> = Vec::new();
     let header_rels = read_rels(&rels, "/header");
     let footer_rels = read_rels(&rels, "/footer");
     let mut header_footer = nova_domain_text::HeadersFooters::default();
@@ -1925,6 +2000,40 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                         if let Some(href) = &link {
                             run.set(Mark::Link { href: href.clone() });
                         }
+                        if let Some(id) = comment_stack.last() {
+                            run.set(Mark::Comment { id: id.clone() });
+                            comment_marked.insert(id.clone());
+                        }
+                    }
+                    // Trecho comentado: vale o comentário aberto por último (respostas não marcam).
+                    b"commentRangeStart" => {
+                        if let Some((id, c)) = attr(e, b"id").and_then(|w| docx_comments.get(&w)) {
+                            comment_ranged.insert(id.clone());
+                            if c.parent.is_none() {
+                                for other in &comment_stack {
+                                    comment_overlaps.push((id.clone(), other.clone()));
+                                }
+                                comment_stack.push(id.clone());
+                            }
+                        }
+                    }
+                    b"commentRangeEnd" => {
+                        if let Some((id, _)) = attr(e, b"id").and_then(|w| docx_comments.get(&w)) {
+                            comment_stack.retain(|c| c != id);
+                        }
+                    }
+                    // Referência sem trecho logo depois da de outro comentário: é uma resposta
+                    // (o LibreOffice grava as respostas assim).
+                    b"commentReference" if empty => {
+                        if let Some((id, c)) = attr(e, b"id").and_then(|w| docx_comments.get(&w)) {
+                            if !comment_ranged.contains(id) && c.parent.is_none() {
+                                if let Some(prev) = &last_reference {
+                                    point_replies.push((id.clone(), prev.clone()));
+                                }
+                            } else {
+                                last_reference = Some(id.clone());
+                            }
+                        }
                     }
                     b"hyperlink" if !empty => {
                         link = attr(e, b"id")
@@ -2004,6 +2113,7 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                 }
             }
             Event::Text(t) if in_text && skip_depth == 0 => {
+                last_reference = None;
                 let text = t.unescape().map_err(|e| invalid(format!("XML: {e}")))?;
                 push_text(&mut para, &run, &text);
             }
@@ -2127,7 +2237,36 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
             }
         }
     }
-    Ok((out, media, page, header_footer, watermark, notes))
+    let mut comments: Vec<(String, nova_domain_text::Comment)> =
+        docx_comments.into_values().collect();
+    // Comentário sem trecho próprio, escondido por outro no mesmo trecho: vira resposta dele.
+    let parents: HashMap<String, String> = comments
+        .iter()
+        .filter(|(id, c)| c.parent.is_none() && !comment_marked.contains(id))
+        .filter_map(|(id, _)| {
+            comment_overlaps.iter().find_map(|(a, b)| {
+                let other = if a == id {
+                    b
+                } else if b == id {
+                    a
+                } else {
+                    return None;
+                };
+                comment_marked
+                    .contains(other)
+                    .then(|| (id.clone(), other.clone()))
+            })
+        })
+        .collect();
+    let mut parents = parents;
+    parents.extend(point_replies);
+    for (id, c) in comments.iter_mut() {
+        if let Some(parent) = parents.get(id) {
+            c.parent = Some(parent.clone());
+        }
+    }
+    comments.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok((out, media, page, header_footer, watermark, notes, comments))
 }
 
 /// Cores que o Word e o LibreOffice dão aos links.

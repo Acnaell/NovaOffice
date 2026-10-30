@@ -12,6 +12,7 @@ import { autoLink, autoList, changeIndent, isDark, linkOf, listMarkers } from ".
 import { moveToCell, tableGrid } from "./tables";
 import { paginate, unpaginate, type PageInfo } from "./paginate";
 import { screenPages, tocTargets } from "./toc";
+import { commentOf, CommentsPane, usePendingHighlight, type CommentsPaneProps } from "./comments";
 import { footnoteOf, footnoteOrder, FootnotesLayer, FootnotesPrint, NOTE_SEPARATOR, noteHeight, notesByPage, type PageNotes } from "./footnotes";
 import { HeaderFooterLayer, splitFields, type Part } from "./headerfooter";
 import { paperStyle, printDesignCss, printMarginBoxes } from "./design";
@@ -77,6 +78,9 @@ interface Props {
   onFootnoteFocused: () => void;
   onFootnoteChange: (id: string, text: string) => void;
   onFootnoteDone: () => void;
+  /** Comentários: coluna de balões à direita (Revisão → Mostrar Comentários). */
+  showComments: boolean;
+  comments: Omit<CommentsPaneProps, "view" | "revision" | "root" | "pages">;
 }
 
 /** Distância do cabeçalho e do rodapé à borda do papel: 1,25 cm (708 twips), o padrão do Word. */
@@ -575,7 +579,18 @@ export function Editor(props: Props) {
     };
   }, []);
 
+  const [root, setRoot] = useState<HTMLDivElement | null>(null);
+  useLayoutEffect(() => setRoot(rootRef.current), []);
+  const showComments = props.showComments && Object.keys(props.view.comments).length + (props.comments.pending ? 1 : 0) > 0;
+  usePendingHighlight(root, props.showComments ? props.comments.pending : null, props.revision);
+  // Destaque do trecho do comentário ativo e dos resolvidos (os ids são só letras e dígitos).
+  const commentCss = Object.entries(props.view.comments)
+    .filter(([id, c]) => /^[A-Za-z0-9]+$/.test(id) && (c.done || id === props.comments.active))
+    .map(([id]) => `.page .cm[data-cm="${id}"]{${id === props.comments.active ? "background:var(--cm-active)" : "background:transparent;border-bottom-color:transparent"}}`)
+    .join("");
   return (
+    <div className={`paper-row${showComments ? " with-comments" : ""}${props.showComments ? "" : " hide-comments"}`}>
+    {commentCss && <style>{commentCss}</style>}
     <div className={`paper${props.hfEditing ? " hf-mode" : ""}`} style={{ width: `${px(page.width)}px`, ...paperStyle(page) }}>
       <div className="sheets" aria-hidden="true">
         {Array.from({ length: pages }, (_, k) => (
@@ -635,6 +650,8 @@ export function Editor(props: Props) {
         onClose={props.onHfClose}
       />
       <PrintDesign page={page} watermark={props.view.watermark} />
+    </div>
+      {showComments && <CommentsPane {...props.comments} view={props.view} revision={props.revision} root={root} pages={pages} />}
     </div>
   );
 }
@@ -778,7 +795,8 @@ const Block = memo(function Block({
             key={j}
             style={spanStyle(span.marks)}
             data-fn={footnoteOf(span.marks) ?? undefined}
-            className={footnoteOf(span.marks) ? "fn-ref" : linkOf(span.marks) ? "link" : undefined}
+            data-cm={commentOf(span.marks) ?? undefined}
+            className={[footnoteOf(span.marks) ? "fn-ref" : linkOf(span.marks) ? "link" : "", commentOf(span.marks) ? "cm" : ""].join(" ").trim() || undefined}
             data-href={linkOf(span.marks) ?? undefined}
             title={linkOf(span.marks) ? `${linkOf(span.marks)}\n${labels.followLink}` : undefined}
           >

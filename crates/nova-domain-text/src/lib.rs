@@ -6,8 +6,11 @@
 //!
 //! Offsets são unidades UTF-16 dentro de um bloco (parágrafo).
 
+mod comments;
 mod design;
 mod format;
+
+pub use comments::{Comment, MAX_COMMENT_CHARS};
 
 pub use design::{
     BorderStyle, PageBorder, Watermark, WatermarkLayout, BORDER_WIDTHS, MAX_WATERMARK_CHARS,
@@ -302,6 +305,10 @@ pub enum TextCommand {
     /// `text: null` apaga a nota.
     #[serde(rename = "footnote.set")]
     SetFootnote { id: String, text: Option<String> },
+    /// Comentário (Revisão): `{"type":"comment.set","id":"c1","value":{…}}`;
+    /// `value: null` apaga o comentário (a marca no texto sai à parte, com text.removeMark).
+    #[serde(rename = "comment.set")]
+    SetComment { id: String, value: Option<Comment> },
     /// Tamanho do papel e margens (aba Layout): `{"type":"page.set","page":{…}}`.
     #[serde(rename = "page.set")]
     SetPage { page: PageSetup },
@@ -389,6 +396,10 @@ pub enum TextEvent {
     FootnoteSet {
         id: String,
         text: Option<String>,
+    },
+    CommentSet {
+        id: String,
+        value: Option<Comment>,
     },
 }
 
@@ -579,10 +590,15 @@ impl TextDocument {
             } => {
                 validate_inline(&text)?;
                 // Digitar logo depois de um link não estende o link (Word); dentro dele, sim.
-                let ends_link = marks.is_none()
-                    && offset > 0
-                    && self.link_at(block, offset - 1)?.is_some()
-                    && self.link_at(block, offset - 1)? != self.link_at(block, offset)?;
+                let ends = |kind: MarkKind| -> Result<bool, DomainError> {
+                    Ok(marks.is_none() && offset > 0 && {
+                        let before = self.mark_at(block, offset - 1, kind)?;
+                        before.is_some() && before != self.mark_at(block, offset, kind)?
+                    })
+                };
+                let ends_link = ends(MarkKind::Link)?;
+                // Digitar logo depois de um trecho comentado também não estende o comentário.
+                let ends_comment = ends(MarkKind::Comment)?;
                 let attrs = marks.map(|marks| marks_to_attrs(&marks)).transpose()?;
                 self.replica
                     .insert_text(block, offset, &text, attrs.as_ref())?;
@@ -592,6 +608,14 @@ impl TextDocument {
                         offset,
                         utf16_len(&text),
                         &[(MarkKind::Link.key().to_string(), None)],
+                    )?;
+                }
+                if ends_comment {
+                    self.replica.format_text(
+                        block,
+                        offset,
+                        utf16_len(&text),
+                        &[(MarkKind::Comment.key().to_string(), None)],
                     )?;
                 }
                 // A marca de nota só vale no caractere da chamada: texto digitado
@@ -731,6 +755,20 @@ impl TextDocument {
                 self.replica
                     .set_settings(&[(note_key(&id), text.clone().map(AttrValue::Text))]);
                 TextEvent::FootnoteSet { id, text }
+            }
+            TextCommand::SetComment { id, value } => {
+                match &value {
+                    Some(c) => c.validate(&id)?,
+                    None if !is_note_id(&id) => {
+                        return Err(DomainError::InvalidMark(format!("comentário {id:?}")))
+                    }
+                    None => {}
+                }
+                self.replica.set_settings(&[(
+                    comments::comment_key(&id),
+                    value.as_ref().map(Comment::to_setting),
+                )]);
+                TextEvent::CommentSet { id, value }
             }
             TextCommand::SetPage { page } => {
                 page.validate()?;
@@ -884,6 +922,64 @@ impl TextDocument {
         Ok(())
     }
 
+    /// Comentários gravados, pelo id (inclusive os sem trecho no texto).
+    pub fn comment_map(&self) -> std::collections::BTreeMap<String, Comment> {
+        self.replica
+            .settings()
+            .iter()
+            .filter_map(|(k, v)| {
+                let id = k.strip_prefix(comments::COMMENT_PREFIX)?;
+                Comment::from_setting(id, v).map(|c| (id.to_string(), c))
+            })
+            .collect()
+    }
+
+    /// Comentários na ordem do trecho no texto, cada um seguido das respostas
+    /// (por data). Comentários sem trecho e respostas soltas ficam de fora.
+    pub fn comments(&self) -> Vec<(String, Comment)> {
+        let mut all = self.comment_map();
+        let mut seen = std::collections::HashSet::new();
+        let mut roots = Vec::new();
+        for p in self.paragraphs() {
+            for span in &p.spans {
+                for mark in &span.marks {
+                    if let Mark::Comment { id } = mark {
+                        if all.get(id).is_some_and(|c| c.parent.is_none())
+                            && seen.insert(id.clone())
+                        {
+                            roots.push(id.clone());
+                        }
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for root in roots {
+            let c = all.remove(&root).expect("comentário listado");
+            out.push((root.clone(), c));
+            let mut replies: Vec<(String, Comment)> = all
+                .iter()
+                .filter(|(_, c)| c.parent.as_deref() == Some(root.as_str()))
+                .map(|(id, c)| (id.clone(), c.clone()))
+                .collect();
+            replies.sort_by(|a, b| a.1.date.cmp(&b.1.date).then(a.0.cmp(&b.0)));
+            out.extend(replies);
+        }
+        out
+    }
+
+    /// Define os comentários ao abrir um arquivo, sem entrar no desfazer.
+    pub fn load_comments(&mut self, list: &[(String, Comment)]) -> Result<(), DomainError> {
+        let mut changes = Vec::new();
+        for (id, c) in list {
+            c.validate(id)?;
+            changes.push((comments::comment_key(id), Some(c.to_setting())));
+        }
+        self.replica.set_settings(&changes);
+        self.replica.clear_history();
+        Ok(())
+    }
+
     /// Tamanho do papel, margens, cor e borda da página.
     pub fn page_setup(&self) -> PageSetup {
         PageSetup::from_settings(&self.replica.settings())
@@ -924,15 +1020,13 @@ impl TextDocument {
     }
 
     /// Link do caractere na posição (UTF-16), se houver.
-    fn link_at(&self, block: u32, at: u32) -> Result<Option<String>, DomainError> {
+    /// Valor da marca `kind` no caractere `at` do bloco, se houver.
+    fn mark_at(&self, block: u32, at: u32, kind: MarkKind) -> Result<Option<Mark>, DomainError> {
         let mut start = 0;
         for span in self.block_spans(block)? {
             let end = start + utf16_len(&span.text);
             if at >= start && at < end {
-                return Ok(span.marks.into_iter().find_map(|m| match m {
-                    Mark::Link { href } => Some(href),
-                    _ => None,
-                }));
+                return Ok(span.marks.into_iter().find(|m| m.kind() == kind));
             }
             start = end;
         }

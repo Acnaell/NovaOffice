@@ -59,12 +59,13 @@ import { ReviewTab, useReviewShortcuts } from "./ReviewTab";
 import { DesignTab } from "./DesignTab";
 import { ReferencesTab } from "./ReferencesTab";
 import { insertFootnote, newFootnoteId, nextFootnote } from "./footnotes";
+import { addComment, commentAt, commentTarget, deleteAllComments, deleteComment, initialsOf, newCommentId, nextComment, nowIso, type Pending } from "./comments";
 import { findToc, insertToc, removeToc, screenPages, updateToc } from "./toc";
 import { SpellingPane } from "./SpellingPane";
 import { AutoCorrectDialog } from "./AutoCorrectDialog";
 import { WordCountDialog } from "./WordCountDialog";
 import { autoCorrect, loadAutoCorrect, storeAutoCorrect, type AutoCorrectOptions } from "./autocorrect";
-import type { Pos } from "./types";
+import type { Comment, Pos } from "./types";
 import { SpellMenu } from "./SpellMenu";
 import { load, store } from "./storage";
 import { matchShortcut, profileFor } from "./shortcuts";
@@ -93,7 +94,7 @@ const PARAGRAPH_SPACE = 12;
 /** Intervalo da recuperação automática (o Word usa 10 min; aqui é mais curto). */
 const AUTOSAVE_MS = 60_000;
 
-const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, watermark: null, footnotes: {} };
+const EMPTY_VIEW: DocView = { blocks: [], canUndo: false, canRedo: false, path: null, title: "", dirty: false, format: null, page: DEFAULT_PAGE, headerFooter: DEFAULT_HEADER_FOOTER, watermark: null, footnotes: {}, comments: {} };
 
 /** Idioma de revisão escolhido na barra de status (sem escolha, segue o da interface). */
 const PROOFING_KEY = "nova.proofing";
@@ -475,6 +476,63 @@ export default function App() {
   const [hfEditing, setHfEditing] = useState<{ part: Part; page: number } | null>(null);
   // Nota de rodapé recém-inserida: o Editor põe o cursor nela.
   const [footnoteFocus, setFootnoteFocus] = useState<string | null>(null);
+
+  // ---------- Comentários ----------
+  const [showComments, setShowComments] = useState(() => load("nova.showComments") !== "0");
+  const [author, setAuthor] = useState(() => load("nova.author") ?? "");
+  // Comentário ativo: o do cursor, ou o balão clicado.
+  const [cmActive, setCmActive] = useState<string | null>(null);
+  const [cmPending, setCmPending] = useState<Pending | null>(null);
+  const cmSelection = state ? `${state.selection.focus.block}:${state.selection.focus.offset}` : "";
+  useEffect(() => {
+    const current = stateRef.current;
+    if (current) setCmActive(commentAt(current.view, current.selection.focus));
+  }, [cmSelection]);
+  const commentAuthor = (name: string) => {
+    if (name && name !== author) {
+      setAuthor(name);
+      store("nova.author", name);
+    }
+  };
+  const cmComment = (text: string, name: string, parent?: string): Comment => ({
+    author: name,
+    initials: initialsOf(name),
+    date: nowIso(),
+    text,
+    done: false,
+    ...(parent ? { parent } : {}),
+  });
+  const commentHandlers = {
+    active: cmActive,
+    pending: cmPending,
+    author,
+    onActivate: setCmActive,
+    onPost: (text: string, name: string) => {
+      const pending = cmPending;
+      setCmPending(null);
+      if (!pending) return;
+      commentAuthor(name);
+      const id = newCommentId();
+      focusEditor();
+      run((doc) => addComment(doc, pending.target, id, cmComment(text, name)));
+      setCmActive(id);
+    },
+    onCancel: () => {
+      setCmPending(null);
+      focusEditor();
+    },
+    onReply: (root: string, text: string) =>
+      run((_doc, sel) => ({ command: { type: "comment.set", id: newCommentId(), value: cmComment(text, author, root) }, selection: sel })),
+    onEdit: (id: string, text: string) =>
+      run((doc, sel) => (doc.comments[id] ? { command: { type: "comment.set", id, value: { ...doc.comments[id], text } }, selection: sel } : null)),
+    onResolve: (root: string, done: boolean) =>
+      run((doc, sel) => (doc.comments[root] ? { command: { type: "comment.set", id: root, value: { ...doc.comments[root], done } }, selection: sel } : null)),
+    onDelete: (root: string) => {
+      setCmActive(null);
+      run((doc, sel) => deleteComment(doc, sel, root));
+    },
+    onDone: () => focusEditor(),
+  };
   const [hfDraft, setHfDraft] = useState<HeadersFooters | null>(null);
   const hfDraftRef = useRef(hfDraft);
   hfDraftRef.current = hfDraft;
@@ -1199,6 +1257,37 @@ export default function App() {
         return setAutoCorrectOpen(true);
       case "review.wordCount":
         return setWordCountOpen(true);
+      case "review.newComment": {
+        const { view: doc, selection: sel } = stateRef.current!;
+        const target = commentTarget(doc, sel);
+        if (!target) return setStatus(t("cm.noText"));
+        if (!showComments) {
+          setShowComments(true);
+          store("nova.showComments", "1");
+        }
+        return setCmPending({ target });
+      }
+      case "review.deleteComment": {
+        const id = cmActive ?? commentAt(stateRef.current!.view, stateRef.current!.selection.focus);
+        if (id) commentHandlers.onDelete(stateRef.current!.view.comments[id]?.parent ?? id);
+        return;
+      }
+      case "review.deleteAllComments":
+        setCmActive(null);
+        return run((doc, sel) => deleteAllComments(doc, sel));
+      case "review.prevComment":
+      case "review.nextComment": {
+        const found = nextComment(stateRef.current!.view, stateRef.current!.selection, command === "review.prevComment");
+        if (!found) return setStatus(t("cm.noMore"));
+        run(() => found.edit);
+        return;
+      }
+      case "review.showComments":
+        setShowComments((v) => {
+          store("nova.showComments", v ? "0" : "1");
+          return !v;
+        });
+        return;
       case "references.footnote": {
         const id = newFootnoteId();
         run((_doc, sel) => insertFootnote(sel, id));
@@ -1395,7 +1484,7 @@ export default function App() {
         page={view.page}
         onPage={setPage}
         onCustomMargins={() => setMarginsDialog(true)}
-        review={<ReviewTab proofing={proofing} profile={profile} onProofing={chooseProofing} onCommand={onCommand} />}
+        review={<ReviewTab proofing={proofing} profile={profile} onProofing={chooseProofing} onCommand={onCommand} showComments={showComments} hasComments={Object.keys(view.comments).length > 0} />}
         design={
           <DesignTab
             page={view.page}
@@ -1476,6 +1565,8 @@ export default function App() {
             onFootnoteFocused={() => setFootnoteFocus(null)}
             onFootnoteChange={(id, text) => run((_doc, sel) => ({ command: { type: "footnote.set", id, text }, selection: sel }))}
             onFootnoteDone={() => document.querySelector<HTMLElement>(".page")?.focus()}
+            showComments={showComments}
+            comments={commentHandlers}
             onPasteImage={pasteImage}
             onEscape={() => {
               if (painter) setPainter(null);

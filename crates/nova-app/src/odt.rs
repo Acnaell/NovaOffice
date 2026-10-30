@@ -37,7 +37,7 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         .iter()
         .map(|(id, (path, ..))| (id.clone(), path.clone()))
         .collect();
-    let content = content_xml(&paragraphs, &paths, &doc.footnotes());
+    let content = content_xml(&paragraphs, &paths, &doc.footnotes(), &doc.comments());
     let mut manifest = MANIFEST
         .trim_end_matches("</manifest:manifest>")
         .to_string();
@@ -515,7 +515,7 @@ fn text_props(marks: &[Mark]) -> String {
                 r#" style:text-position="sub 58%""#
             }),
             // O link é o elemento text:a e a nota é text:note, não estilos.
-            Mark::Link { .. } | Mark::Footnote { .. } => {}
+            Mark::Link { .. } | Mark::Footnote { .. } | Mark::Comment { .. } => {}
         }
     }
     p
@@ -574,7 +574,26 @@ fn content_xml(
     paragraphs: &[Paragraph],
     pictures: &HashMap<String, String>,
     notes: &[(String, String)],
+    comments: &[(String, nova_domain_text::Comment)],
 ) -> String {
+    // Comentário aberto (office:annotation já escrito): pode atravessar parágrafos.
+    let mut open_comment: Option<String> = None;
+    let comment_of = |span: &Span| -> Option<String> {
+        span.marks.iter().find_map(|m| match m {
+            Mark::Comment { id } if comments.iter().any(|(c, _)| c == id) => Some(id.clone()),
+            _ => None,
+        })
+    };
+    // Fim do trecho: office:annotation-end e, logo depois, as respostas.
+    let close_comment = |body: &mut String, id: &str| {
+        body.push_str(&format!(r#"<office:annotation-end office:name="{id}"/>"#));
+        for (reply, c) in comments
+            .iter()
+            .filter(|(_, c)| c.parent.as_deref() == Some(id))
+        {
+            body.push_str(&crate::comments::odt_annotation(reply, c));
+        }
+    };
     let mut frames = 0;
     // Estilos automáticos: um por combinação de parágrafo e de marcas.
     let mut para_styles: Vec<(String, String)> = Vec::new(); // (chave, xml)
@@ -758,6 +777,21 @@ fn content_xml(
         }
         let mut at_start = true;
         for span in &p.spans {
+            let comment = comment_of(span);
+            if comment != open_comment {
+                if let Some(id) = &open_comment {
+                    close_comment(&mut body, id);
+                }
+                if let Some(id) = &comment {
+                    let c = &comments
+                        .iter()
+                        .find(|(c, _)| c == id)
+                        .expect("comentário")
+                        .1;
+                    body.push_str(&crate::comments::odt_annotation(id, c));
+                }
+                open_comment = comment;
+            }
             // Nota de rodapé: o caractere da chamada vira um text:note com o texto da nota.
             if let Some(id) = span.marks.iter().find_map(|m| match m {
                 Mark::Footnote { id } => Some(id),
@@ -814,6 +848,18 @@ fn content_xml(
         }
         if let Some(entry) = toc.filter(|t| t.level > 0) {
             body.push_str(&format!("<text:tab/>{}", entry.page.max(1)));
+        }
+        // O comentário continua no parágrafo seguinte se ele começa no mesmo comentário.
+        if let Some(id) = open_comment.clone() {
+            let continues = paragraphs
+                .get(index + 1)
+                .and_then(|n| n.spans.first())
+                .and_then(comment_of)
+                .is_some_and(|next| next == id);
+            if !continues {
+                close_comment(&mut body, &id);
+                open_comment = None;
+            }
         }
         body.push_str(close_tag);
         if toc_title {
@@ -896,7 +942,7 @@ fn list_styles() -> String {
     out
 }
 
-const NS: &str = r#"xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0""#;
+const NS: &str = r#"xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0""#;
 
 const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.3"><manifest:file-entry manifest:full-path="/" manifest:version="1.3" manifest:media-type="application/vnd.oasis.opendocument.text"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/></manifest:manifest>"#;
 
@@ -909,7 +955,8 @@ const STYLES: &str = r##"<?xml version="1.0" encoding="UTF-8"?><office:document-
 // ---------------------------------------------------------------- abrir
 
 pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> {
-    let (paragraphs, media, page, header_footer, watermark, notes) = read_document(bytes)?;
+    let (paragraphs, media, page, header_footer, watermark, notes, comments) =
+        read_document(bytes)?;
     let mut doc = TextDocument::from_paragraphs(client, &paragraphs)?;
     for (id, mime, data) in media {
         doc.put_media(&id, &mime, &data)?;
@@ -925,6 +972,9 @@ pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> 
     }
     if !notes.is_empty() {
         doc.load_footnotes(&notes)?;
+    }
+    if !comments.is_empty() {
+        doc.load_comments(&comments)?;
     }
     Ok(doc)
 }
@@ -1244,6 +1294,7 @@ type Document = (
     nova_domain_text::HeadersFooters,
     Option<nova_domain_text::Watermark>,
     Vec<(String, String)>,
+    Vec<(String, nova_domain_text::Comment)>,
 );
 
 /// Nota de rodapé sendo lida: id, texto, profundidade dentro do text:note e
@@ -1324,6 +1375,21 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     let (mut in_toc, mut in_toc_title) = (false, false);
     // Nota de rodapé sendo lida (text:note): o texto vai para a nota, não para o parágrafo.
     let mut note: Option<NoteRead> = None;
+    // Comentários: o que está sendo lido, os lidos, onde cada trecho começa e termina.
+    let mut annotation: Option<crate::comments::AnnotationRead> = None;
+    let mut comments: Vec<(String, nova_domain_text::Comment)> = Vec::new();
+    let mut comment_starts: HashMap<String, crate::comments::Pos> = HashMap::new();
+    let mut comment_ranges: Vec<(String, crate::comments::Pos, crate::comments::Pos)> = Vec::new();
+    let mut comment_ids: HashMap<String, String> = HashMap::new();
+    let here = |out: &Vec<Paragraph>, para: &Option<Paragraph>| -> crate::comments::Pos {
+        let offset = para.as_ref().map_or(0, |p| {
+            p.spans
+                .iter()
+                .map(|s| s.text.encode_utf16().count() as u32)
+                .sum()
+        });
+        (out.len(), offset)
+    };
     let mut notes: Vec<(String, String)> = Vec::new();
 
     let push = |para: &mut Option<Paragraph>, marks: &[Vec<Mark>], text: &str| {
@@ -1346,6 +1412,58 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                     if !empty {
                         skip += 1;
                     }
+                    buf.clear();
+                    continue;
+                }
+                if let Some(a) = annotation.as_mut() {
+                    if !empty {
+                        a.depth += 1;
+                    }
+                    match e.local_name().as_ref() {
+                        b"creator" => a.field = b'c',
+                        b"date" => a.field = b'd',
+                        b"creator-initials" => a.field = b'i',
+                        b"p" | b"h" => {
+                            if a.has_para {
+                                a.text.push('\u{b}');
+                            }
+                            a.has_para = true;
+                            a.field = b'p';
+                        }
+                        b"line-break" => a.text.push('\u{b}'),
+                        b"tab" => a.text.push('\t'),
+                        b"s" => a.text.push(' '),
+                        _ => {}
+                    }
+                    buf.clear();
+                    continue;
+                }
+                if in_body && e.local_name().as_ref() == b"annotation-end" {
+                    if let Some(name) = attr(e, b"name") {
+                        let id = crate::comments::odt_id(&name, &mut comment_ids);
+                        if let Some(start) = comment_starts.remove(&id) {
+                            comment_ranges.push((id, start, here(&out, &para)));
+                        }
+                    }
+                    buf.clear();
+                    continue;
+                }
+                if in_body && !empty && e.local_name().as_ref() == b"annotation" {
+                    let name = attr(e, b"name").unwrap_or_default();
+                    let name = if name.is_empty() {
+                        format!("anon{}", comments.len() + 1)
+                    } else {
+                        name
+                    };
+                    annotation = Some(crate::comments::AnnotationRead {
+                        name: crate::comments::odt_id(&name, &mut comment_ids),
+                        parent: attr(e, b"parent-name")
+                            .map(|p| crate::comments::odt_id(&p, &mut comment_ids)),
+                        done: attr(e, b"resolved").is_some_and(|v| v == "true"),
+                        depth: 1,
+                        start: here(&out, &para),
+                        ..Default::default()
+                    });
                     buf.clear();
                     continue;
                 }
@@ -1554,6 +1672,35 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                     _ => {}
                 }
             }
+            Event::Text(t) if annotation.is_some() => {
+                let raw = t.unescape().map_err(|e| invalid(format!("XML: {e}")))?;
+                let a = annotation.as_mut().expect("comentário aberto");
+                match a.field {
+                    b'c' => a.author.push_str(&raw),
+                    b'd' => a.date.push_str(&raw),
+                    b'i' => a.initials.push_str(&raw),
+                    b'p' => a.text.push_str(&raw),
+                    _ => {}
+                }
+            }
+            Event::End(_) if annotation.is_some() => {
+                let a = annotation.as_mut().expect("comentário aberto");
+                a.depth -= 1;
+                a.field = if a.depth > 1 && a.field == b'p' {
+                    b'p'
+                } else {
+                    0
+                };
+                if a.depth == 0 {
+                    let a = annotation.take().expect("comentário aberto");
+                    let start = a.start;
+                    let (id, c) = a.into_comment();
+                    if c.parent.is_none() {
+                        comment_starts.insert(id.clone(), start);
+                    }
+                    comments.push((id, c));
+                }
+            }
             Event::Text(t) if note.as_ref().is_some_and(|n| n.citation == 0) => {
                 let raw = t.unescape().map_err(|e| invalid(format!("XML: {e}")))?;
                 let n = note.as_mut().expect("nota aberta");
@@ -1700,8 +1847,14 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     if out.is_empty() {
         out.push(Paragraph::default());
     }
+    // Comentários sem office:annotation-end (sem seleção): marcam um caractere.
+    for (id, start) in comment_starts {
+        comment_ranges.push((id, start, start));
+    }
+    crate::comments::apply_ranges(&mut out, &comment_ranges);
+    comments.retain(|(id, c)| c.validate(id).is_ok());
     crate::docx::normalize(&mut out);
-    Ok((out, media, page, header_footer, watermark, notes))
+    Ok((out, media, page, header_footer, watermark, notes, comments))
 }
 
 #[cfg(test)]
