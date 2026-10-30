@@ -33,6 +33,7 @@ interface Props {
   onSave: () => void;
   onSaveAs: (format: FileFormat) => void;
   onPrint: () => void;
+  onExportPdf: () => void;
   onExport: (format: FileFormat) => void;
   onClose: () => void;
   onRecover: () => void;
@@ -218,7 +219,7 @@ export function Backstage(props: Props) {
         <h1>{t("bs.export")}</h1>
         <h2>{t("bs.pdf")}</h2>
         <div className="bs-row">
-          <button className="bs-big" onClick={props.onPrint}>
+          <button className="bs-big" onClick={props.onExportPdf}>
             {icons.pdf}
             <span>{t("bs.createPdf")}</span>
           </button>

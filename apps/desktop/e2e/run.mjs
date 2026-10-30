@@ -57,6 +57,10 @@ const page = await ctx.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
 await page.addInitScript({ path: join(here, "tauri-mock.js") });
+// Exportar PDF: o app no Windows usa o PrintToPdf do WebView2 (Chromium); aqui, o mesmo motor pelo Playwright.
+await page.exposeBinding("__renderPdf", async ({ page }, path) => {
+  await page.pdf({ path, preferCSSPageSize: true, printBackground: true });
+});
 await page.goto(URL);
 await page.waitForSelector(".page");
 const h = makeHelpers(page);

@@ -16,6 +16,10 @@ A seção da versão é usada como texto da página de release no GitHub.
   comentários e Mostrar Comentários esconde a coluna. Lidos e gravados em .docx (`comments.xml` e
   `commentsExtended.xml`) e .odt (`office:annotation`), com respostas e resolvido, validados no
   LibreOffice nos dois sentidos.
+- **Exportar para PDF direto** (Arquivo → Exportar → Criar PDF): escolhe onde salvar e grava o
+  .pdf sem passar pela janela de impressão, com o papel, as margens, o cabeçalho, o rodapé, as notas
+  e a marca d'água do documento. No Windows usa o `PrintToPdf` do WebView2; no Linux, o WebKitGTK.
+  No macOS (e num WebView2 antigo), continua abrindo a impressão ("Salvar como PDF").
 
 ### Corrigido
 

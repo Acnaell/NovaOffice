@@ -65,6 +65,11 @@
         if (session("mock.download") === "fail") throw "o instalador baixado não confere (SHA-256 abc, esperado def)";
         return null;
       }
+      if (cmd === "export_pdf") {
+        if (!window.__renderPdf) throw "pdf:unsupported";
+        await window.__renderPdf(args.path);
+        return null;
+      }
       if (cmd === "install_update") {
         window.__installed++;
         return null;

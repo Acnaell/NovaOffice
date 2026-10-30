@@ -921,7 +921,36 @@ export default function App() {
       closeBackstage();
     });
 
-  /** Imprimir e PDF usam a janela de impressão do sistema; o CSS de impressão mostra só a página. */
+  /**
+   * Exportar → Criar PDF: grava o .pdf direto, com o CSS de impressão (o mesmo de Imprimir).
+   * Onde o sistema não deixa (macOS, WebView2 antigo), abre a impressão ("Salvar como PDF").
+   */
+  const exportPdf = () =>
+    afterQueue(async () => {
+      const current = stateRef.current;
+      if (!current) return;
+      const path = await save({
+        filters: [{ name: tRef.current("fmt.pdf"), extensions: ["pdf"] }],
+        defaultPath: `${current.view.title}.pdf`,
+      });
+      if (!path) return;
+      setBackstage(null);
+      setStartup(false);
+      // O documento precisa estar na tela (sem o Backstage) para virar PDF.
+      await new Promise((r) => setTimeout(r, 120));
+      setStatus(tRef.current("status.exportingPdf"));
+      try {
+        await api.exportPdf(path);
+        setStatus(tRef.current("status.exportedTo", { path }));
+      } catch (error) {
+        if (String(error) === "pdf:unsupported") {
+          setStatus("");
+          window.print();
+        } else showError(error);
+      }
+    });
+
+  /** Imprimir usa a janela de impressão do sistema; o CSS de impressão mostra só a página. */
   const printDocument = () => {
     setBackstage(null);
     setStartup(false);
@@ -1365,6 +1394,7 @@ export default function App() {
           onSave={() => saveDocument(false)}
           onSaveAs={(format) => saveDocument(true, format)}
           onPrint={printDocument}
+          onExportPdf={exportPdf}
           onExport={exportAs}
           onClose={closeDocument}
           onRecover={recoverDocument}
