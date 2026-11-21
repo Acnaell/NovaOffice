@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, type ReactNode, type SVGProps } from "react";
 import { keepFocus, MenuButton, MenuItem } from "./controls";
+import type { Markup } from "./tracking";
 import { useI18n, type MessageKey } from "./i18n";
 import { matchShortcut, withShortcut, type CommandId, type Profile } from "./shortcuts";
 import { SPELL_LANGUAGES, type Proofing } from "./spell";
@@ -15,9 +16,13 @@ export interface ReviewTabProps {
   onCommand: (command: CommandId) => void;
   showComments: boolean;
   hasComments: boolean;
+  /** Controlar Alterações ligado, modo de exibição e se há alterações no documento. */
+  tracking: boolean;
+  markup: Markup;
+  hasRevisions: boolean;
 }
 
-export function ReviewTab({ proofing, profile, onProofing, onCommand, showComments, hasComments }: ReviewTabProps) {
+export function ReviewTab({ proofing, profile, onProofing, onCommand, showComments, hasComments, tracking, markup, hasRevisions }: ReviewTabProps) {
   const { t } = useI18n();
   const button = (command: CommandId, icon: ReactNode) => (
     <button
@@ -85,6 +90,80 @@ export function ReviewTab({ proofing, profile, onProofing, onCommand, showCommen
           >
             {reviewIcons.showComments}
             <span>{t("cmd.review.showComments")}</span>
+          </button>
+        </div>
+      </RibbonGroup>
+      <RibbonGroup label={t("group.tracking")}>
+        <button
+          className={`big-button${tracking ? " active" : ""}`}
+          aria-pressed={tracking}
+          onMouseDown={keepFocus}
+          onClick={() => onCommand("review.trackChanges")}
+          title={withShortcut(t("track.toggleTip"), "review.trackChanges", profile)}
+        >
+          {reviewIcons.trackChanges}
+          <span>{t("cmd.review.trackChanges")}</span>
+        </button>
+        <MenuButton
+          label={t(`track.markup.${markup}` as MessageKey)}
+          title={t("track.markupTip")}
+          render={(close) => (
+            <>
+              {(["all", "none", "original"] as const).map((m) => (
+                <MenuItem
+                  key={m}
+                  checked={markup === m}
+                  onSelect={() => {
+                    close();
+                    onCommand(m === "all" ? "review.markupAll" : m === "none" ? "review.markupNone" : "review.markupOriginal");
+                  }}
+                >
+                  {t(`track.markup.${m}` as MessageKey)}
+                </MenuItem>
+              ))}
+            </>
+          )}
+        >
+          {reviewIcons.markup}
+          <span>{t(`track.markup.${markup}` as MessageKey)}</span>
+        </MenuButton>
+      </RibbonGroup>
+      <RibbonGroup label={t("group.changes")}>
+        {(["accept", "reject"] as const).map((kind) => (
+          <MenuButton
+            key={kind}
+            label={t(`cmd.review.${kind}` as MessageKey)}
+            title={t(`track.${kind}Tip` as MessageKey)}
+            className="big-button"
+            disabled={!hasRevisions}
+            render={(close) => (
+              <>
+                {(["Next", "", "All"] as const).map((suffix) => (
+                  <MenuItem
+                    key={suffix}
+                    onSelect={() => {
+                      close();
+                      onCommand(`review.${kind}${suffix}` as CommandId);
+                    }}
+                  >
+                    {t(`track.${kind}${suffix || "This"}` as MessageKey)}
+                  </MenuItem>
+                ))}
+              </>
+            )}
+          >
+            {kind === "accept" ? reviewIcons.accept : reviewIcons.reject}
+            <span>{t(`cmd.review.${kind}` as MessageKey)}</span>
+          </MenuButton>
+        ))}
+        <div className="stack">
+          <button className="small-button" onMouseDown={keepFocus} disabled={!hasRevisions} onClick={() => onCommand("review.prevChange")}>
+            {reviewIcons.prevChange}
+            <span>{t("cmd.review.prevChange")}</span>
+          </button>
+          <button className="small-button" onMouseDown={keepFocus} disabled={!hasRevisions} onClick={() => onCommand("review.nextChange")}>
+            {reviewIcons.nextChange}
+            <span>{t("cmd.review.nextChange")}</span>
           </button>
         </div>
       </RibbonGroup>
@@ -176,6 +255,53 @@ function Icon({ children, ...props }: SVGProps<SVGSVGElement> & { children: Reac
 }
 
 export const reviewIcons = {
+  /** Página com lápis e linhas marcadas: Controlar Alterações. */
+  trackChanges: (
+    <Icon>
+      <path d="M4 3h8l3 3v5" />
+      <path d="M4 3v14h6" />
+      <path d="M6.5 8h6M6.5 11h3" />
+      <path d="M12 17l1-3 4.5-4.5 2 2L15 16z" />
+    </Icon>
+  ),
+  /** Linhas com um trecho sublinhado e outro riscado: modo de exibição. */
+  markup: (
+    <Icon>
+      <path d="M3 5h14" />
+      <path d="M3 9.5h6M11 9.5h6" />
+      <path d="M11 11.5h6" strokeWidth="1" />
+      <path d="M3 14h5M10 14h7" />
+      <path d="M10 14h7" />
+    </Icon>
+  ),
+  /** Página com visto: Aceitar. */
+  accept: (
+    <Icon>
+      <path d="M4 3h9l3 3v11H4z" />
+      <path d="M6.5 11l2.5 2.5 5-5.5" />
+    </Icon>
+  ),
+  /** Página com X: Rejeitar. */
+  reject: (
+    <Icon>
+      <path d="M4 3h9l3 3v11H4z" />
+      <path d="M7.2 8l5.6 5.6M12.8 8l-5.6 5.6" />
+    </Icon>
+  ),
+  /** Seta para cima até uma alteração: Anterior. */
+  prevChange: (
+    <Icon>
+      <path d="M4 6h12M4 14h12" strokeDasharray="2 1.5" />
+      <path d="M10 15V5M7.5 7.5L10 5l2.5 2.5" />
+    </Icon>
+  ),
+  /** Seta para baixo até uma alteração: Próxima. */
+  nextChange: (
+    <Icon>
+      <path d="M4 6h12M4 14h12" strokeDasharray="2 1.5" />
+      <path d="M10 5v10M7.5 12.5L10 15l2.5-2.5" />
+    </Icon>
+  ),
   /** Balão de fala com "+": Novo Comentário. */
   newComment: (
     <Icon>

@@ -59,6 +59,8 @@ import { ReviewTab, useReviewShortcuts } from "./ReviewTab";
 import { DesignTab } from "./DesignTab";
 import { ReferencesTab } from "./ReferencesTab";
 import { insertFootnote, newFootnoteId, nextFootnote } from "./footnotes";
+import { nextRevision, resolveEdit, revisionDate, revisions, selectRevision, trackedCommand, trackedSelection, type Markup } from "./tracking";
+import { AuthorDialog } from "./TrackingDialog";
 import { addComment, commentAt, commentTarget, deleteAllComments, deleteComment, initialsOf, newCommentId, nextComment, nowIso, type Pending } from "./comments";
 import { findToc, insertToc, removeToc, screenPages, updateToc } from "./toc";
 import { citedSources, findBibliography, insertBibliography, insertCitation, newSourceId, removeBibliography, updateBibliography } from "./citations";
@@ -178,7 +180,13 @@ export default function App() {
           let view = current.view;
           let selection = edit.selection;
           if (edit.command) {
-            const { patch } = await api.dispatch(edit.command);
+            // Controlar Alterações: o que mexe no texto vai marcado com autor e data.
+            const command =
+              current.view.tracking && !edit.untracked
+                ? trackedCommand(edit.command, authorRef.current || tRef.current("track.defaultAuthor"), revisionDate())
+                : edit.command;
+            const { patch, events } = await api.dispatch(command);
+            if (command.type === "tracked") selection = trackedSelection(events, selection);
             // Se o remendo não bater (não deveria), busca o documento inteiro.
             view = applyPatch(current.view, patch) ?? (await api.snapshot());
             // Desfazer/refazer: o cursor vai para onde o documento mudou.
@@ -482,6 +490,11 @@ export default function App() {
   // ---------- Comentários ----------
   const [showComments, setShowComments] = useState(() => load("nova.showComments") !== "0");
   const [author, setAuthor] = useState(() => load("nova.author") ?? "");
+  const authorRef = useRef(author);
+  authorRef.current = author;
+  // Controlar Alterações: modo de exibição e o pedido do nome ao ligar.
+  const [markup, setMarkup] = useState<Markup>("all");
+  const [authorDialog, setAuthorDialog] = useState(false);
   // Comentário ativo: o do cursor, ou o balão clicado.
   const [cmActive, setCmActive] = useState<string | null>(null);
   const [cmPending, setCmPending] = useState<Pending | null>(null);
@@ -1322,6 +1335,43 @@ export default function App() {
           return !v;
         });
         return;
+      case "review.trackChanges": {
+        const on = !stateRef.current!.view.tracking;
+        if (on && !authorRef.current) return setAuthorDialog(true);
+        return run((_doc, sel) => ({ command: { type: "review.setTracking", on }, selection: sel, untracked: true }));
+      }
+      case "review.markupAll":
+      case "review.markupNone":
+      case "review.markupOriginal":
+        return setMarkup(command === "review.markupAll" ? "all" : command === "review.markupNone" ? "none" : "original");
+      case "review.accept":
+      case "review.reject":
+      case "review.acceptNext":
+      case "review.rejectNext":
+      case "review.acceptAll":
+      case "review.rejectAll": {
+        const accept = command.startsWith("review.accept");
+        const all = command.endsWith("All");
+        const andNext = command.endsWith("Next");
+        const { view: doc, selection: sel } = stateRef.current!;
+        const edit = resolveEdit(doc, sel, accept, { all });
+        if (!edit) return setStatus(t("track.none"));
+        run(() => edit);
+        if (andNext && edit.command) {
+          run((d, s) => {
+            const next = nextRevision(revisions(d.blocks), s);
+            return next ? { command: null, selection: selectRevision(next) } : null;
+          });
+        }
+        return;
+      }
+      case "review.prevChange":
+      case "review.nextChange": {
+        const { view: doc, selection: sel } = stateRef.current!;
+        const found = nextRevision(revisions(doc.blocks), sel, command === "review.prevChange");
+        if (!found) return setStatus(t("track.noMore"));
+        return run(() => ({ command: null, selection: selectRevision(found) }));
+      }
       case "references.footnote": {
         const id = newFootnoteId();
         run((_doc, sel) => insertFootnote(sel, id));
@@ -1523,7 +1573,7 @@ export default function App() {
         page={view.page}
         onPage={setPage}
         onCustomMargins={() => setMarginsDialog(true)}
-        review={<ReviewTab proofing={proofing} profile={profile} onProofing={chooseProofing} onCommand={onCommand} showComments={showComments} hasComments={Object.keys(view.comments).length > 0} />}
+        review={<ReviewTab proofing={proofing} profile={profile} onProofing={chooseProofing} onCommand={onCommand} showComments={showComments} hasComments={Object.keys(view.comments).length > 0} tracking={!!view.tracking} markup={markup} hasRevisions={view.blocks.some((b) => b.spans.some((s) => s.marks.some((m) => m.mark === "ins" || m.mark === "del")))} />}
         design={
           <DesignTab
             page={view.page}
@@ -1611,6 +1661,7 @@ export default function App() {
             onFootnoteChange={(id, text) => run((_doc, sel) => ({ command: { type: "footnote.set", id, text }, selection: sel }))}
             onFootnoteDone={() => document.querySelector<HTMLElement>(".page")?.focus()}
             showComments={showComments}
+            markup={markup}
             comments={commentHandlers}
             onPasteImage={pasteImage}
             onEscape={() => {
@@ -1644,6 +1695,22 @@ export default function App() {
             onDelete={(id) => saveSource(id, null)}
             onClose={() => {
               setSourcesOpen(false);
+              focusEditor();
+            }}
+          />
+        )}
+        {authorDialog && (
+          <AuthorDialog
+            initial={author}
+            onApply={(name) => {
+              setAuthorDialog(false);
+              commentAuthor(name);
+              authorRef.current = name;
+              focusEditor();
+              run((_doc, sel) => ({ command: { type: "review.setTracking", on: true }, selection: sel, untracked: true }));
+            }}
+            onClose={() => {
+              setAuthorDialog(false);
               focusEditor();
             }}
           />
@@ -1693,6 +1760,11 @@ export default function App() {
           {words === 1 ? t("status.word") : t("status.words", { words })} ·{" "}
           {blocks === 1 ? t("status.paragraph") : t("status.paragraphs", { blocks })}
         </span>
+        {view.tracking && (
+          <button type="button" className="status-tracking" onClick={() => onCommand("review.trackChanges")} title={t("track.toggleTip")}>
+            {t("track.status")}
+          </button>
+        )}
         <select
           className="proofing"
           aria-label={t("spell.language")}

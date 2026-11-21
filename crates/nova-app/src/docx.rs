@@ -141,11 +141,12 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         extra_rels.push_str(r#"<Relationship Id="rIdFn" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>"#);
         extra_types.push_str(r#"<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>"#);
     }
-    // Configurações: o fundo da página (w:displayBackgroundShape) e os separadores das notas.
-    if page.background.is_some() || !notes.is_empty() {
+    // Configurações: o fundo da página (w:displayBackgroundShape), os separadores das
+    // notas e Controlar Alterações (w:trackRevisions).
+    if page.background.is_some() || !notes.is_empty() || doc.tracking() {
         extra_files.push((
             "word/settings.xml",
-            settings_xml(page.background.is_some(), !notes.is_empty()),
+            settings_xml(page.background.is_some(), !notes.is_empty(), doc.tracking()),
         ));
         extra_rels.push_str(r#"<Relationship Id="rIdSettings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>"#);
         extra_types.push_str(r#"<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>"#);
@@ -224,9 +225,10 @@ fn footnotes_xml(notes: &[(String, String)]) -> String {
 }
 
 /// `word/settings.xml`: mostrar a cor da página e os separadores das notas de rodapé.
-fn settings_xml(background: bool, footnotes: bool) -> String {
+fn settings_xml(background: bool, footnotes: bool, tracking: bool) -> String {
     format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{}{}</w:settings>"#,
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{}{}{}</w:settings>"#,
+        if tracking { "<w:trackRevisions/>" } else { "" },
         if background {
             "<w:displayBackgroundShape/>"
         } else {
@@ -690,6 +692,8 @@ fn body_xml(
     let is_entry =
         |p: Option<&Paragraph>| p.is_some_and(|p| p.attrs.bibliography == Some(BibPart::Entry));
     let (mut bib_open, mut bib_field_open) = (false, false);
+    // w:id das alterações controladas (w:ins/w:del), únicos no documento.
+    let mut revision_id: u32 = 1000;
     let comment_ids = crate::comments::DocxIds::new(comments);
     // Comentário aberto (w:commentRangeStart já escrito): pode atravessar parágrafos.
     let mut open_comment: Option<&str> = None;
@@ -894,7 +898,7 @@ fn body_xml(
                 }
                 continue;
             }
-            run_xml(&mut out, span);
+            revision_run_xml(&mut out, span, &mut revision_id);
         }
         if open_link.is_some() {
             out.push_str("</w:hyperlink>");
@@ -965,6 +969,41 @@ const BIB_SDT_BEGIN: &str = r#"<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w
 const BIB_FIELD_BEGIN: &str = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> BIBLIOGRAPHY \l 1046 </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>"#;
 
 /// Um `w:r`, com as propriedades na ordem que o esquema do Word exige.
+/// Execução dentro de `w:ins` ou `w:del` quando o trecho é uma alteração controlada
+/// (no `w:del`, o texto vai em `w:delText`, como o Word grava).
+fn revision_run_xml(out: &mut String, span: &Span, next_id: &mut u32) {
+    let revision = span.marks.iter().find_map(|m| match m {
+        Mark::Insert { author, date } => Some(("ins", author, date)),
+        Mark::Delete { author, date } => Some(("del", author, date)),
+        _ => None,
+    });
+    let Some((tag, author, date)) = revision else {
+        return run_xml(out, span);
+    };
+    *next_id += 1;
+    let date = if date.is_empty() {
+        String::new()
+    } else {
+        format!(r#" w:date="{}""#, esc(date))
+    };
+    out.push_str(&format!(
+        r#"<w:{tag} w:id="{}" w:author="{}"{date}>"#,
+        next_id,
+        esc(author)
+    ));
+    if tag == "del" {
+        let mut run = String::new();
+        run_xml(&mut run, span);
+        out.push_str(
+            &run.replace("<w:t xml:space=", "<w:delText xml:space=")
+                .replace("</w:t>", "</w:delText>"),
+        );
+    } else {
+        run_xml(out, span);
+    }
+    out.push_str(&format!("</w:{tag}>"));
+}
+
 fn run_xml(out: &mut String, span: &Span) {
     let mut rpr = String::new();
     let find = |kind: &str| span.marks.iter().find(|m| mark_key(m) == kind);
@@ -1139,7 +1178,34 @@ pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> 
     if !sources.is_empty() {
         doc.load_sources(&sources)?;
     }
+    if tracking_on(bytes) {
+        doc.load_tracking(true);
+    }
     Ok(doc)
+}
+
+/// `word/settings.xml` tem `w:trackRevisions` (Controlar Alterações ligado)?
+fn tracking_on(bytes: &[u8]) -> bool {
+    let Ok(mut zip) = ZipArchive::new(Cursor::new(bytes)) else {
+        return false;
+    };
+    let Ok(Some(xml)) = part(&mut zip, "word/settings.xml") else {
+        return false;
+    };
+    let mut reader = Reader::from_str(&xml);
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e))
+                if e.local_name().as_ref() == b"trackRevisions" =>
+            {
+                return !matches!(attr(&e, b"val").as_deref(), Some("0" | "false" | "off"));
+            }
+            Ok(Event::Eof) | Err(_) => return false,
+            _ => {}
+        }
+        buf.clear();
+    }
 }
 
 /// Arquivo embutido lido de um documento: (id, tipo, bytes).
@@ -1878,6 +1944,8 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         None => HashMap::new(),
     };
     let mut comment_stack: Vec<String> = Vec::new();
+    // Alteração controlada aberta (w:ins ou w:del) em volta das execuções.
+    let mut revision: Option<Mark> = None;
     // Comentários que marcaram algum trecho e os que se sobrepuseram (para achar
     // respostas gravadas sem commentsExtended, como faz o LibreOffice).
     let mut comment_marked: std::collections::HashSet<String> = Default::default();
@@ -2146,9 +2214,41 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                         bib_sdt = Some(sdt_depth);
                         bib_title_seen = false;
                     }
-                    b"del" | b"pict" | b"object" | b"endnoteReference" | b"commentReference"
+                    // Alterações controladas no texto: w:ins/w:moveTo e w:del/w:moveFrom.
+                    b"ins" | b"moveTo" | b"del" | b"moveFrom" if !empty && !in_rpr && !in_ppr => {
+                        let author: String = attr(e, b"author")
+                            .unwrap_or_default()
+                            .replace(['|', '\n', '\r'], " ")
+                            .trim()
+                            .chars()
+                            .take(255)
+                            .collect();
+                        let author = if author.is_empty() {
+                            "Autor".to_string()
+                        } else {
+                            author
+                        };
+                        let date = attr(e, b"date")
+                            .filter(|d| {
+                                d.len() <= 40
+                                    && d.chars()
+                                        .all(|c| c.is_ascii_digit() || "-:T.Z+".contains(c))
+                            })
+                            .unwrap_or_default();
+                        revision = Some(match e.local_name().as_ref() {
+                            b"ins" | b"moveTo" => Mark::Insert { author, date },
+                            _ => Mark::Delete { author, date },
+                        });
+                    }
+                    b"delText" if !empty => in_text = true,
+                    // Mudanças de formatação controladas: o Nova fica com a formatação atual.
+                    b"rPrChange" | b"pPrChange" | b"sectPrChange" | b"tblPrChange"
+                    | b"tcPrChange" | b"trPrChange" | b"numberingChange"
                         if !empty =>
                     {
+                        skip_depth = 1
+                    }
+                    b"pict" | b"object" | b"endnoteReference" | b"commentReference" if !empty => {
                         skip_depth = 1
                     }
                     b"tbl" if !empty => {
@@ -2218,6 +2318,9 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                         if let Some(id) = comment_stack.last() {
                             run.set(Mark::Comment { id: id.clone() });
                             comment_marked.insert(id.clone());
+                        }
+                        if let Some(mark) = &revision {
+                            run.set(mark.clone());
                         }
                     }
                     // Trecho comentado: vale o comentário aberto por último (respostas não marcam).
@@ -2375,7 +2478,10 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                     continue;
                 }
                 match e.local_name().as_ref() {
-                    b"t" => in_text = false,
+                    b"t" | b"delText" => in_text = false,
+                    b"ins" | b"moveTo" | b"del" | b"moveFrom" if !in_rpr && !in_ppr => {
+                        revision = None
+                    }
                     b"instrText" => in_instr = false,
                     b"sdt" => {
                         if bib_sdt == Some(sdt_depth) {
@@ -2747,8 +2853,28 @@ mod tests {
         let texts: Vec<String> = p.iter().map(Paragraph::text).collect();
         assert_eq!(
             texts,
-            ["Capítulo", "Forte fim!", "H2O", "item", "sub", "célula", ""]
+            [
+                "Capítulo",
+                "Forte fimapagado!",
+                "H2O",
+                "item",
+                "sub",
+                "célula",
+                ""
+            ]
         );
+        // Alterações controladas: o texto excluído fica, com a marca `del` (sem autor: "Autor").
+        let rev = |text: &str| {
+            p[1].spans
+                .iter()
+                .find(|s| s.text == text)
+                .map(|s| s.marks.clone())
+                .unwrap_or_default()
+        };
+        assert!(
+            matches!(rev("apagado").as_slice(), [Mark::Delete { author, .. }] if author == "Autor")
+        );
+        assert!(matches!(rev("!").as_slice(), [Mark::Insert { .. }]));
         assert_eq!(p[0].style, BlockStyle::Heading1);
         assert_eq!(p[1].spans[0].marks, vec![Mark::Bold]);
         assert_eq!(

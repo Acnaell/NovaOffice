@@ -10,11 +10,13 @@ mod citations;
 mod comments;
 mod design;
 mod format;
+mod track;
 
 pub use citations::{
     citation_text, BibPart, Person, Source, SourceKind, CITATION_CHAR, MAX_SOURCE_FIELD,
 };
 pub use comments::{Comment, MAX_COMMENT_CHARS};
+pub use track::Revision;
 
 pub use design::{
     BorderStyle, PageBorder, Watermark, WatermarkLayout, BORDER_WIDTHS, MAX_WATERMARK_CHARS,
@@ -326,6 +328,18 @@ pub enum TextCommand {
     /// Marca d'água (aba Design); `null` remove: `{"type":"watermark.set","value":{…}}`.
     #[serde(rename = "watermark.set")]
     SetWatermark { value: Option<Watermark> },
+    /// Edições com Controlar Alterações ligado: inserções levam a marca `ins` e
+    /// exclusões, a marca `del` (o texto fica). Um passo de desfazer, como `batch`.
+    #[serde(rename = "tracked")]
+    Tracked {
+        author: String,
+        #[serde(default)]
+        date: String,
+        commands: Vec<TextCommand>,
+    },
+    /// Liga ou desliga Controlar Alterações no documento (gravado no arquivo).
+    #[serde(rename = "review.setTracking")]
+    SetTracking { on: bool },
     #[serde(rename = "history.undo")]
     Undo,
     #[serde(rename = "history.redo")]
@@ -403,6 +417,9 @@ pub enum TextEvent {
     },
     WatermarkSet {
         value: Option<Watermark>,
+    },
+    TrackingSet {
+        on: bool,
     },
     FootnoteSet {
         id: String,
@@ -569,10 +586,15 @@ impl TextDocument {
     pub fn execute(&mut self, command: TextCommand) -> Result<Vec<TextEvent>, DomainError> {
         // Digitar e apagar se agrupam no desfazer (janela de 500 ms do Yrs);
         // os demais comandos viram um passo de desfazer próprio.
-        let discrete = !matches!(
-            command,
-            TextCommand::InsertText { .. } | TextCommand::DeleteText { .. }
-        );
+        // Com Controlar Alterações, digitar também se agrupa: um comando por tecla.
+        let discrete = match &command {
+            TextCommand::InsertText { .. } | TextCommand::DeleteText { .. } => false,
+            TextCommand::Tracked { commands, .. } => !matches!(
+                commands.as_slice(),
+                [TextCommand::InsertText { .. } | TextCommand::DeleteText { .. }]
+            ),
+            _ => true,
+        };
         if discrete {
             self.replica.checkpoint();
         }
@@ -584,12 +606,23 @@ impl TextDocument {
     }
 
     fn run(&mut self, command: TextCommand) -> Result<Vec<TextEvent>, DomainError> {
+        if let TextCommand::Tracked {
+            author,
+            date,
+            commands,
+        } = command
+        {
+            return self.run_tracked(author, date, commands);
+        }
         if let TextCommand::Batch { commands } = command {
             let mut events = Vec::new();
             for command in commands {
                 if matches!(
                     command,
-                    TextCommand::Batch { .. } | TextCommand::Undo | TextCommand::Redo
+                    TextCommand::Batch { .. }
+                        | TextCommand::Tracked { .. }
+                        | TextCommand::Undo
+                        | TextCommand::Redo
                 ) {
                     return Err(DomainError::InvalidBatch);
                 }
@@ -822,6 +855,14 @@ impl TextDocument {
                     .set_settings(&Watermark::to_settings(value.as_ref()));
                 TextEvent::WatermarkSet { value }
             }
+            TextCommand::SetTracking { on } => {
+                self.replica.set_settings(&[(
+                    track::TRACKING_KEY.to_string(),
+                    on.then_some(AttrValue::Bool(true)),
+                )]);
+                TextEvent::TrackingSet { on }
+            }
+            TextCommand::Tracked { .. } => return Err(DomainError::InvalidBatch),
             TextCommand::Undo => {
                 if !self.replica.undo() {
                     return Ok(Vec::new());

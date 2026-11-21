@@ -104,7 +104,24 @@ fn text(bytes: &[u8]) -> String {
 
 use crate::notes;
 
+/// Cópia do documento com todas as alterações controladas aceitas.
+fn accepted_copy(doc: &TextDocument) -> Option<TextDocument> {
+    let mut copy = TextDocument::load(0, &doc.save()).ok()?;
+    copy.resolve_all(true).ok()?;
+    Some(copy)
+}
+
 pub fn save(doc: &TextDocument, format: Format, title: &str) -> Vec<u8> {
+    // Markdown, HTML e texto não guardam revisões: vão com as alterações aceitas.
+    let accepted;
+    let doc = if matches!(format, Format::Markdown | Format::Html | Format::Text)
+        && !doc.revisions().is_empty()
+    {
+        accepted = accepted_copy(doc);
+        accepted.as_ref().unwrap_or(doc)
+    } else {
+        doc
+    };
     match format {
         Format::Nova => file::encode(doc),
         Format::Docx => docx::export(doc),
@@ -927,5 +944,100 @@ segunda linha",
         let sources = read("customXml/item1.xml");
         assert!(sources.contains("<b:Tag>sil26</b:Tag>") && sources.contains("<b:Corporate>"));
         assert!(read("word/_rels/document.xml.rels").contains("../customXml/item1.xml"));
+    }
+
+    #[test]
+    fn alteracoes_controladas_vao_e_voltam() {
+        use nova_domain_text::{Mark, Pos, TextCommand};
+        let mut doc =
+            TextDocument::from_plain_text(1, "O relatório antigo ficou pronto.\nSegunda linha.");
+        doc.execute(TextCommand::SetTracking { on: true }).unwrap();
+        let tracked = |author: &str, date: &str, commands| TextCommand::Tracked {
+            author: author.into(),
+            date: date.into(),
+            commands,
+        };
+        doc.execute(tracked(
+            "Ana Souza",
+            "2026-11-21T20:00:00Z",
+            vec![TextCommand::DeleteRange {
+                from: Pos {
+                    block: 0,
+                    offset: 12,
+                },
+                to: Pos {
+                    block: 0,
+                    offset: 19,
+                },
+            }],
+        ))
+        .unwrap();
+        doc.execute(tracked(
+            "Bruno Lima",
+            "2026-11-21T21:30:00Z",
+            vec![TextCommand::InsertText {
+                block: 1,
+                offset: 14,
+                text: " Revisada".into(),
+                marks: None,
+            }],
+        ))
+        .unwrap();
+        let summary = |d: &TextDocument| -> Vec<String> {
+            d.paragraphs()
+                .iter()
+                .flat_map(|p| p.spans.iter())
+                .map(|s| {
+                    let tag = s
+                        .marks
+                        .iter()
+                        .find_map(|m| match m {
+                            Mark::Insert { author, date } => Some(format!("+{author}@{date}")),
+                            Mark::Delete { author, date } => Some(format!("-{author}@{date}")),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    format!("{}{tag}", s.text)
+                })
+                .collect()
+        };
+        let want = summary(&doc);
+        assert_eq!(
+            want,
+            [
+                "O relatório ",
+                "antigo -Ana Souza@2026-11-21T20:00:00Z",
+                "ficou pronto.",
+                "Segunda linha.",
+                " Revisada+Bruno Lima@2026-11-21T21:30:00Z",
+            ]
+        );
+        for format in [Format::Docx, Format::Odt, Format::Nova] {
+            let bytes = save(&doc, format, "t");
+            let back = open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
+            assert_eq!(summary(&back), want, "{format:?}");
+            assert!(back.tracking(), "{format:?}");
+            assert!(!back.can_undo(), "{format:?}");
+        }
+        // Texto, Markdown e HTML saem com as alterações aceitas.
+        let txt = String::from_utf8(save(&doc, Format::Text, "t")).unwrap();
+        assert_eq!(
+            txt.trim_end(),
+            "O relatório ficou pronto.\nSegunda linha. Revisada"
+        );
+        // Aceitar e rejeitar tudo.
+        let mut accepted = TextDocument::load(3, &doc.save()).unwrap();
+        accepted.resolve_all(true).unwrap();
+        assert_eq!(
+            accepted.to_plain_text(),
+            "O relatório ficou pronto.\nSegunda linha. Revisada"
+        );
+        assert!(accepted.revisions().is_empty());
+        let mut rejected = TextDocument::load(4, &doc.save()).unwrap();
+        rejected.resolve_all(false).unwrap();
+        assert_eq!(
+            rejected.to_plain_text(),
+            "O relatório antigo ficou pronto.\nSegunda linha."
+        );
     }
 }

@@ -8,6 +8,20 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Controlar Alterações** (Revisão → Controlar Alterações, Ctrl+Shift+E): com o controle ligado, o
+  texto digitado fica sublinhado e o apagado fica riscado, na cor de cada autor, com "Inserido por …"
+  ao passar o mouse e uma barra na margem. Aceitar e Rejeitar (esta, e passar para a próxima, ou
+  todas), Anterior e Próxima. Toda a Marcação, Sem Marcação e Original mudam só a exibição. O modo
+  fica gravado no documento e aparece na barra de status. Lido e gravado em .docx (`w:ins`/`w:del`,
+  `w:trackRevisions`) e .odt (`text:tracked-changes`), validado no LibreOffice nos dois sentidos.
+
+### Corrigido
+
+- Um .docx com alterações controladas do Word abria sem o texto excluído e sem a marcação; e as
+  mudanças de formatação controladas (`w:rPrChange`) podiam trocar a formatação do texto.
+
 ## [0.1.15] - 2026-10-30
 
 ### Adicionado

@@ -54,6 +54,19 @@ pub enum Mark {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         page: Option<String>,
     },
+    /// Texto inserido com Controlar Alterações ligado (ADR 0015).
+    #[serde(rename = "ins")]
+    Insert {
+        author: String,
+        date: String,
+    },
+    /// Texto excluído com Controlar Alterações ligado: continua no documento, riscado,
+    /// até a exclusão ser aceita.
+    #[serde(rename = "del")]
+    Delete {
+        author: String,
+        date: String,
+    },
 }
 
 /// Caractere da chamada de nota de rodapé (uso privado do Unicode).
@@ -112,6 +125,10 @@ pub enum MarkKind {
     Footnote,
     Comment,
     Citation,
+    #[serde(rename = "ins")]
+    Insert,
+    #[serde(rename = "del")]
+    Delete,
 }
 
 impl MarkKind {
@@ -131,6 +148,8 @@ impl MarkKind {
             MarkKind::Footnote => "footnote",
             MarkKind::Comment => "comment",
             MarkKind::Citation => "citation",
+            MarkKind::Insert => "ins",
+            MarkKind::Delete => "del",
         }
     }
 }
@@ -151,6 +170,8 @@ impl Mark {
             Mark::Footnote { .. } => MarkKind::Footnote,
             Mark::Comment { .. } => MarkKind::Comment,
             Mark::Citation { .. } => MarkKind::Citation,
+            Mark::Insert { .. } => MarkKind::Insert,
+            Mark::Delete { .. } => MarkKind::Delete,
         }
     }
 
@@ -169,6 +190,10 @@ impl Mark {
                 None => id.clone(),
             }),
             Mark::FontSize { half_points } => AttrValue::Number(f64::from(*half_points)),
+            // No CRDT: `data|autor` (a data não tem `|`).
+            Mark::Insert { author, date } | Mark::Delete { author, date } => {
+                AttrValue::Text(format!("{date}|{author}"))
+            }
         }
     }
 
@@ -207,6 +232,9 @@ impl Mark {
             } if !crate::citations::is_citation_page(page) => Err(DomainError::InvalidMark(
                 format!("página {page:?}: de 1 a 32 caracteres numa linha"),
             )),
+            Mark::Insert { author, date } | Mark::Delete { author, date } => {
+                crate::track::validate_revision(author, date)
+            }
             _ => Ok(()),
         }
     }
@@ -243,6 +271,16 @@ impl Mark {
                 let mark = Mark::Citation {
                     id: id.to_string(),
                     page,
+                };
+                mark.validate().is_ok().then_some(mark)
+            }
+            ("ins" | "del", AttrValue::Text(v)) => {
+                let (date, author) = v.split_once('|')?;
+                let (author, date) = (author.to_string(), date.to_string());
+                let mark = if key == "ins" {
+                    Mark::Insert { author, date }
+                } else {
+                    Mark::Delete { author, date }
                 };
                 mark.validate().is_ok().then_some(mark)
             }

@@ -1327,3 +1327,157 @@ fn paragrafo_da_bibliografia() {
     let back = TextDocument::from_paragraphs(2, &doc.paragraphs()).unwrap();
     assert_eq!(back.paragraphs(), doc.paragraphs());
 }
+
+#[test]
+fn controlar_alteracoes_insere_e_exclui_com_marcas() {
+    let tracked = |author: &str, commands: Vec<TextCommand>| TextCommand::Tracked {
+        author: author.into(),
+        date: "2026-11-21T20:00:00Z".into(),
+        commands,
+    };
+    let marks_of = |doc: &TextDocument, block: u32| -> Vec<(String, String)> {
+        doc.block_spans(block)
+            .unwrap()
+            .into_iter()
+            .map(|s| {
+                let tag = s
+                    .marks
+                    .iter()
+                    .map(|m| match m {
+                        Mark::Insert { author, .. } => format!("+{author}"),
+                        Mark::Delete { author, .. } => format!("-{author}"),
+                        Mark::Bold => "b".into(),
+                        _ => String::new(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                (s.text, tag)
+            })
+            .collect()
+    };
+    let mut doc = TextDocument::from_plain_text(1, "Texto antigo\nSegundo");
+    doc.execute(TextCommand::ApplyMark {
+        block: 0,
+        offset: 0,
+        len: 5,
+        mark: Mark::Bold,
+    })
+    .unwrap();
+    // Digitar herda o negrito e ganha a marca de inserção.
+    doc.execute(tracked(
+        "Ana",
+        vec![TextCommand::InsertText {
+            block: 0,
+            offset: 5,
+            text: "!".into(),
+            marks: None,
+        }],
+    ))
+    .unwrap();
+    // Apagar texto de outra pessoa: fica, riscado. Apagar a própria inserção: sai.
+    doc.execute(tracked(
+        "Ana",
+        vec![TextCommand::DeleteText {
+            block: 0,
+            offset: 5,
+            len: 1,
+        }],
+    ))
+    .unwrap();
+    doc.execute(tracked(
+        "Ana",
+        vec![TextCommand::DeleteText {
+            block: 0,
+            offset: 7,
+            len: 3,
+        }],
+    ))
+    .unwrap();
+    assert_eq!(
+        marks_of(&doc, 0),
+        [
+            ("Texto".into(), "b".into()),
+            (" a".into(), String::new()),
+            ("nti".into(), "-Ana".into()),
+            ("go".into(), String::new()),
+        ]
+    );
+    // Trocar a seleção ("antigo" por "novo"): o texto novo vem depois do riscado.
+    doc.execute(tracked(
+        "Bia",
+        vec![
+            TextCommand::DeleteRange {
+                from: Pos {
+                    block: 0,
+                    offset: 6,
+                },
+                to: Pos {
+                    block: 0,
+                    offset: 12,
+                },
+            },
+            TextCommand::InsertText {
+                block: 0,
+                offset: 6,
+                text: "novo".into(),
+                marks: None,
+            },
+        ],
+    ))
+    .unwrap();
+    assert_eq!(
+        doc.to_plain_text().lines().next().unwrap(),
+        "Texto antigonovo"
+    );
+    let last = marks_of(&doc, 0);
+    assert_eq!(
+        last.last().unwrap(),
+        &("novo".to_string(), "+Bia".to_string())
+    );
+    // Exclusão entre parágrafos: os dois ficam, riscados, e o texto digitado vai para o fim.
+    doc.execute(tracked(
+        "Bia",
+        vec![
+            TextCommand::DeleteRange {
+                from: Pos {
+                    block: 0,
+                    offset: 16,
+                },
+                to: Pos {
+                    block: 1,
+                    offset: 3,
+                },
+            },
+            TextCommand::InsertText {
+                block: 0,
+                offset: 16,
+                text: "X".into(),
+                marks: None,
+            },
+        ],
+    ))
+    .unwrap();
+    assert_eq!(doc.block_count(), 2);
+    assert_eq!(
+        marks_of(&doc, 1),
+        [
+            ("Seg".into(), "-Bia".into()),
+            ("X".into(), "+Bia".into()),
+            ("undo".into(), String::new()),
+        ]
+    );
+    // Desfazer volta o lote inteiro.
+    doc.execute(TextCommand::Undo).unwrap();
+    assert_eq!(doc.to_plain_text(), "Texto antigonovo\nSegundo");
+    // Lote dentro de lote e autor inválido são recusados.
+    assert!(doc.execute(tracked("A|B", vec![])).is_err());
+    assert!(doc
+        .execute(TextCommand::Batch {
+            commands: vec![tracked("Ana", vec![])]
+        })
+        .is_err());
+    // O modo fica gravado no documento.
+    assert!(!doc.tracking());
+    doc.execute(TextCommand::SetTracking { on: true }).unwrap();
+    assert!(doc.tracking());
+}

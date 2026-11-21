@@ -56,6 +56,18 @@ export type CommandId =
   | "review.prevComment"
   | "review.nextComment"
   | "review.showComments"
+  | "review.trackChanges"
+  | "review.markupAll"
+  | "review.markupNone"
+  | "review.markupOriginal"
+  | "review.accept"
+  | "review.acceptNext"
+  | "review.acceptAll"
+  | "review.reject"
+  | "review.rejectNext"
+  | "review.rejectAll"
+  | "review.prevChange"
+  | "review.nextChange"
   | "references.footnote"
   | "references.nextFootnote"
   | "style.paragraph"
@@ -101,6 +113,7 @@ const COMMON: Bindings = {
   "review.spelling": ["F7"],
   "review.wordCount": ["Ctrl+Shift+G"],
   "review.newComment": ["Ctrl+Alt+M"],
+  "review.trackChanges": ["Ctrl+Shift+E"],
   "references.footnote": ["Ctrl+Alt+F"],
   "style.paragraph": ["Ctrl+Alt+0"],
   "style.heading1": ["Ctrl+Alt+1"],

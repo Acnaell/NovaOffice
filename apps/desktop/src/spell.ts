@@ -92,6 +92,15 @@ export class SpellCache {
   }
 }
 
+/**
+ * Texto do parágrafo para o corretor: o texto excluído com Controlar Alterações
+ * vira espaços (do mesmo tamanho, para as posições não mudarem), senão "três"
+ * riscado e "quatro" inserido viram a palavra "trêsquatro".
+ */
+export function spellText(block: BlockView): string {
+  return block.spans.map((s) => (s.marks.some((m) => m.mark === "del") ? " ".repeat(s.text.length) : s.text)).join("");
+}
+
 /** A palavra que está sendo digitada (cursor logo depois dela) não é sublinhada, como no Word. */
 export function hideTyping(matches: Match[], selection: Selection): Match[] {
   const { anchor, focus } = selection;
@@ -143,7 +152,7 @@ export function useSpelling(view: DocView, selection: Selection, proofing: Proof
       api
         .spellCheck(
           proofing,
-          pending.map(({ block }) => blockText(block)),
+          pending.map(({ block }) => spellText(block)),
         )
         .then((results) => {
           // Sem núcleo (por exemplo, numa ponte de testes sem corretor), não insiste.
