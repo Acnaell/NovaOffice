@@ -16,7 +16,10 @@ export type Mark =
   /** Trecho comentado; o comentário fica em `DocView.comments`. */
   | { mark: "comment"; id: string }
   /** Chamada de citação: vai no caractere CITATION_CHAR; a fonte fica em `DocView.sources`. */
-  | { mark: "citation"; id: string; page?: string };
+  | { mark: "citation"; id: string; page?: string }
+  /** Controlar Alterações: texto inserido e texto excluído (continua, riscado). */
+  | { mark: "ins"; author: string; date: string }
+  | { mark: "del"; author: string; date: string };
 
 /** Caractere da chamada de nota de rodapé (uso privado do Unicode, igual ao núcleo). */
 export const FOOTNOTE_CHAR = "\uE000";
@@ -159,6 +162,8 @@ export interface DocView {
   comments: Record<string, Comment>;
   /** Fontes bibliográficas (Referências), pelo id da marca `citation`. */
   sources?: Record<string, Source>;
+  /** Controlar Alterações ligado (Revisão). */
+  tracking?: boolean;
 }
 
 export type SourceKind = "book" | "article" | "web" | "thesis";
@@ -279,6 +284,8 @@ export type TextCommand =
   | { type: "footnote.set"; id: string; text: string | null }
   | { type: "comment.set"; id: string; value: Comment | null }
   | { type: "source.set"; id: string; value: Source | null }
+  | { type: "tracked"; author: string; date: string; commands: TextCommand[] }
+  | { type: "review.setTracking"; on: boolean }
   | { type: "block.setStyle"; block: number; style: BlockStyle }
   | ({ type: "block.setAttr"; block: number } & ParaAttr)
   | { type: "history.undo" }
@@ -303,6 +310,7 @@ export interface ViewPatch {
   footnotes?: Record<string, string>;
   comments?: Record<string, Comment>;
   sources?: Record<string, Source>;
+  tracking?: boolean;
 }
 
 export interface DispatchResult {
@@ -316,7 +324,7 @@ export function applyPatch(view: DocView, patch: ViewPatch): DocView | null {
   blocks.splice(patch.start, patch.deleteCount, ...patch.blocks);
   if (blocks.length !== patch.blockCount) return null;
   const { canUndo, canRedo, path, title, dirty, format } = patch;
-  return { blocks, canUndo, canRedo, path, title, dirty, format, page: patch.page ?? view.page, headerFooter: patch.headerFooter ?? view.headerFooter, watermark: patch.watermark === undefined ? view.watermark : patch.watermark, footnotes: patch.footnotes ?? view.footnotes, comments: patch.comments ?? view.comments, sources: patch.sources ?? view.sources };
+  return { blocks, canUndo, canRedo, path, title, dirty, format, page: patch.page ?? view.page, headerFooter: patch.headerFooter ?? view.headerFooter, watermark: patch.watermark === undefined ? view.watermark : patch.watermark, footnotes: patch.footnotes ?? view.footnotes, comments: patch.comments ?? view.comments, sources: patch.sources ?? view.sources, tracking: patch.tracking ?? view.tracking };
 }
 
 export interface FormatInfo {

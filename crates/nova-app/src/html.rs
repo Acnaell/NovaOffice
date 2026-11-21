@@ -50,6 +50,8 @@ fn span_html(text: &str, marks: &[Mark]) -> String {
             Mark::Link { .. }
             | Mark::Footnote { .. }
             | Mark::Comment { .. }
+            | Mark::Insert { .. }
+            | Mark::Delete { .. }
             | Mark::Citation { .. } => {}
             Mark::Highlight { value } => {
                 let hex = HIGHLIGHT

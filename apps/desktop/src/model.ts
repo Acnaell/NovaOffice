@@ -22,6 +22,8 @@ export interface Selection {
 export interface Edit {
   command: TextCommand | null;
   selection: Selection;
+  /** Fica fora de Controlar Alterações (aceitar e rejeitar, por exemplo). */
+  untracked?: boolean;
 }
 
 export const caret = (pos: Pos): Selection => ({ anchor: pos, focus: pos });

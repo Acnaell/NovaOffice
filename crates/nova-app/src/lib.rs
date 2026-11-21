@@ -14,6 +14,7 @@ pub mod markdown;
 pub mod media;
 pub mod notes;
 pub mod odt;
+mod revisions;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

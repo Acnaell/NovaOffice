@@ -31,6 +31,8 @@ pub struct DocView {
     pub comments: std::collections::BTreeMap<String, nova_domain_text::Comment>,
     /// Fontes bibliográficas (Referências), pelo id da marca `citation` das chamadas.
     pub sources: std::collections::BTreeMap<String, nova_domain_text::Source>,
+    /// Controlar Alterações ligado (Revisão).
+    pub tracking: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -72,6 +74,8 @@ pub struct ViewPatch {
     pub comments: std::collections::BTreeMap<String, nova_domain_text::Comment>,
     /// Fontes bibliográficas (Referências), pelo id da marca `citation` das chamadas.
     pub sources: std::collections::BTreeMap<String, nova_domain_text::Source>,
+    /// Controlar Alterações ligado (Revisão).
+    pub tracking: bool,
 }
 
 /// Faixa de parágrafos alterada, no documento atual: `[start, end)`. Cresce a
@@ -153,7 +157,8 @@ fn dirty_range(events: &[TextEvent]) -> Option<(u32, u32)> {
             | TextEvent::WatermarkSet { .. }
             | TextEvent::FootnoteSet { .. }
             | TextEvent::CommentSet { .. }
-            | TextEvent::SourceSet { .. } => return None,
+            | TextEvent::SourceSet { .. }
+            | TextEvent::TrackingSet { .. } => return None,
         }
     }
     Some(dirty.0.unwrap_or((0, 0)))
@@ -246,6 +251,7 @@ impl Editor {
             footnotes: view.footnotes,
             comments: view.comments,
             sources: view.sources,
+            tracking: view.tracking,
         }
     }
 
@@ -275,6 +281,7 @@ impl Editor {
             footnotes: doc.footnote_texts(),
             comments: doc.comment_map(),
             sources: doc.sources(),
+            tracking: doc.tracking(),
         }
     }
 

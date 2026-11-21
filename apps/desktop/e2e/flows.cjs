@@ -1288,6 +1288,68 @@ const flows = [
       && done === true && undone === false && left === 0;
     return ok ? OK('Novo Comentário no trecho selecionado, resposta, Resolver (com desfazer) e Excluir pela faixa.') : FALHA(JSON.stringify({ first, marked, reply, done, undone, left }));
   } },
+  { area: 'Revisão', name: 'Controlar Alterações (Ctrl+Shift+E): marca, exibição, aceitar e rejeitar', run: async (h) => {
+    await h.reset(['A entrega será em três etapas.', 'O valor é pago em parcelas mensais.']);
+    await h.p.evaluate(() => { try { localStorage.removeItem('nova.author'); } catch { /* sem armazenamento */ } });
+    await h.select(0, 0);
+    await h.press('Control+Shift+E'); await h.settle(250);
+    // Primeira vez: pede o nome de quem altera.
+    const asked = await h.p.locator('.modal input').count();
+    if (asked) { await h.p.locator('.modal input').fill('Ana Souza'); await h.p.locator('.modal .bs-primary').click(); await h.settle(300); }
+    const status = await h.p.locator('.status-tracking').count();
+    // Troca "três" por "quatro" e apaga " mensais".
+    await h.select(0, 18, 0, 22);
+    await h.p.keyboard.type('quatro', { delay: 40 }); await h.settle(500);
+    await h.select(1, 26, 1, 34);
+    await h.press('Backspace'); await h.settle(400);
+    let doc = await h.doc();
+    const tags = (b) => doc.blocks[b].spans.map((s) => s.text + (s.marks.find((m) => m.mark === 'ins') ? '+' : s.marks.find((m) => m.mark === 'del') ? '-' : '')).join('|');
+    const marked = [tags(0), tags(1)];
+    const who = doc.blocks[0].spans.flatMap((s) => s.marks).find((m) => m.mark === 'ins')?.author;
+    // Sem Marcação esconde o texto excluído.
+    await h.p.locator('.tab', { hasText: 'Revisão' }).click();
+    await h.p.locator('.menu-button', { hasText: 'Toda a Marcação' }).click();
+    await h.p.locator('.menu-item', { hasText: 'Sem Marcação' }).click(); await h.settle(200);
+    const hidden = await h.p.locator('.page .rev-del').first().evaluate((el) => getComputedStyle(el).display);
+    await h.p.locator('.menu-button', { hasText: 'Sem Marcação' }).click();
+    await h.p.locator('.menu-item', { hasText: 'Toda a Marcação' }).click(); await h.settle(150);
+    // Rejeitar a do cursor (a exclusão de " mensais") e aceitar todas as outras.
+    await h.select(1, 28);
+    await h.p.locator('.menu-button', { hasText: 'Rejeitar' }).click();
+    await h.p.locator('.menu-item', { hasText: 'Rejeitar Esta Alteração' }).click(); await h.settle(300);
+    await h.p.locator('.menu-button', { hasText: 'Aceitar' }).click();
+    await h.p.locator('.menu-item', { hasText: 'Aceitar Todas as Alterações' }).click(); await h.settle(300);
+    doc = await h.doc();
+    const final = doc.blocks.map((b) => b.spans.map((s) => s.text).join('')).join(' / ');
+    const left = doc.blocks.flatMap((b) => b.spans).filter((s) => s.marks.some((m) => m.mark === 'ins' || m.mark === 'del')).length;
+    // Desfazer volta as alterações.
+    await h.press('Control+z'); await h.settle(300);
+    const back = (await h.doc()).blocks.flatMap((b) => b.spans).filter((s) => s.marks.some((m) => m.mark === 'ins' || m.mark === 'del')).length;
+    await h.press('Control+Shift+E'); await h.settle(200);
+    const ok = status === 1 && who === 'Ana Souza' && marked[0] === 'A entrega será em |três-|quatro+| etapas.' && marked[1] === 'O valor é pago em parcelas| mensais-|.'
+      && hidden === 'none' && final === 'A entrega será em quatro etapas. / O valor é pago em parcelas mensais.' && left === 0 && back > 0;
+    return ok ? OK('Liga com Ctrl+Shift+E (pede o nome), marca inserção e exclusão com o autor, Sem Marcação esconde o excluído, Rejeitar esta e Aceitar todas, desfazer.') : FALHA(JSON.stringify({ asked, status, who, marked, hidden, final, left, back }));
+  } },
+  { area: 'Revisão', name: 'Alterações controladas salvas no .docx e no .odt', run: async () => {
+    await core('new_document');
+    await core('dispatch', { command: { type: 'batch', commands: [
+      { type: 'text.insert', block: 0, offset: 0, text: 'O relatório antigo ficou pronto.' },
+      { type: 'review.setTracking', on: true },
+    ] } });
+    await core('dispatch', { command: { type: 'tracked', author: 'Ana Souza', date: '2026-11-21T20:00:00Z', commands: [
+      { type: 'text.deleteRange', from: { block: 0, offset: 12 }, to: { block: 0, offset: 19 } },
+      { type: 'text.insert', block: 0, offset: 12, text: 'novo ' },
+    ] } });
+    const out = [];
+    for (const ext of ['docx', 'odt']) {
+      await core('save_document', { path: `/tmp/nova-flows/alteracoes.${ext}` });
+      await core('new_document');
+      const back = await core('open_document', { path: `/tmp/nova-flows/alteracoes.${ext}` });
+      out.push(`${back.tracking} ${back.blocks[0].spans.map((s) => s.text + (s.marks.find((m) => m.mark === 'ins') ? '+' : s.marks.find((m) => m.mark === 'del') ? '-' : '')).join('|')}`);
+    }
+    const ok = out.every((o) => o === 'true O relatório |antigo -|novo +|ficou pronto.');
+    return ok ? OK('w:ins/w:del (w:delText) e w:trackRevisions no .docx; text:tracked-changes no .odt; validado no LibreOffice.') : FALHA(JSON.stringify(out));
+  } },
   { area: 'Revisão', name: 'Comentários salvos no .docx e no .odt', run: async () => {
     await core('new_document');
     const c = (text, extra = {}) => ({ author: 'Ana Souza', initials: 'AS', date: '2026-10-30T14:45:00Z', text, done: false, ...extra });

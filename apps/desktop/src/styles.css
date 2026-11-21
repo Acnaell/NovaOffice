@@ -1917,6 +1917,46 @@ select {
   }
 }
 
+/* ---------- Controlar Alterações ---------- */
+
+/* Toda a Marcação (padrão): a cor e o sublinhado/riscado vêm do estilo do trecho.
+   Sem Marcação: como ficaria aceitando tudo. Original: como era antes das alterações. */
+.paper-row.markup-none .page .rev-del,
+.paper-row.markup-original .page .rev-ins {
+  display: none;
+}
+
+.paper-row.markup-none .page .rev-ins,
+.paper-row.markup-original .page .rev-del {
+  color: inherit !important;
+  text-decoration: none !important;
+}
+
+/* Na margem, uma barra na altura das linhas alteradas, como no Word. */
+.paper-row.markup-all .page [data-block]:has(.rev-ins, .rev-del) {
+  box-shadow: -14px 0 0 -12px #7a7a7a;
+}
+
+/* Impressão e PDF saem como na tela, com a marcação escolhida. */
+
+.status-tracking {
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.status-tracking:hover {
+  background: var(--button-hover);
+}
+
+.dialog-note {
+  margin: 0 0 4px;
+  color: var(--chrome-muted);
+}
+
 /* ---------- Comentários ---------- */
 
 /* Papel e coluna de balões lado a lado, centralizados juntos. */

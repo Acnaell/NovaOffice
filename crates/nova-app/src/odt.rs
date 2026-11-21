@@ -44,6 +44,7 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
         &doc.footnotes(),
         &doc.comments(),
         &doc.sources(),
+        doc.tracking(),
     );
     let mut manifest = MANIFEST
         .trim_end_matches("</manifest:manifest>")
@@ -528,6 +529,8 @@ fn text_props(marks: &[Mark]) -> String {
             Mark::Link { .. }
             | Mark::Footnote { .. }
             | Mark::Comment { .. }
+            | Mark::Insert { .. }
+            | Mark::Delete { .. }
             | Mark::Citation { .. } => {}
         }
     }
@@ -589,7 +592,24 @@ fn content_xml(
     notes: &[(String, String)],
     comments: &[(String, nova_domain_text::Comment)],
     sources: &std::collections::BTreeMap<String, nova_domain_text::Source>,
+    tracking: bool,
 ) -> String {
+    // Alterações controladas: as regiões (text:changed-region) vão no começo do texto;
+    // inserções ficam entre text:change-start e text:change-end, e o texto excluído
+    // fica só na região, com um text:change no lugar.
+    let mut regions = String::new();
+    let mut open_insert: Option<String> = None;
+    let change_info = |author: &str, date: &str| {
+        let date = if date.is_empty() {
+            String::new()
+        } else {
+            format!("<dc:date>{}</dc:date>", esc(date.trim_end_matches('Z')))
+        };
+        format!(
+            "<office:change-info><dc:creator>{}</dc:creator>{date}</office:change-info>",
+            esc(author)
+        )
+    };
     // Comentário aberto (office:annotation já escrito): pode atravessar parágrafos.
     let mut open_comment: Option<String> = None;
     let comment_of = |span: &Span| -> Option<String> {
@@ -823,6 +843,35 @@ fn content_xml(
         }
         let mut at_start = true;
         for span in &p.spans {
+            if let Some(id) = open_insert.take() {
+                body.push_str(&format!(r#"<text:change-end text:change-id="{id}"/>"#));
+            }
+            match span.marks.iter().find_map(|m| match m {
+                Mark::Insert { author, date } => Some((true, author, date)),
+                Mark::Delete { author, date } => Some((false, author, date)),
+                _ => None,
+            }) {
+                Some((true, author, date)) => {
+                    let id = format!("ct{}", regions.matches("<text:changed-region").count() + 1);
+                    regions.push_str(&format!(
+                        r#"<text:changed-region text:id="{id}" xml:id="{id}"><text:insertion>{}</text:insertion></text:changed-region>"#,
+                        change_info(author, date)
+                    ));
+                    body.push_str(&format!(r#"<text:change-start text:change-id="{id}"/>"#));
+                    open_insert = Some(id);
+                }
+                Some((false, author, date)) => {
+                    let id = format!("ct{}", regions.matches("<text:changed-region").count() + 1);
+                    regions.push_str(&format!(
+                        r#"<text:changed-region text:id="{id}" xml:id="{id}"><text:deletion>{}<text:p>{}</text:p></text:deletion></text:changed-region>"#,
+                        change_info(author, date),
+                        odf_text(&span.text, true)
+                    ));
+                    body.push_str(&format!(r#"<text:change text:change-id="{id}"/>"#));
+                    continue;
+                }
+                None => {}
+            }
             let comment = comment_of(span);
             if comment != open_comment {
                 if let Some(id) = &open_comment {
@@ -930,6 +979,9 @@ fn content_xml(
         if let Some(entry) = toc.filter(|t| t.level > 0) {
             body.push_str(&format!("<text:tab/>{}", entry.page.max(1)));
         }
+        if let Some(id) = open_insert.take() {
+            body.push_str(&format!(r#"<text:change-end text:change-id="{id}"/>"#));
+        }
         // O comentário continua no parágrafo seguinte se ele começa no mesmo comentário.
         if let Some(id) = open_comment.clone() {
             let continues = paragraphs
@@ -1002,6 +1054,14 @@ fn content_xml(
         ));
     }
     auto.push_str(&list_styles());
+    if tracking || !regions.is_empty() {
+        body.insert_str(
+            0,
+            &format!(
+                r#"<text:tracked-changes text:track-changes="{tracking}">{regions}</text:tracked-changes>"#
+            ),
+        );
+    }
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content {NS} office:version="1.3"><office:automatic-styles>{auto}</office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"#
@@ -1072,6 +1132,19 @@ pub fn import(client: ClientId, bytes: &[u8]) -> Result<TextDocument, AppError> 
     }
     if !sources.is_empty() {
         doc.load_sources(&sources)?;
+    }
+    // Controlar Alterações ligado no arquivo (text:track-changes="true").
+    if let Ok(mut zip) = ZipArchive::new(Cursor::new(bytes)) {
+        let mut xml = String::new();
+        if zip
+            .by_name("content.xml")
+            .ok()
+            .and_then(|mut f| f.read_to_string(&mut xml).ok())
+            .is_some()
+            && crate::revisions::odt_regions(&xml).0
+        {
+            doc.load_tracking(true);
+        }
     }
     Ok(doc)
 }
@@ -1442,6 +1515,10 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         }
     };
     let content = read("content.xml")?.ok_or_else(|| invalid("content.xml ausente"))?;
+    // Alterações controladas: as regiões vêm antes do texto; os trechos, durante a leitura.
+    let (_, regions) = crate::revisions::odt_regions(&content);
+    let mut insert_starts: HashMap<String, crate::comments::Pos> = HashMap::new();
+    let mut revision_ranges: Vec<(Mark, crate::comments::Pos, crate::comments::Pos)> = Vec::new();
     let mut styles = HashMap::new();
     let mut lists = HashMap::new();
     let mut page = None;
@@ -1539,6 +1616,44 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                         b"tab" => a.text.push('\t'),
                         b"s" => a.text.push(' '),
                         _ => {}
+                    }
+                    buf.clear();
+                    continue;
+                }
+                // Alteração controlada: começo e fim de uma inserção, ou o texto excluído.
+                if in_body
+                    && matches!(
+                        e.local_name().as_ref(),
+                        b"change-start" | b"change-end" | b"change"
+                    )
+                {
+                    if let Some(region) =
+                        attr(e, b"change-id").and_then(|id| regions.get(&id).map(|r| (id, r)))
+                    {
+                        let (id, region) = region;
+                        match e.local_name().as_ref() {
+                            b"change-start" if region.insert => {
+                                insert_starts.insert(id, here(&out, &para));
+                            }
+                            b"change-end" if region.insert => {
+                                if let Some(start) = insert_starts.remove(&id) {
+                                    revision_ranges.push((region.mark(), start, here(&out, &para)));
+                                }
+                            }
+                            b"change" if !region.insert && !region.text.is_empty() => {
+                                let mut marks = span_marks.last().cloned().unwrap_or_default();
+                                marks.retain(|m| {
+                                    !matches!(
+                                        m.kind(),
+                                        nova_domain_text::MarkKind::Insert
+                                            | nova_domain_text::MarkKind::Delete
+                                    )
+                                });
+                                marks.push(region.mark());
+                                push(&mut para, &[marks], &region.text);
+                            }
+                            _ => {}
+                        }
                     }
                     buf.clear();
                     continue;
@@ -2033,6 +2148,7 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         comment_ranges.push((id, start, start));
     }
     crate::comments::apply_ranges(&mut out, &comment_ranges);
+    crate::revisions::mark_ranges(&mut out, &revision_ranges);
     comments.retain(|(id, c)| c.validate(id).is_ok());
     crate::docx::normalize(&mut out);
     Ok((

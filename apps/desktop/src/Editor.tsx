@@ -13,6 +13,7 @@ import { moveToCell, tableGrid } from "./tables";
 import { paginate, unpaginate, type PageInfo } from "./paginate";
 import { screenPages, tocTargets } from "./toc";
 import { citationOf, citationText } from "./citations";
+import { authorColor, revisionOf, type Markup } from "./tracking";
 import { commentOf, CommentsPane, usePendingHighlight, type CommentsPaneProps } from "./comments";
 import { footnoteOf, footnoteOrder, FootnotesLayer, FootnotesPrint, NOTE_SEPARATOR, noteHeight, notesByPage, type PageNotes } from "./footnotes";
 import { HeaderFooterLayer, splitFields, type Part } from "./headerfooter";
@@ -81,6 +82,8 @@ interface Props {
   onFootnoteDone: () => void;
   /** Comentários: coluna de balões à direita (Revisão → Mostrar Comentários). */
   showComments: boolean;
+  /** Controlar Alterações: como as alterações aparecem. */
+  markup: Markup;
   comments: Omit<CommentsPaneProps, "view" | "revision" | "root" | "pages">;
 }
 
@@ -120,12 +123,15 @@ const LINE_BREAK = "\u000B";
 const INDENT_STEP = "1.27cm";
 
 export function Editor(props: Props) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const page = props.view.page;
   const [pages, setPages] = useState(1);
   const [notePages, setNotePages] = useState<PageNotes[]>([]);
   // Objeto estável: os parágrafos memorizados só redesenham quando mudam.
-  const labels = useMemo(() => ({ pageBreak: t("insert.pageBreakMark"), followLink: t("insert.followLink") }), [t]);
+  const labels = useMemo(
+    () => ({ pageBreak: t("insert.pageBreakMark"), followLink: t("insert.followLink"), inserted: t("track.insertedBy"), deleted: t("track.deletedBy"), locale }),
+    [t, locale],
+  );
   const rootRef = useRef<HTMLDivElement>(null);
   // Os listeners nativos são registrados uma vez; leem as props mais recentes daqui.
   const latest = useRef(props);
@@ -598,7 +604,7 @@ export function Editor(props: Props) {
     .map(([id]) => `.page .cm[data-cm="${id}"]{${id === props.comments.active ? "background:var(--cm-active)" : "background:transparent;border-bottom-color:transparent"}}`)
     .join("");
   return (
-    <div className={`paper-row${showComments ? " with-comments" : ""}${props.showComments ? "" : " hide-comments"}`}>
+    <div className={`paper-row${showComments ? " with-comments" : ""}${props.showComments ? "" : " hide-comments"} markup-${props.markup}`}>
     {commentCss && <style>{commentCss}</style>}
     <div className={`paper${props.hfEditing ? " hf-mode" : ""}`} style={{ width: `${px(page.width)}px`, ...paperStyle(page) }}>
       <div className="sheets" aria-hidden="true">
@@ -706,6 +712,9 @@ function blockId(block: BlockView): number {
 interface Labels {
   pageBreak: string;
   followLink: string;
+  inserted: string;
+  deleted: string;
+  locale: string;
 }
 
 function Blocks({
@@ -805,11 +814,12 @@ const Block = memo(function Block({
             style={spanStyle(span.marks)}
             data-fn={footnoteOf(span.marks) ?? undefined}
             data-cm={commentOf(span.marks) ?? undefined}
+            data-rev={revisionOf(span.marks)?.mark}
             data-cite={citationOf(span.marks)?.id}
             data-page={citationOf(span.marks)?.page}
-            className={[footnoteOf(span.marks) ? "fn-ref" : citationOf(span.marks) ? "cite-ref" : linkOf(span.marks) ? "link" : "", commentOf(span.marks) ? "cm" : ""].join(" ").trim() || undefined}
+            className={[footnoteOf(span.marks) ? "fn-ref" : citationOf(span.marks) ? "cite-ref" : linkOf(span.marks) ? "link" : "", commentOf(span.marks) ? "cm" : "", revisionOf(span.marks) ? `rev-${revisionOf(span.marks)!.mark}` : ""].join(" ").trim() || undefined}
             data-href={linkOf(span.marks) ?? undefined}
-            title={linkOf(span.marks) ? `${linkOf(span.marks)}\n${labels.followLink}` : undefined}
+            title={linkOf(span.marks) ? `${linkOf(span.marks)}\n${labels.followLink}` : revisionTitle(span.marks, labels)}
           >
             {showMarks ? visibleMarks(span.text) : lineBreaks(span.text)}
           </span>
@@ -898,6 +908,15 @@ function tagFor(style: BlockView["style"]): keyof JSX.IntrinsicElements {
   }
 }
 
+/** Dica da alteração: "Inserido por Ana Souza, 21/11/2026 20:00". */
+function revisionTitle(marks: Mark[], labels: { inserted: string; deleted: string; locale: string }): string | undefined {
+  const r = revisionOf(marks);
+  if (!r) return undefined;
+  const when = r.date ? new Date(r.date) : null;
+  const date = when && !Number.isNaN(when.getTime()) ? `, ${when.toLocaleString(labels.locale, { dateStyle: "short", timeStyle: "short" })}` : "";
+  return `${(r.mark === "ins" ? labels.inserted : labels.deleted).replace("{author}", r.author)}${date}`;
+}
+
 function spanStyle(marks: Mark[]): CSSProperties | undefined {
   if (marks.length === 0) return undefined;
   const style: CSSProperties = {};
@@ -906,6 +925,15 @@ function spanStyle(marks: Mark[]): CSSProperties | undefined {
     switch (m.mark) {
       case "bold":
         style.fontWeight = 700;
+        break;
+      // Controlar Alterações: inserido sublinhado e excluído riscado, na cor do autor.
+      case "ins":
+        decorations.push("underline");
+        style.color = authorColor(m.author);
+        break;
+      case "del":
+        decorations.push("line-through");
+        style.color = authorColor(m.author);
         break;
       case "italic":
         style.fontStyle = "italic";
