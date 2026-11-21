@@ -1,6 +1,7 @@
 // Aba Referências da faixa de opções, na organização do Word: Sumário
 // (Sumário Automático, Atualizar Sumário, Remover Sumário), Notas de Rodapé e
-// Citações e Bibliografia (Inserir Citação, Gerenciar Fontes, Bibliografia). O estado e os
+// Citações e Bibliografia (Inserir Citação, Gerenciar Fontes, Bibliografia) e Legendas
+// (Inserir Legenda, Índice de Ilustrações, Atualizar Índice, Referência Cruzada). O estado e os
 // comandos ficam com o App; aqui só ficam os botões e os ícones da aba.
 
 import type { ReactNode, SVGProps } from "react";
@@ -19,6 +20,11 @@ export interface ReferencesTabProps {
   onInsertBibliography: () => void;
   onUpdateBibliography: () => void;
   onRemoveBibliography: () => void;
+  hasFigureIndex: boolean;
+  onInsertCaption: () => void;
+  onInsertFigureIndex: () => void;
+  onUpdateFigureIndex: () => void;
+  onCrossRef: () => void;
   onCommand: (command: CommandId) => void;
   profile: Profile;
 }
@@ -34,6 +40,11 @@ export function ReferencesTab({
   onInsertBibliography,
   onUpdateBibliography,
   onRemoveBibliography,
+  hasFigureIndex,
+  onInsertCaption,
+  onInsertFigureIndex,
+  onUpdateFigureIndex,
+  onCrossRef,
   onCommand,
   profile,
 }: ReferencesTabProps) {
@@ -141,6 +152,24 @@ export function ReferencesTab({
         <span>{t("bib.button")}</span>
       </MenuButton>
     </RibbonGroup>
+    <RibbonGroup label={t("group.captions")}>
+      <button className="big-button" onMouseDown={keepFocus} onClick={onInsertCaption} title={t("cap.insertTip")}>
+        {referencesIcons.caption}
+        <span>{t("cap.insert")}</span>
+      </button>
+      <button className="big-button" onMouseDown={keepFocus} onClick={onInsertFigureIndex} title={t("cap.indexTip")}>
+        {referencesIcons.figureIndex}
+        <span>{t("cap.index")}</span>
+      </button>
+      <button className="big-button" onMouseDown={keepFocus} onClick={onUpdateFigureIndex} disabled={!hasFigureIndex} title={t("cap.updateTip")}>
+        {referencesIcons.update}
+        <span>{t("cap.update")}</span>
+      </button>
+      <button className="big-button" onMouseDown={keepFocus} onClick={onCrossRef} title={t("cap.xrefTip")}>
+        {referencesIcons.crossRef}
+        <span>{t("cap.xref")}</span>
+      </button>
+    </RibbonGroup>
     </>
   );
 }
@@ -219,6 +248,32 @@ export const referencesIcons = {
     <Icon>
       <path d="M6 3.5h8" strokeWidth="2" />
       <path d="M3 8h14M5 10.8h12M3 14h14M5 16.8h12" />
+    </Icon>
+  ),
+  /** Imagem com a linha da legenda embaixo: Inserir Legenda. */
+  caption: (
+    <Icon>
+      <rect x="3" y="2.5" width="14" height="10" rx="1" />
+      <path d="M5.5 10l3-3.2 2.2 2.2 1.8-1.6 2 2.6" strokeWidth="1.4" />
+      <path d="M3 16h3M8 16h9" />
+    </Icon>
+  ),
+  /** Imagem pequena ao lado de linhas com pontilhado: Inserir Índice de Ilustrações. */
+  figureIndex: (
+    <Icon>
+      <rect x="2.5" y="3" width="5" height="4" rx="0.6" />
+      <path d="M2.5 11h9M2.5 15h7M2.5 18.5h8" />
+      <path d="M13 11h1.5M12 15h2.5M12.5 18.5h2" strokeDasharray="0.5 1.6" strokeWidth="1.5" />
+      <path d="M17 11h.5M17 15h.5M17 18.5h.5" strokeWidth="2" />
+      <path d="M10 4h7M10 6.5h5" strokeWidth="1.4" />
+    </Icon>
+  ),
+  /** Duas páginas ligadas por uma seta: Referência Cruzada. */
+  crossRef: (
+    <Icon>
+      <path d="M2.5 3.5h6v8h-6zM11.5 8.5h6v8h-6z" />
+      <path d="M4.5 6h2M4.5 8.5h2M13.5 11h2M13.5 13.5h2" strokeWidth="1.3" />
+      <path d="M8.5 14.5c1.5 0 2.5-.6 3-2M10.2 12.4l1.3.1.2 1.3" strokeWidth="1.4" />
     </Icon>
   ),
   /** Setas em círculo sobre linhas: Atualizar Sumário. */

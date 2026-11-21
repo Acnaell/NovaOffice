@@ -1515,6 +1515,148 @@ const flows = [
       : FALHA(`${JSON.stringify(out)} ${files}`);
   } },
 
+  { area: 'Referências', name: 'Inserir Legenda: Figura 1 – …, numeração por rótulo, acima ou abaixo', run: async (h) => {
+    await h.reset(['Primeira imagem', 'Segunda imagem', 'Dados da pesquisa']);
+    await h.p.locator('.tab', { hasText: 'Referências' }).click();
+    const caption = async (block, label, position, description) => {
+      await h.select(block, 0);
+      await h.p.locator('.big-button', { hasText: 'Inserir Legenda' }).click(); await h.settle(150);
+      const dialog = h.p.locator('.modal.dialog');
+      await dialog.locator('select[name=label]').selectOption(label);
+      await dialog.locator('select[name=position]').selectOption(position);
+      await dialog.locator('input[name=description]').fill(description);
+      const preview = await dialog.locator('.caption-preview').innerText();
+      await dialog.locator('button', { hasText: /^OK$/ }).click(); await h.settle(250);
+      return preview;
+    };
+    // Abaixo da segunda imagem; depois, acima da primeira (vira a Figura 1); e a tabela.
+    const previews = [await caption(1, 'Figura', 'below', 'Gráfico'), await caption(0, 'Figura', 'above', 'Mapa'), await caption(4, 'Tabela', 'above', 'Resultados')];
+    const read = () => h.p.evaluate(() => [...document.querySelectorAll('.block-caption')].map((b) =>
+      [...b.querySelectorAll('span')].map((s) => (s.classList.contains('seq-ref') ? s.dataset.text : s.textContent)).join('')));
+    const shown = await read();
+    // Legenda em 10 pt, o texto em 11 pt (a proporção não depende do zoom).
+    const size = await h.p.evaluate(() => {
+      const px = (sel) => parseFloat(getComputedStyle(document.querySelector(sel)).fontSize);
+      return Math.round((px('.block-caption') / px('.block-paragraph')) * 100) / 100;
+    });
+    const d = await h.doc();
+    const styles = d.blocks.map((b) => b.style).join(',');
+    // O número é calculado: apagar a primeira legenda renumera as outras.
+    await h.press('Control+z'); await h.settle(150);
+    await h.press('Control+z'); await h.settle(250);
+    const undone = await read();
+    const ok = previews.join('|') === 'Figura 1 – Gráfico|Figura 1 – Mapa|Tabela 1 – Resultados'
+      && shown.join('|') === 'Figura 1 – Mapa|Figura 2 – Gráfico|Tabela 1 – Resultados'
+      && styles === 'caption,paragraph,paragraph,caption,caption,paragraph' && size === 0.91
+      && undone.join('|') === 'Figura 1 – Gráfico';
+    return ok ? OK('Legenda no estilo Legenda (10 pt) com "Figura 1 – Mapa"; cada rótulo numera à parte; inserir acima renumera as de baixo; Ctrl+Z desfaz.')
+      : FALHA(JSON.stringify({ previews, shown, styles, size, undone }));
+  } },
+  { area: 'Referências', name: 'Índice de Ilustrações e Referência Cruzada (Figura 2, página) com Ctrl+clique', run: async (h) => {
+    await h.reset(['', 'Veja a ']);
+    const cap = (index, desc) => [
+      { type: 'block.insert', index, text: 'Figura ', style: 'caption' },
+      { type: 'text.insert', block: index, offset: 7, text: '\uE002', marks: [{ mark: 'seq', label: 'Figura' }] },
+      { type: 'text.insert', block: index, offset: 8, text: ` – ${desc}`, marks: [] },
+    ];
+    await core('dispatch', { command: { type: 'batch', commands: [
+      { type: 'block.insert', index: 2, text: 'Imagem do mapa' },
+      { type: 'block.setAttr', block: 2, attr: 'pageBreakBefore', value: true },
+      ...cap(3, 'Mapa'),
+      { type: 'block.insert', index: 4, text: 'Imagem do gráfico' },
+      { type: 'block.setAttr', block: 4, attr: 'pageBreakBefore', value: true },
+      ...cap(5, 'Gráfico'),
+    ] } });
+    await h.reload();
+    await h.select(0, 0);
+    await h.p.locator('.tab', { hasText: 'Referências' }).click();
+    await h.p.locator('.big-button', { hasText: 'Inserir Índice de Ilustrações' }).click(); await h.settle(150);
+    await h.p.locator('.modal.dialog select[name=label]').selectOption('Figura');
+    await h.p.locator('.modal.dialog button', { hasText: /^OK$/ }).click(); await h.settle(300);
+    const index = () => h.p.evaluate(() => ({
+      title: document.querySelector('.fig-title')?.textContent,
+      entries: [...document.querySelectorAll('.fig-entry')].map((e) => `${e.textContent}:${e.dataset.page}`),
+    }));
+    const first = await index();
+    // "Veja a Figura 2 na página 3": duas referências à segunda legenda.
+    const veja = (await h.doc()).blocks.findIndex((b) => b.spans.map((s) => s.text).join('') === 'Veja a ');
+    const xref = async (show) => {
+      await h.p.locator('.big-button', { hasText: 'Referência Cruzada' }).click(); await h.settle(150);
+      const dialog = h.p.locator('.modal.dialog');
+      await dialog.locator('select[name=kind]').selectOption('Figura');
+      await dialog.locator('select[name=show]').selectOption(show);
+      await dialog.locator('select[name=item]').selectOption({ label: 'Figura 2 – Gráfico' });
+      await dialog.locator('button', { hasText: /^Inserir$/ }).click(); await h.settle(250);
+    };
+    await h.select(veja, 7);
+    await xref('label');
+    await h.type(' na página ');
+    await xref('page');
+    const refs = () => h.p.evaluate(() => [...document.querySelectorAll('.xref-ref')].map((e) => e.dataset.text));
+    const shown = await refs();
+    // Uma legenda nova antes das outras: a referência vira Figura 3 sozinha; Atualizar Índice refaz a lista.
+    const before = (await h.doc()).blocks.findIndex((b) => b.spans.map((s) => s.text).join('') === 'Imagem do mapa');
+    await core('dispatch', { command: { type: 'batch', commands: [...cap(before, 'Nova'), { type: 'block.setAttr', block: before, attr: 'pageBreakBefore', value: true }] } });
+    await h.reload();
+    const renumbered = await refs();
+    await h.p.locator('.tab', { hasText: 'Referências' }).click();
+    await h.p.locator('.big-button', { hasText: 'Atualizar Índice' }).click(); await h.settle(300);
+    const updated = await index();
+    // Ctrl+clique na referência leva à legenda. O texto dela vem do ::after (o span tem altura
+    // zero, como a chamada de citação): clica no meio da linha, sobre o texto.
+    const at = await h.p.evaluate(() => {
+      const el = document.querySelector('.xref-ref');
+      el.parentElement.scrollIntoView({ block: 'center' });
+      const r = el.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y - 5 };
+    });
+    await h.p.keyboard.down('Control');
+    await h.p.mouse.click(at.x, at.y);
+    await h.p.keyboard.up('Control'); await h.settle(200);
+    const caretText = await h.p.evaluate(() => document.querySelector('.statusbar, footer')?.textContent ?? '');
+    const doc = await h.doc();
+    const target = doc.blocks.findIndex((b) => b.attrs.bookmark);
+    const targetText = doc.blocks[target]?.spans.map((s) => s.text).join('');
+    const ok = first.title === 'LISTA DE FIGURAS' && first.entries.join('|') === 'Figura 1 – Mapa:2|Figura 2 – Gráfico:3'
+      && shown.join('|') === 'Figura 2|3' && renumbered.join('|') === 'Figura 3|4'
+      && updated.entries.join('|') === 'Figura 1 – Nova:2|Figura 2 – Mapa:3|Figura 3 – Gráfico:4'
+      && targetText === 'Figura \uE002 – Gráfico' && /Página 4 de 4/.test(caretText) && /Legenda/.test(caretText);
+    return ok ? OK('Lista de figuras com pontilhado e páginas reais; "Figura 2" e "página 3" mudam sozinhos quando a numeração muda; Atualizar Índice refaz a lista; Ctrl+clique vai até a legenda.')
+      : FALHA(JSON.stringify({ first, shown, renumbered, updated, caretText, target, targetText }));
+  } },
+  { area: 'Referências', name: 'Legendas, índice e referências salvos no .docx e no .odt', run: async () => {
+    await core('new_document');
+    await core('dispatch', { command: { type: 'batch', commands: [
+      { type: 'text.insert', block: 0, offset: 0, text: 'Veja a ' },
+      { type: 'text.insert', block: 0, offset: 7, text: '\uE003', marks: [{ mark: 'xref', target: 'f1', show: 'label' }] },
+      { type: 'text.insert', block: 0, offset: 8, text: ' na página ', marks: [] },
+      { type: 'text.insert', block: 0, offset: 19, text: '\uE003', marks: [{ mark: 'xref', target: 'f1', show: 'page', page: 2 }] },
+      { type: 'block.insert', index: 1, text: 'LISTA DE FIGURAS' },
+      { type: 'block.setAttr', block: 1, attr: 'figureIndex', value: { label: 'Figura', title: true, page: 0 } },
+      { type: 'block.insert', index: 2, text: 'Figura 1 – Mapa' },
+      { type: 'block.setAttr', block: 2, attr: 'figureIndex', value: { label: 'Figura', title: false, page: 2 } },
+      { type: 'block.insert', index: 3, text: 'Figura ', style: 'caption' },
+      { type: 'text.insert', block: 3, offset: 7, text: '\uE002', marks: [{ mark: 'seq', label: 'Figura' }] },
+      { type: 'text.insert', block: 3, offset: 8, text: ' – Mapa', marks: [] },
+      { type: 'block.setAttr', block: 3, attr: 'bookmark', value: 'f1' },
+    ] } });
+    const out = [];
+    for (const ext of ['docx', 'odt']) {
+      await core('save_document', { path: `/tmp/nova-flows/legendas.${ext}` });
+      await core('new_document');
+      const back = await core('open_document', { path: `/tmp/nova-flows/legendas.${ext}` });
+      const fields = back.blocks.flatMap((b) => b.spans.flatMap((s) => s.marks)).filter((m) => m.mark === 'seq' || m.mark === 'xref');
+      out.push(JSON.stringify([fields.map((m) => m.label ?? `${m.target}:${m.show}:${m.page ?? ''}`), back.blocks.map((b) => b.style).join(','), back.blocks[3]?.attrs.bookmark, back.blocks.slice(1, 3).map((b) => `${b.attrs.figureIndex?.title}:${b.attrs.figureIndex?.page}`)]));
+    }
+    const xml = zipRead('/tmp/nova-flows/legendas.docx', 'word/document.xml');
+    const odt = zipRead('/tmp/nova-flows/legendas.odt', 'content.xml');
+    const want = JSON.stringify([['f1:label:', 'f1:page:2', 'Figura'], 'paragraph,paragraph,paragraph,caption', 'f1', ['true:0', 'false:2']]);
+    const ok = out.every((o) => o === want) && /SEQ Figura \\\* ARABIC/.test(xml) && /REF _Reff1 \\h/.test(xml) && /PAGEREF _Reff1/.test(xml) && /TOC \\h \\z \\c "Figura"/.test(xml)
+      && /<text:sequence /.test(odt) && /<text:sequence-ref /.test(odt) && /<text:illustration-index /.test(odt);
+    return ok ? OK('Campos SEQ, REF e PAGEREF com marcadores e TOC \\c no .docx; text:sequence, text:sequence-ref e text:illustration-index no .odt; validado no LibreOffice nos dois sentidos.')
+      : FALHA(`${JSON.stringify(out)} esperado ${want}`);
+  } },
+
   // ───────────── Exibição
   { area: 'Exibição', name: 'Página com tamanho A4 e margens; várias páginas', run: async (h) => {
     const many = Array.from({ length: 120 }, (_, i) => `Parágrafo ${i + 1} com algum texto para ocupar espaço na página.`);

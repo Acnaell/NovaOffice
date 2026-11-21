@@ -203,6 +203,8 @@ fn styles_xml(
     }
     // Estilos e configuração da Bibliografia (os nomes do LibreOffice).
     contents.push_str(crate::citations::ODT_BIB_CONFIG);
+    // Legenda e Índice de Ilustrações (os nomes do LibreOffice).
+    contents.push_str(crate::captions::ODT_STYLES);
     contents.push_str(r#"<style:style style:name="Bibliography_20_Heading" style:display-name="Bibliography Heading" style:family="paragraph" style:parent-style-name="Heading" style:next-style-name="Standard" style:class="index"><style:paragraph-properties fo:text-align="center"/><style:text-properties fo:font-size="16pt" fo:font-weight="bold"/></style:style><style:style style:name="Bibliography_20_1" style:display-name="Bibliography 1" style:family="paragraph" style:parent-style-name="Standard" style:class="index"/>"#);
     // Cor e borda (aba Design); com borda, parte da margem vira enchimento.
     let (design_props, margins) = design::odt_page_props(&outer_page);
@@ -531,7 +533,9 @@ fn text_props(marks: &[Mark]) -> String {
             | Mark::Comment { .. }
             | Mark::Insert { .. }
             | Mark::Delete { .. }
-            | Mark::Citation { .. } => {}
+            | Mark::Citation { .. }
+            | Mark::Seq { .. }
+            | Mark::CrossRef { .. } => {}
         }
     }
     p
@@ -548,6 +552,7 @@ fn parent_style(style: BlockStyle) -> &'static str {
         BlockStyle::Heading6 => "Heading_20_6",
         BlockStyle::Quote => "Quotations",
         BlockStyle::Code => "Preformatted_20_Text",
+        BlockStyle::Caption => "Caption",
     }
 }
 
@@ -632,7 +637,9 @@ fn content_xml(
     // Estilos automáticos: um por combinação de parágrafo e de marcas.
     let mut para_styles: Vec<(String, String)> = Vec::new(); // (chave, xml)
     let mut text_styles: Vec<String> = Vec::new();
-    let mut body = String::new();
+    // As variáveis das legendas (text:sequence-decls) vêm antes do texto.
+    let mut body = crate::captions::odt_sequence_decls(paragraphs);
+    let mut captions = crate::captions::OdtWriter::new(paragraphs);
 
     let para_style_name = |styles: &mut Vec<(String, String)>, p: &Paragraph| -> String {
         // Na tabela, o fundo é da célula.
@@ -653,6 +660,12 @@ fn content_xml(
                     BibPart::Title => "Bibliography_20_Heading".to_string(),
                     BibPart::Entry => "Bibliography_20_1".to_string(),
                 })
+            })
+            .or_else(|| {
+                p.attrs
+                    .figure_index
+                    .as_ref()
+                    .map(|e| crate::captions::odt_index_style(e).to_string())
             });
         let parent = toc_parent.as_deref().unwrap_or(parent_style(p.style));
         let key = format!("{parent}|{props}");
@@ -706,6 +719,9 @@ fn content_xml(
     let mut tocs = 0;
     let mut bib_open = false;
     let mut bibs = 0;
+    // Índice de ilustrações aberto (rótulo).
+    let mut fig_open: Option<&str> = None;
+    let mut figs = 0;
     for (index, p) in paragraphs.iter().enumerate() {
         let cell = p.attrs.cell.as_ref();
         let key = cell.map(|c| (c.table.clone(), c.row, c.col));
@@ -815,6 +831,27 @@ fn content_xml(
                 r#"<text:index-title text:name="Bibliografia{bibs}_Head">"#
             ));
         }
+        // Índice de ilustrações: um por rótulo, com o título e as entradas no index-body.
+        let fig = p
+            .attrs
+            .figure_index
+            .as_ref()
+            .filter(|_| cell.is_none() && toc.is_none() && bib.is_none());
+        if let Some(e) = fig.filter(|e| e.title || fig_open != Some(e.label.as_str())) {
+            if let Some(label) = fig_open.take() {
+                body.push_str(&crate::captions::odt_index_close(label));
+            }
+            figs += 1;
+            let title = if e.title { p.text() } else { String::new() };
+            body.push_str(&crate::captions::odt_index_open(&e.label, &title, figs));
+            fig_open = Some(&e.label);
+        }
+        let fig_title = fig.is_some_and(|e| e.title);
+        if fig_title {
+            body.push_str(&format!(
+                r#"<text:index-title text:name="Ilustrações{figs}_Head">"#
+            ));
+        }
         let name = para_style_name(&mut para_styles, p);
         let heading_level = p
             .style
@@ -841,6 +878,7 @@ fn content_xml(
                 image.width, image.height
             ));
         }
+        captions.start(&mut body, p);
         let mut at_start = true;
         for span in &p.spans {
             if let Some(id) = open_insert.take() {
@@ -944,6 +982,27 @@ fn content_xml(
                 at_start = false;
                 continue;
             }
+            // Número de legenda (text:sequence) e referência cruzada.
+            if let Some(field) = captions.span(span, paragraphs) {
+                let props = text_props(&span.marks);
+                if props.is_empty() {
+                    body.push_str(&field);
+                } else {
+                    let index = text_styles
+                        .iter()
+                        .position(|s| *s == props)
+                        .unwrap_or_else(|| {
+                            text_styles.push(props.clone());
+                            text_styles.len() - 1
+                        });
+                    body.push_str(&format!(
+                        r#"<text:span text:style-name="T{}">{field}</text:span>"#,
+                        index + 1
+                    ));
+                }
+                at_start = false;
+                continue;
+            }
             let text = odf_text(&span.text, at_start);
             at_start = span.text.ends_with(['\u{b}', '\n']);
             let href = span.marks.iter().find_map(|m| match m {
@@ -982,6 +1041,10 @@ fn content_xml(
         if let Some(id) = open_insert.take() {
             body.push_str(&format!(r#"<text:change-end text:change-id="{id}"/>"#));
         }
+        if let Some(e) = fig.filter(|e| !e.title) {
+            body.push_str(&format!("<text:tab/>{}", e.page.max(1)));
+        }
+        captions.end(&mut body);
         // O comentário continua no parágrafo seguinte se ele começa no mesmo comentário.
         if let Some(id) = open_comment.clone() {
             let continues = paragraphs
@@ -1014,6 +1077,22 @@ fn content_xml(
         if bib_open && !next_in_bib {
             body.push_str("</text:index-body></text:bibliography>");
             bib_open = false;
+        }
+        if fig_title {
+            body.push_str("</text:index-title>");
+        }
+        let next_in_fig = paragraphs.get(index + 1).is_some_and(|n| {
+            n.attrs.cell.is_none()
+                && n.attrs.toc.is_none()
+                && n.attrs.bibliography.is_none()
+                && n.attrs
+                    .figure_index
+                    .as_ref()
+                    .is_some_and(|e| !e.title && fig_open == Some(e.label.as_str()))
+        });
+        if let Some(label) = fig_open.filter(|_| !next_in_fig) {
+            body.push_str(&crate::captions::odt_index_close(label));
+            fig_open = None;
         }
     }
     close_to(&mut body, &mut open, 0);
@@ -1188,6 +1267,9 @@ fn block_style_for(name: &str) -> Option<BlockStyle> {
     }
     if n.contains("preformatted") || n.contains("source") || n == "code" {
         return Some(BlockStyle::Code);
+    }
+    if n == "caption" || n == "legenda" {
+        return Some(BlockStyle::Caption);
     }
     None
 }
@@ -1412,6 +1494,19 @@ fn read_styles(
 }
 
 /// Nível do Sumário pelo estilo do parágrafo ("Contents 1"…, herdado por estilos automáticos).
+/// Estilo do Índice de Ilustrações (pelo nome ou pelo do pai); `Some(true)` é o título.
+fn index_style_of(name: &str, styles: &HashMap<String, OdfStyle>) -> Option<bool> {
+    let mut cur = Some(name.to_string());
+    for _ in 0..16 {
+        let n = cur?;
+        if let Some(title) = crate::captions::index_style(&n) {
+            return Some(title);
+        }
+        cur = styles.get(&n).and_then(|s| s.parent.clone());
+    }
+    None
+}
+
 fn toc_level_of(name: &str, styles: &HashMap<String, OdfStyle>) -> Option<u8> {
     let mut cur = Some(name.to_string());
     for _ in 0..16 {
@@ -1555,6 +1650,11 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     let mut bib_mark: Option<(Vec<(String, String)>, String)> = None;
     let mut sources: Vec<(String, nova_domain_text::Source)> = Vec::new();
     let mut taken_ids = std::collections::HashSet::new();
+    // Índice de ilustrações (o rótulo dele) e o título; número de legenda ou
+    // referência sendo lidos; os marcadores de cada parágrafo.
+    let (mut in_figs, mut in_fig_title) = (None::<String>, false);
+    let mut field_read: Option<(Option<Mark>, String)> = None;
+    let (mut para_bookmarks, mut bookmarks) = (Vec::new(), Vec::new());
     // Nota de rodapé sendo lida (text:note): o texto vai para a nota, não para o parágrafo.
     let mut note: Option<NoteRead> = None;
     // Comentários: o que está sendo lido, os lidos, onde cada trecho começa e termina.
@@ -1745,6 +1845,56 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                             citation: 0,
                         });
                     }
+                    b"illustration-index" | b"table-index" if !empty => {
+                        let table = e.local_name().as_ref() == b"table-index";
+                        in_figs = Some(if table { "Tabela" } else { "Figura" }.into());
+                    }
+                    b"illustration-index-source" | b"table-index-source" if !empty => {
+                        if let Some(label) = attr(e, b"caption-sequence-name")
+                            .and_then(|n| crate::captions::label_from_odf(&n))
+                        {
+                            in_figs = Some(label);
+                        }
+                        skip = 1;
+                    }
+                    b"index-title" if !empty && in_figs.is_some() => in_fig_title = true,
+                    b"bookmark" | b"bookmark-start" => {
+                        if let Some(id) =
+                            attr(e, b"name").and_then(|n| crate::captions::bookmark_id(&n))
+                        {
+                            para_bookmarks.push(id);
+                        }
+                    }
+                    // Número de legenda: o texto é o número, que o Nova calcula.
+                    b"sequence" if para.is_some() => {
+                        if let Some(id) =
+                            attr(e, b"ref-name").and_then(|n| crate::captions::bookmark_id(&n))
+                        {
+                            para_bookmarks.push(id);
+                        }
+                        let mark = attr(e, b"name")
+                            .and_then(|n| crate::captions::label_from_odf(&n))
+                            .map(|label| Mark::Seq { label });
+                        field_read = Some((mark, String::new()));
+                        if empty {
+                            push_field(&mut para, &span_marks, field_read.take());
+                        }
+                    }
+                    b"sequence-ref" | b"bookmark-ref" if para.is_some() => {
+                        let show =
+                            crate::captions::odt_show(attr(e, b"reference-format").as_deref());
+                        let mark = attr(e, b"ref-name")
+                            .and_then(|n| crate::captions::bookmark_id(&n))
+                            .map(|target| Mark::CrossRef {
+                                target,
+                                show,
+                                page: None,
+                            });
+                        field_read = Some((mark, String::new()));
+                        if empty {
+                            push_field(&mut para, &span_marks, field_read.take());
+                        }
+                    }
                     b"note"
                     | b"annotation"
                     | b"tracked-changes"
@@ -1893,6 +2043,25 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                             };
                             attrs.bibliography = Some(part);
                         }
+                        // Índice de ilustrações: o título e as entradas, como parágrafos comuns.
+                        // O título pode vir fora do índice (o LibreOffice o grava assim ao
+                        // abrir um .docx); o rótulo dele é o das entradas que vêm depois.
+                        let fig_title = index_style_of(&style_name, &styles) == Some(true);
+                        let fig = match &in_figs {
+                            Some(label) => Some((label.clone(), in_fig_title)),
+                            None if fig_title => Some(("Figura".to_string(), true)),
+                            None => None,
+                        };
+                        if let Some((label, title)) = fig.filter(|_| {
+                            cell.is_none() && attrs.toc.is_none() && attrs.bibliography.is_none()
+                        }) {
+                            style = BlockStyle::Paragraph;
+                            attrs.figure_index = Some(nova_domain_text::FigureEntry {
+                                label,
+                                title,
+                                page: 0,
+                            });
+                        }
                         para = Some(Paragraph {
                             style,
                             attrs,
@@ -1987,6 +2156,13 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
             }
             // Texto da citação (o número da nota): a tela numera sozinha.
             Event::Text(_) if note.is_some() => {}
+            // Texto de um número de legenda ou de uma referência: a tela gera o dela.
+            Event::Text(t) if field_read.is_some() => {
+                let raw = t.unescape().map_err(|e| invalid(format!("XML: {e}")))?;
+                if let Some((_, text)) = field_read.as_mut() {
+                    text.push_str(&raw);
+                }
+            }
             // Texto da chamada de citação: a tela gera o dela; daqui só sai a página.
             Event::Text(t) if bib_mark.is_some() => {
                 let raw = t.unescape().map_err(|e| invalid(format!("XML: {e}")))?;
@@ -2084,6 +2260,11 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                     b"index-title" => {
                         in_toc_title = false;
                         in_bib_title = false;
+                        in_fig_title = false;
+                    }
+                    b"illustration-index" | b"table-index" => in_figs = None,
+                    b"sequence" | b"sequence-ref" | b"bookmark-ref" => {
+                        push_field(&mut para, &span_marks, field_read.take());
                     }
                     b"bibliography" => in_bib = false,
                     b"bibliography-mark" => {
@@ -2109,6 +2290,12 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                                 entry.page = crate::docx::take_toc_page(&mut p);
                                 p.attrs.toc = Some(entry);
                             }
+                            if p.attrs.figure_index.as_ref().is_some_and(|e| !e.title) {
+                                let page = crate::docx::take_toc_page(&mut p);
+                                if let Some(e) = p.attrs.figure_index.as_mut() {
+                                    e.page = page;
+                                }
+                            }
                             // Imagens do parágrafo: cada uma num parágrafo próprio, antes do texto.
                             let images = std::mem::take(&mut para_images);
                             let text_too = p.spans.iter().any(|s| !s.text.trim().is_empty());
@@ -2130,6 +2317,10 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                                 }
                             }
                             out.push(p);
+                            if !para_bookmarks.is_empty() {
+                                bookmarks
+                                    .push((out.len() - 1, std::mem::take(&mut para_bookmarks)));
+                            }
                         }
                     }
                     _ => {}
@@ -2150,6 +2341,8 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     crate::comments::apply_ranges(&mut out, &comment_ranges);
     crate::revisions::mark_ranges(&mut out, &revision_ranges);
     comments.retain(|(id, c)| c.validate(id).is_ok());
+    crate::captions::apply_bookmarks(&mut out, &bookmarks);
+    crate::captions::fix_index_titles(&mut out);
     crate::docx::normalize(&mut out);
     Ok((
         out,
@@ -2161,6 +2354,47 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         comments,
         sources,
     ))
+}
+
+/// Põe no parágrafo o número de legenda ou a referência lida (`field_read`):
+/// o caractere com a marca, ou o texto, se a marca não foi entendida. A página
+/// de uma referência de página vem do texto dela.
+fn push_field(
+    para: &mut Option<Paragraph>,
+    span_marks: &[Vec<Mark>],
+    field: Option<(Option<Mark>, String)>,
+) {
+    let Some((mark, text)) = field else { return };
+    let (ch, mark) = match mark {
+        Some(Mark::CrossRef { target, show, .. }) => (
+            nova_domain_text::XREF_CHAR,
+            Mark::CrossRef {
+                target,
+                show,
+                page: (show == nova_domain_text::RefShow::Page)
+                    .then(|| text.trim().parse().ok())
+                    .flatten(),
+            },
+        ),
+        Some(mark) => (nova_domain_text::SEQ_CHAR, mark),
+        None if !text.is_empty() => {
+            let marks = span_marks.last().cloned().unwrap_or_default();
+            return para
+                .get_or_insert_with(Paragraph::default)
+                .spans
+                .push(Span { text, marks });
+        }
+        None => return,
+    };
+    let mut marks = span_marks.last().cloned().unwrap_or_default();
+    marks.retain(|m| !matches!(m, Mark::Link { .. }));
+    marks.push(mark);
+    para.get_or_insert_with(Paragraph::default)
+        .spans
+        .push(Span {
+            text: ch.to_string(),
+            marks,
+        });
 }
 
 /// Marca de citação a partir de um `text:bibliography-mark`: a fonte (marcas com

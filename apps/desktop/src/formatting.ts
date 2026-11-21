@@ -51,6 +51,7 @@ export const STYLE_FONT_SIZE: Record<BlockStyle, number> = {
   heading6: 12,
   quote: 11,
   code: 10,
+  caption: 10,
 };
 
 /** Tamanhos da lista do Word; A+ e A- pulam entre eles. */

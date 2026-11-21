@@ -3,6 +3,7 @@
 use nova_crdt::{AttrValue, Span as CrdtSpan};
 use serde::{Deserialize, Serialize};
 
+use crate::captions::{FigureEntry, RefShow};
 use crate::citations::BibPart;
 use crate::DomainError;
 
@@ -67,6 +68,20 @@ pub enum Mark {
         author: String,
         date: String,
     },
+    /// Número de legenda: vai no caractere `SEQ_CHAR`; o número é a ordem entre
+    /// as legendas do mesmo rótulo (Figura 1, 2…), calculada, não gravada.
+    Seq {
+        label: String,
+    },
+    /// Referência cruzada: vai no caractere `XREF_CHAR` e aponta para o marcador
+    /// (`bookmark`) de um parágrafo; `page` é a página da última atualização.
+    #[serde(rename = "xref")]
+    CrossRef {
+        target: String,
+        show: RefShow,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        page: Option<u16>,
+    },
 }
 
 /// Caractere da chamada de nota de rodapé (uso privado do Unicode).
@@ -129,6 +144,8 @@ pub enum MarkKind {
     Insert,
     #[serde(rename = "del")]
     Delete,
+    Seq,
+    CrossRef,
 }
 
 impl MarkKind {
@@ -150,6 +167,8 @@ impl MarkKind {
             MarkKind::Citation => "citation",
             MarkKind::Insert => "ins",
             MarkKind::Delete => "del",
+            MarkKind::Seq => "seq",
+            MarkKind::CrossRef => "xref",
         }
     }
 }
@@ -172,6 +191,8 @@ impl Mark {
             Mark::Citation { .. } => MarkKind::Citation,
             Mark::Insert { .. } => MarkKind::Insert,
             Mark::Delete { .. } => MarkKind::Delete,
+            Mark::Seq { .. } => MarkKind::Seq,
+            Mark::CrossRef { .. } => MarkKind::CrossRef,
         }
     }
 
@@ -193,6 +214,10 @@ impl Mark {
             // No CRDT: `data|autor` (a data não tem `|`).
             Mark::Insert { author, date } | Mark::Delete { author, date } => {
                 AttrValue::Text(format!("{date}|{author}"))
+            }
+            Mark::Seq { label } => AttrValue::Text(label.clone()),
+            Mark::CrossRef { target, show, page } => {
+                AttrValue::Text(crate::captions::encode_xref(target, *show, *page))
             }
         }
     }
@@ -234,6 +259,17 @@ impl Mark {
             )),
             Mark::Insert { author, date } | Mark::Delete { author, date } => {
                 crate::track::validate_revision(author, date)
+            }
+            Mark::Seq { label } if !crate::captions::is_caption_label(label) => {
+                Err(DomainError::InvalidMark(format!(
+                    "legenda {label:?}: rótulo de 1 a {} letras, dígitos ou espaços",
+                    crate::captions::MAX_LABEL_CHARS
+                )))
+            }
+            Mark::CrossRef { target, .. } if !crate::captions::is_bookmark(target) => {
+                Err(DomainError::InvalidMark(format!(
+                    "referência {target:?}: id de 1 a 32 letras ou dígitos"
+                )))
             }
             _ => Ok(()),
         }
@@ -284,6 +320,10 @@ impl Mark {
                 };
                 mark.validate().is_ok().then_some(mark)
             }
+            ("seq", AttrValue::Text(v)) if crate::captions::is_caption_label(v) => {
+                Some(Mark::Seq { label: v.clone() })
+            }
+            ("xref", AttrValue::Text(v)) => crate::captions::decode_xref(v),
             _ => None,
         }
     }
@@ -308,6 +348,8 @@ pub enum BlockStyle {
     Heading6,
     Quote,
     Code,
+    /// Legenda (Figura 1 – …), o estilo "Caption" do Word e do LibreOffice.
+    Caption,
 }
 
 impl BlockStyle {
@@ -322,6 +364,7 @@ impl BlockStyle {
             BlockStyle::Heading6 => "heading6",
             BlockStyle::Quote => "quote",
             BlockStyle::Code => "code",
+            BlockStyle::Caption => "caption",
         }
     }
 
@@ -336,6 +379,7 @@ impl BlockStyle {
             "heading6" => BlockStyle::Heading6,
             "quote" => BlockStyle::Quote,
             "code" => BlockStyle::Code,
+            "caption" => BlockStyle::Caption,
             _ => BlockStyle::Paragraph,
         }
     }
@@ -470,6 +514,12 @@ pub struct ParaAttrs {
     /// Parágrafo da Bibliografia (título ou entrada), gerado a partir das fontes.
     #[serde(default)]
     pub bibliography: Option<BibPart>,
+    /// Marcador do parágrafo, alvo das referências cruzadas (legenda ou título).
+    #[serde(default)]
+    pub bookmark: Option<String>,
+    /// Parágrafo do Índice de Ilustrações de um rótulo (título ou entrada).
+    #[serde(default)]
+    pub figure_index: Option<FigureEntry>,
 }
 
 /// Níveis de título que entram no Sumário (Título 1 a Título 6).
@@ -602,6 +652,8 @@ pub enum ParaAttr {
     Image(Option<ImageRef>),
     Toc(Option<TocEntry>),
     Bibliography(Option<BibPart>),
+    Bookmark(Option<String>),
+    FigureIndex(Option<FigureEntry>),
 }
 
 impl ParaAttr {
@@ -626,6 +678,12 @@ impl ParaAttr {
             ParaAttr::Toc(Some(entry)) if !entry.is_valid() => invalid(format!(
                 "sumário {entry:?}: nível de 0 a {MAX_TOC_LEVEL}"
             )),
+            ParaAttr::Bookmark(Some(id)) if !crate::captions::is_bookmark(id) => {
+                invalid(format!("marcador {id:?}: de 1 a 32 letras ou dígitos"))
+            }
+            ParaAttr::FigureIndex(Some(entry)) if !entry.is_valid() => {
+                invalid(format!("índice de ilustrações {entry:?}: rótulo inválido"))
+            }
             ParaAttr::Shading(Some(c)) if !is_hex_color(c) => {
                 invalid(format!("sombreamento {c:?} não é #RRGGBB"))
             }
@@ -654,6 +712,11 @@ impl ParaAttr {
             ParaAttr::Bibliography(v) => (
                 "bibliography",
                 v.map(|b| AttrValue::Text(b.as_str().into())),
+            ),
+            ParaAttr::Bookmark(v) => ("bookmark", v.clone().map(AttrValue::Text)),
+            ParaAttr::FigureIndex(v) => (
+                "figureIndex",
+                v.as_ref().map(|e| AttrValue::Text(e.encode())),
             ),
         };
         (key.to_string(), value)
@@ -696,6 +759,14 @@ impl ParaAttrs {
             },
             bibliography: match map.get("bibliography") {
                 Some(AttrValue::Text(v)) => BibPart::parse(v),
+                _ => None,
+            },
+            bookmark: match map.get("bookmark") {
+                Some(AttrValue::Text(v)) if crate::captions::is_bookmark(v) => Some(v.clone()),
+                _ => None,
+            },
+            figure_index: match map.get("figureIndex") {
+                Some(AttrValue::Text(v)) => FigureEntry::decode(v),
                 _ => None,
             },
             shading: match map.get("shading") {

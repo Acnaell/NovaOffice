@@ -19,13 +19,24 @@ export type Mark =
   | { mark: "citation"; id: string; page?: string }
   /** Controlar Alterações: texto inserido e texto excluído (continua, riscado). */
   | { mark: "ins"; author: string; date: string }
-  | { mark: "del"; author: string; date: string };
+  | { mark: "del"; author: string; date: string }
+  /** Número de legenda: vai no caractere SEQ_CHAR; o número é calculado (Figura 1, 2…). */
+  | { mark: "seq"; label: string }
+  /** Referência cruzada: vai no caractere XREF_CHAR e aponta para o `bookmark` de um parágrafo. */
+  | { mark: "xref"; target: string; show: RefShow; page?: number };
+
+/** O que a referência cruzada mostra: "Figura 3" (ou o texto do título) ou a página. */
+export type RefShow = "label" | "page";
 
 /** Caractere da chamada de nota de rodapé (uso privado do Unicode, igual ao núcleo). */
 export const FOOTNOTE_CHAR = "\uE000";
 
 /** Caractere da chamada de citação (uso privado do Unicode, igual ao núcleo). */
 export const CITATION_CHAR = "\uE001";
+
+/** Caracteres do número de legenda e da referência cruzada (iguais ao núcleo). */
+export const SEQ_CHAR = "\uE002";
+export const XREF_CHAR = "\uE003";
 
 /** Cores de realce do Word (nomes do OOXML, `w:highlight`). */
 export type HighlightColor =
@@ -59,7 +70,8 @@ export type BlockStyle =
   | "heading5"
   | "heading6"
   | "quote"
-  | "code";
+  | "code"
+  | "caption";
 
 export interface Span {
   text: string;
@@ -92,9 +104,20 @@ export interface ParaAttrs {
   toc: TocEntry | null;
   /** Parágrafo da Bibliografia (título ou entrada), gerado a partir das fontes. */
   bibliography?: BibPart | null;
+  /** Marcador do parágrafo, alvo das referências cruzadas (legenda ou título). */
+  bookmark?: string | null;
+  /** Parágrafo do Índice de Ilustrações de um rótulo (título ou entrada). */
+  figureIndex?: FigureEntry | null;
 }
 
 export type BibPart = "title" | "entry";
+
+export interface FigureEntry {
+  label: string;
+  title: boolean;
+  /** Página da última atualização (a tela mostra a calculada na hora). */
+  page: number;
+}
 
 export interface TocEntry {
   /** 0 = título do sumário; 1 a 6 = nível do título. */
@@ -129,7 +152,9 @@ export type ParaAttr =
   | { attr: "cell"; value: CellRef | null }
   | { attr: "image"; value: ImageRef | null }
   | { attr: "toc"; value: TocEntry | null }
-  | { attr: "bibliography"; value: BibPart | null };
+  | { attr: "bibliography"; value: BibPart | null }
+  | { attr: "bookmark"; value: string | null }
+  | { attr: "figureIndex"; value: FigureEntry | null };
 
 export const MAX_INDENT = 8;
 

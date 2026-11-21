@@ -6,12 +6,17 @@
 //!
 //! Offsets são unidades UTF-16 dentro de um bloco (parágrafo).
 
+mod captions;
 mod citations;
 mod comments;
 mod design;
 mod format;
 mod track;
 
+pub use captions::{
+    is_caption_label, CaptionFields, FigureEntry, RefShow, CAPTION_LABELS, MAX_LABEL_CHARS,
+    MISSING_REF, SEQ_CHAR, XREF_CHAR,
+};
 pub use citations::{
     citation_text, BibPart, Person, Source, SourceKind, CITATION_CHAR, MAX_SOURCE_FIELD,
 };
@@ -551,6 +556,14 @@ impl TextDocument {
                     .filter(TocEntry::is_valid)
                     .map(|t| ParaAttr::Toc(Some(t))),
                 d.bibliography.map(|b| ParaAttr::Bibliography(Some(b))),
+                d.bookmark
+                    .clone()
+                    .filter(|b| captions::is_bookmark(b))
+                    .map(|b| ParaAttr::Bookmark(Some(b))),
+                d.figure_index
+                    .clone()
+                    .filter(FigureEntry::is_valid)
+                    .map(|e| ParaAttr::FigureIndex(Some(e))),
             ];
             commands.extend(
                 changes
@@ -685,6 +698,17 @@ impl TextDocument {
                         utf16_len(&text),
                         &[(MarkKind::Citation.key().to_string(), None)],
                     )?;
+                }
+                // E para o número da legenda e a referência cruzada.
+                for (ch, kind) in [(SEQ_CHAR, MarkKind::Seq), (XREF_CHAR, MarkKind::CrossRef)] {
+                    if !text.chars().all(|c| c == ch) {
+                        self.replica.format_text(
+                            block,
+                            offset,
+                            utf16_len(&text),
+                            &[(kind.key().to_string(), None)],
+                        )?;
+                    }
                 }
                 TextEvent::TextInserted {
                     block,

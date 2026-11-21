@@ -54,6 +54,7 @@ export const BLOCK_STYLES: BlockStyle[] = [
   "heading6",
   "quote",
   "code",
+  "caption",
 ];
 
 const styleCommand = (style: BlockStyle): CommandId => `style.${style}`;

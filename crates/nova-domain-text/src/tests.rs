@@ -545,6 +545,8 @@ fn alinhamento_recuo_espacamento_e_lista() {
             image: None,
             toc: None,
             bibliography: None,
+            bookmark: None,
+            figure_index: None,
         }
     );
     assert_eq!(doc.block_attrs(1).unwrap(), ParaAttrs::default());

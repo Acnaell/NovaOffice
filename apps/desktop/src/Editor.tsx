@@ -14,6 +14,7 @@ import { paginate, unpaginate, type PageInfo } from "./paginate";
 import { screenPages, tocTargets } from "./toc";
 import { citationOf, citationText } from "./citations";
 import { authorColor, revisionOf, type Markup } from "./tracking";
+import { captionLinkTarget, fieldAttrs, fieldClass, figureIndexClass, paintCaptionFields } from "./captions";
 import { commentOf, CommentsPane, usePendingHighlight, type CommentsPaneProps } from "./comments";
 import { footnoteOf, footnoteOrder, FootnotesLayer, FootnotesPrint, NOTE_SEPARATOR, noteHeight, notesByPage, type PageNotes } from "./footnotes";
 import { HeaderFooterLayer, splitFields, type Part } from "./headerfooter";
@@ -158,6 +159,8 @@ export function Editor(props: Props) {
       const size = el.style.fontSize || (el.parentElement ? getComputedStyle(el.parentElement).fontSize : "");
       if (size && el.style.getPropertyValue("--cite-size") !== size) el.style.setProperty("--cite-size", size);
     });
+    // Legendas e referências cruzadas: números e textos antes de medir.
+    paintCaptionFields(root, latest.current.view.blocks);
     // Notas de rodapé: número de cada chamada antes de medir (o número ocupa espaço na linha).
     const order = footnoteOrder(latest.current.view.blocks);
     const refs = root.querySelectorAll<HTMLElement>(".fn-ref");
@@ -195,6 +198,8 @@ export function Editor(props: Props) {
         if (el.dataset.page !== page) el.dataset.page = page;
       });
     }
+    // Referências de página e páginas do Índice de Ilustrações, com as páginas reais.
+    paintCaptionFields(root, latest.current.view.blocks, screenPages(root));
     latest.current.onPageInfo(info);
   };
   useLayoutEffect(() => repaginate.current(), [props.revision, props.showMarks, props.selection.focus.block, page]);
@@ -533,7 +538,8 @@ export function Editor(props: Props) {
       if (!(e.ctrlKey || e.metaKey)) return;
       // Entrada do Sumário: vai para o título, como os links do sumário do Word.
       const entry = (e.target as HTMLElement | null)?.closest<HTMLElement>(".toc-entry");
-      const target = entry && tocTargets(latest.current.view.blocks).get(Number(entry.dataset.block));
+      // Referência cruzada e entrada do Índice de Ilustrações: vão para a legenda ou o título.
+      const target = (entry ? tocTargets(latest.current.view.blocks).get(Number(entry.dataset.block)) : undefined) ?? captionLinkTarget(e.target as HTMLElement | null, latest.current.view.blocks);
       if (target !== undefined && target !== null) {
         e.preventDefault();
         const sel = { anchor: { block: target, offset: 0 }, focus: { block: target, offset: 0 } };
@@ -800,7 +806,7 @@ const Block = memo(function Block({
     <Tag
       data-block={index}
       data-marker={marker ?? undefined}
-      className={`block block-${block.style}${marker ? ` list list-${block.attrs.list}` : ""}${block.attrs.pageBreakBefore ? " page-break" : ""}${tocClass(block)}${block.attrs.bibliography ? ` bib-${block.attrs.bibliography}` : ""}`}
+      className={`block block-${block.style}${marker ? ` list list-${block.attrs.list}` : ""}${block.attrs.pageBreakBefore ? " page-break" : ""}${tocClass(block)}${block.attrs.bibliography ? ` bib-${block.attrs.bibliography}` : ""}${figureIndexClass(block)}`}
       data-page-break={block.attrs.pageBreakBefore ? labels.pageBreak : undefined}
       style={paragraphStyle(block.attrs)}
     >
@@ -817,7 +823,8 @@ const Block = memo(function Block({
             data-rev={revisionOf(span.marks)?.mark}
             data-cite={citationOf(span.marks)?.id}
             data-page={citationOf(span.marks)?.page}
-            className={[footnoteOf(span.marks) ? "fn-ref" : citationOf(span.marks) ? "cite-ref" : linkOf(span.marks) ? "link" : "", commentOf(span.marks) ? "cm" : "", revisionOf(span.marks) ? `rev-${revisionOf(span.marks)!.mark}` : ""].join(" ").trim() || undefined}
+            {...fieldAttrs(span.marks)}
+            className={[footnoteOf(span.marks) ? "fn-ref" : citationOf(span.marks) ? "cite-ref" : fieldClass(span.marks) || (linkOf(span.marks) ? "link" : ""), commentOf(span.marks) ? "cm" : "", revisionOf(span.marks) ? `rev-${revisionOf(span.marks)!.mark}` : ""].join(" ").trim() || undefined}
             data-href={linkOf(span.marks) ?? undefined}
             title={linkOf(span.marks) ? `${linkOf(span.marks)}\n${labels.followLink}` : revisionTitle(span.marks, labels)}
           >

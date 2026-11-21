@@ -78,7 +78,8 @@ export type CommandId =
   | "style.heading5"
   | "style.heading6"
   | "style.quote"
-  | "style.code";
+  | "style.code"
+  | "style.caption";
 
 export type Profile = "word-pt" | "word-en";
 type Bindings = Partial<Record<CommandId, string[]>>;
