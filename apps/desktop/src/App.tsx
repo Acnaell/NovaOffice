@@ -65,6 +65,8 @@ import { addComment, commentAt, commentTarget, deleteAllComments, deleteComment,
 import { findToc, insertToc, removeToc, screenPages, updateToc } from "./toc";
 import { citedSources, findBibliography, insertBibliography, insertCitation, newSourceId, removeBibliography, updateBibliography } from "./citations";
 import { CitationDialog, SourcesDialog } from "./citations.tsx";
+import { CAPTION_LABELS, findFigureIndexes, insertCaption, insertCrossRef, insertFigureIndex, newBookmarkId, updateFigureIndexes } from "./captions";
+import { CaptionDialog, CrossRefDialog, FigureIndexDialog } from "./captions.tsx";
 import { SpellingPane } from "./SpellingPane";
 import { AutoCorrectDialog } from "./AutoCorrectDialog";
 import { WordCountDialog } from "./WordCountDialog";
@@ -770,6 +772,10 @@ export default function App() {
   // Referências → Inserir Citação e Gerenciar Fontes.
   const [citationOpen, setCitationOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  // Referências → Legendas: Inserir Legenda, Índice de Ilustrações e Referência Cruzada.
+  const [captionOpen, setCaptionOpen] = useState(false);
+  const [figureIndexOpen, setFigureIndexOpen] = useState(false);
+  const [crossRefOpen, setCrossRefOpen] = useState(false);
 
   // Uma tecla digitada chega como um text.insert de um caractere (sozinho ou
   // depois de apagar a seleção). A correção vai num comando próprio: Ctrl+Z
@@ -1434,6 +1440,18 @@ export default function App() {
   const hasBibliography = findBibliography(view.blocks) !== null;
   const bibLabels = { title: t("bib.title"), empty: t("bib.empty") };
   const saveSource = (id: string, value: Source | null) => runCommand({ type: "source.set", id, value });
+  // Legendas: o título de cada índice no idioma da interface.
+  const hasFigureIndex = findFigureIndexes(view.blocks).length > 0;
+  const figureLabels = {
+    title: (label: string) => (CAPTION_LABELS.includes(label) ? t(`cap.list.${label}` as MessageKey) : t("cap.listOf", { label: label.toUpperCase() })),
+    empty: t("cap.indexEmpty"),
+  };
+  const closeCaptions = () => {
+    setCaptionOpen(false);
+    setFigureIndexOpen(false);
+    setCrossRefOpen(false);
+    focusEditor();
+  };
 
   return (
     <div className={`app${painter ? " painting" : ""}${focusMode ? " focus-mode" : ""}`}>
@@ -1597,6 +1615,11 @@ export default function App() {
             onInsertBibliography={() => run((doc, sel) => insertBibliography(doc, sel, bibLabels))}
             onUpdateBibliography={() => run((doc, sel) => updateBibliography(doc, sel, bibLabels))}
             onRemoveBibliography={() => run((doc, sel) => removeBibliography(doc, sel))}
+            hasFigureIndex={hasFigureIndex}
+            onInsertCaption={() => setCaptionOpen(true)}
+            onInsertFigureIndex={() => setFigureIndexOpen(true)}
+            onUpdateFigureIndex={() => run((doc, sel) => updateFigureIndexes(doc, sel, tocPages(), figureLabels))}
+            onCrossRef={() => setCrossRefOpen(true)}
             onCommand={onCommand}
             profile={profile}
           />
@@ -1684,6 +1707,38 @@ export default function App() {
               setCitationOpen(false);
               focusEditor();
             }}
+          />
+        )}
+        {captionOpen && (
+          <CaptionDialog
+            blocks={view.blocks}
+            caretBlock={selection.focus.block}
+            inTable={!!view.blocks[selection.focus.block]?.attrs.cell}
+            onInsert={(label, position, description) => {
+              closeCaptions();
+              run((doc, sel) => insertCaption(doc, sel, label, position, description));
+            }}
+            onClose={closeCaptions}
+          />
+        )}
+        {figureIndexOpen && (
+          <FigureIndexDialog
+            blocks={view.blocks}
+            onInsert={(label) => {
+              closeCaptions();
+              run((doc, sel) => insertFigureIndex(doc, sel, label, tocPages(), figureLabels));
+            }}
+            onClose={closeCaptions}
+          />
+        )}
+        {crossRefOpen && (
+          <CrossRefDialog
+            blocks={view.blocks}
+            onInsert={(target, show) => {
+              closeCaptions();
+              run((doc, sel) => insertCrossRef(doc, sel, target, show, tocPages()(target), newBookmarkId));
+            }}
+            onClose={closeCaptions}
           />
         )}
         {sourcesOpen && (

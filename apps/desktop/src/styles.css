@@ -3666,3 +3666,82 @@ select {
   color: var(--chrome-muted);
   font-size: 13px;
 }
+
+/* ---------- Legendas, Índice de Ilustrações e Referência Cruzada ---------- */
+
+/* Estilo Legenda: letra menor e espaço simples, como pede a ABNT (NBR 14724). */
+.page .block-caption {
+  font-size: 10pt;
+  line-height: 1.15;
+  margin: 6pt 0;
+}
+
+/* Número da legenda e referência cruzada: o caractere fica invisível e o texto
+   gerado (data-text) aparece, como na chamada de citação. */
+.page .seq-ref,
+.page .xref-ref {
+  font-size: 0 !important;
+}
+
+.page .seq-ref::after,
+.page .xref-ref::after {
+  content: attr(data-text);
+  font-size: var(--field-size, 11pt);
+}
+
+/* Título do índice: centralizado, em maiúsculas e negrito (ABNT). */
+.page .fig-title {
+  text-align: center;
+  font-weight: bold;
+  text-transform: uppercase;
+  margin: 12pt 0;
+}
+
+/* Entrada do índice: texto, pontilhado e a página da legenda (data-page), como no Sumário. */
+.page .fig-entry {
+  position: relative;
+  padding-right: 2.4em;
+  margin-bottom: 4pt;
+  background-image: radial-gradient(circle, #555 0.7px, transparent 0.95px);
+  background-size: 5px 3px;
+  background-repeat: repeat-x;
+  background-position: left bottom 0.3em;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.page .fig-entry > span {
+  position: relative;
+  z-index: 1;
+  background: var(--page-bg);
+  padding-right: 0.3em;
+}
+
+.page .fig-entry::after {
+  content: attr(data-page);
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  min-width: 2.4em;
+  padding-left: 0.3em;
+  text-align: right;
+  background: var(--page-bg);
+}
+
+.caption-preview {
+  font-size: 12.5px;
+}
+
+.xref-dialog {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.xref-dialog select[size] {
+  width: 100%;
+}
+
+.dialog-note {
+  margin: 0;
+  color: var(--chrome-muted);
+  font-size: 12.5px;
+}

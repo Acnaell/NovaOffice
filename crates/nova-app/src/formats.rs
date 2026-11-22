@@ -134,6 +134,8 @@ pub fn save(doc: &TextDocument, format: Format, title: &str) -> Vec<u8> {
                 &crate::citations::texts(doc),
                 str::to_string,
             );
+            let text =
+                crate::captions::replace(&text, &crate::captions::texts(doc), str::to_string);
             let mut text = notes::replace_calls(&text, &notes, |n| format!("[{n}]"));
             if !notes.texts.is_empty() {
                 text.push_str("\n\n");
@@ -1039,5 +1041,169 @@ segunda linha",
             rejected.to_plain_text(),
             "O relatório antigo ficou pronto.\nSegunda linha."
         );
+    }
+
+    #[test]
+    fn legendas_indice_e_referencias_vao_e_voltam() {
+        use nova_domain_text::{
+            BlockStyle, FigureEntry, Mark, Paragraph, RefShow, Span, SEQ_CHAR, XREF_CHAR,
+        };
+        let plain = |text: &str| Span {
+            text: text.into(),
+            marks: vec![],
+        };
+        let seq = |label: &str| Span {
+            text: SEQ_CHAR.to_string(),
+            marks: vec![Mark::Seq {
+                label: label.into(),
+            }],
+        };
+        let xref = |target: &str, show, page| Span {
+            text: XREF_CHAR.to_string(),
+            marks: vec![Mark::CrossRef {
+                target: target.into(),
+                show,
+                page,
+            }],
+        };
+        let para = |style, spans: Vec<Span>| Paragraph {
+            style,
+            spans,
+            ..Paragraph::default()
+        };
+        let with = |mut p: Paragraph, bookmark: Option<&str>, index: Option<FigureEntry>| {
+            p.attrs.bookmark = bookmark.map(Into::into);
+            p.attrs.figure_index = index;
+            p
+        };
+        let entry = |title, page| {
+            Some(FigureEntry {
+                label: "Figura".into(),
+                title,
+                page,
+            })
+        };
+        let paragraphs = vec![
+            with(
+                para(BlockStyle::Heading1, vec![plain("Introdução")]),
+                Some("intro"),
+                None,
+            ),
+            para(
+                BlockStyle::Paragraph,
+                vec![
+                    plain("Veja a "),
+                    xref("f2", RefShow::Label, None),
+                    plain(" na página "),
+                    xref("f2", RefShow::Page, Some(3)),
+                    plain(", a "),
+                    xref("t1", RefShow::Label, None),
+                    plain(" e "),
+                    xref("intro", RefShow::Label, None),
+                    plain("."),
+                ],
+            ),
+            para(
+                BlockStyle::Caption,
+                vec![plain("Figura "), seq("Figura"), plain(" – Mapa")],
+            ),
+            with(
+                para(
+                    BlockStyle::Caption,
+                    vec![plain("Tabela "), seq("Tabela"), plain(" – Dados")],
+                ),
+                Some("t1"),
+                None,
+            ),
+            with(
+                para(
+                    BlockStyle::Caption,
+                    vec![plain("Figura "), seq("Figura"), plain(" – Gráfico")],
+                ),
+                Some("f2"),
+                None,
+            ),
+            with(
+                para(BlockStyle::Paragraph, vec![plain("LISTA DE FIGURAS")]),
+                None,
+                entry(true, 0),
+            ),
+            with(
+                para(BlockStyle::Paragraph, vec![plain("Figura 1 – Mapa")]),
+                None,
+                entry(false, 2),
+            ),
+            with(
+                para(BlockStyle::Paragraph, vec![plain("Figura 2 – Gráfico")]),
+                None,
+                entry(false, 3),
+            ),
+            para(BlockStyle::Paragraph, vec![plain("Fim.")]),
+        ];
+        type Row = (
+            BlockStyle,
+            String,
+            Option<String>,
+            Option<FigureEntry>,
+            Vec<Mark>,
+        );
+        let rows = |d: &TextDocument| -> Vec<Row> {
+            d.paragraphs()
+                .into_iter()
+                .map(|p| {
+                    let fields = p
+                        .spans
+                        .iter()
+                        .flat_map(|s| s.marks.clone())
+                        .filter(|m| matches!(m, Mark::Seq { .. } | Mark::CrossRef { .. }))
+                        .collect();
+                    (
+                        p.style,
+                        p.text(),
+                        p.attrs.bookmark.clone(),
+                        p.attrs.figure_index.clone(),
+                        fields,
+                    )
+                })
+                .collect()
+        };
+        let doc = TextDocument::from_paragraphs(1, &paragraphs).unwrap();
+        let want = rows(&doc);
+        for format in [Format::Docx, Format::Odt, Format::Nova] {
+            let bytes = save(&doc, format, "t");
+            let back = open(2, Path::new(&format!("x.{}", format.extension())), &bytes).unwrap();
+            assert_eq!(rows(&back), want, "{format:?}");
+            assert!(!back.can_undo(), "{format:?}");
+        }
+        // Nos formatos de texto, o número e a referência viram texto.
+        let txt = String::from_utf8(save(&doc, Format::Text, "t")).unwrap();
+        assert!(
+            txt.contains("Veja a Figura 2 na página 3, a Tabela 1 e Introdução.")
+                && txt.contains("Figura 2 – Gráfico\n"),
+            "{txt}"
+        );
+        // O .docx tem os campos e marcadores que o Word espera.
+        let bytes = save(&doc, Format::Docx, "t");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut document = String::new();
+        std::io::Read::read_to_string(
+            &mut zip.by_name("word/document.xml").unwrap(),
+            &mut document,
+        )
+        .unwrap();
+        for needle in [
+            r#" SEQ Figura \* ARABIC "#,
+            r#" REF _Reff2 \h "#,
+            r#" PAGEREF _Reff2 \h "#,
+            r#" TOC \h \z \c "Figura" "#,
+            r#"<w:bookmarkStart w:id="2" w:name="_Reft1"/>"#,
+            r#"<w:pStyle w:val="Caption"/>"#,
+        ] {
+            assert!(document.contains(needle), "{needle}\n{document}");
+        }
+        // O marcador da legenda cobre só "Figura 2", como o Word grava.
+        let start = document.find(r#"w:name="_Reff2""#).unwrap();
+        let end = document[start..].find("<w:bookmarkEnd").unwrap();
+        assert!(!document[start..start + end].contains("Gráfico"));
     }
 }

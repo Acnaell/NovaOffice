@@ -165,7 +165,13 @@ pub fn export(doc: &TextDocument) -> Vec<u8> {
             document_rels(&links, &media_names),
         ),
         ("word/document.xml", body),
-        ("word/styles.xml", STYLES_XML.to_string()),
+        (
+            "word/styles.xml",
+            STYLES_XML.replace(
+                "</w:styles>",
+                &format!("{}</w:styles>", crate::captions::DOCX_STYLES),
+            ),
+        ),
         ("word/numbering.xml", numbering_xml(&nums)),
     ];
     files.extend(extra_files);
@@ -519,6 +525,7 @@ fn style_id(style: BlockStyle) -> Option<&'static str> {
         BlockStyle::Heading6 => Some("Heading6"),
         BlockStyle::Quote => Some("Quote"),
         BlockStyle::Code => Some("Code"),
+        BlockStyle::Caption => Some("Caption"),
     }
 }
 
@@ -715,6 +722,9 @@ fn body_xml(
         .saturating_sub(page.margin_left + page.margin_right)
         .max(1440);
     let mut toc_open = false;
+    // Legendas e referências cruzadas; o índice de ilustrações aberto (rótulo).
+    let mut captions = crate::captions::DocxWriter::new(paragraphs);
+    let mut fig_open: Option<&str> = None;
     for (index, p) in paragraphs.iter().enumerate() {
         table.before(&mut out, p);
         if is_bib(Some(p)) && !bib_open {
@@ -730,6 +740,10 @@ fn body_xml(
             None if a.bibliography == Some(BibPart::Entry) => {
                 ppr.push_str(r#"<w:pStyle w:val="Bibliography"/>"#)
             }
+            None if a.figure_index.is_some() => ppr.push_str(match a.figure_index {
+                Some(ref e) if e.title => r#"<w:pStyle w:val="TableofFiguresHeading"/>"#,
+                _ => r#"<w:pStyle w:val="TableofFigures"/>"#,
+            }),
             None => {
                 if let Some(id) = style_id(p.style) {
                     ppr.push_str(&format!(r#"<w:pStyle w:val="{id}"/>"#));
@@ -779,7 +793,8 @@ fn body_xml(
             }
             ppr.push_str("/>");
         }
-        if a.toc.is_some_and(|t| t.level > 0) {
+        let fig_entry = a.figure_index.as_ref().filter(|e| !e.title);
+        if a.toc.is_some_and(|t| t.level > 0) || fig_entry.is_some() {
             ppr.push_str(&format!(
                 r#"<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{text_width}"/></w:tabs>"#
             ));
@@ -800,6 +815,14 @@ fn body_xml(
             out.push_str("<w:pPr>");
             out.push_str(&ppr);
             out.push_str("</w:pPr>");
+        }
+        captions.start(&mut out, p);
+        if let Some(e) = fig_entry.filter(|e| fig_open != Some(e.label.as_str())) {
+            if fig_open.is_some() {
+                out.push_str(r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#);
+            }
+            out.push_str(&crate::captions::docx_index_begin(&e.label));
+            fig_open = Some(&e.label);
         }
         let toc_entry = a.toc.filter(|t| t.level > 0);
         if toc_entry.is_some() && !toc_open {
@@ -898,6 +921,10 @@ fn body_xml(
                 }
                 continue;
             }
+            // Número de legenda e referência cruzada: campos SEQ, REF e PAGEREF.
+            if captions.span(&mut out, span, &run_xml) {
+                continue;
+            }
             revision_run_xml(&mut out, span, &mut revision_id);
         }
         if open_link.is_some() {
@@ -920,6 +947,21 @@ fn body_xml(
                 "<w:r><w:tab/></w:r><w:r><w:t>{}</w:t></w:r>",
                 entry.page.max(1)
             ));
+        }
+        if let Some(e) = fig_entry {
+            out.push_str(&format!(
+                "<w:r><w:tab/></w:r><w:r><w:t>{}</w:t></w:r>",
+                e.page.max(1)
+            ));
+        }
+        captions.end(&mut out);
+        let next_in_fig = paragraphs
+            .get(index + 1)
+            .and_then(|n| n.attrs.figure_index.as_ref())
+            .is_some_and(|n| !n.title && fig_open == Some(n.label.as_str()));
+        if fig_open.is_some() && !next_in_fig {
+            out.push_str(r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#);
+            fig_open = None;
         }
         let next_is_entry = paragraphs
             .get(index + 1)
@@ -1274,6 +1316,9 @@ fn style_from(id: &str, name: &str) -> Option<BlockStyle> {
     if name == "code" || name.contains("código") || name == "html preformatted" {
         return Some(BlockStyle::Code);
     }
+    if name == "caption" || name == "legenda" {
+        return Some(BlockStyle::Caption);
+    }
     None
 }
 
@@ -1418,6 +1463,8 @@ struct StyleInfo {
     toc: Option<u8>,
     /// Estilo de Bibliografia ("Bibliography" do Word, "Bibliography 1" do LibreOffice).
     bib: Option<BibPart>,
+    /// Estilo do Índice de Ilustrações ("table of figures"; `true` é o do título).
+    fig: Option<bool>,
     num: Option<(u32, u8)>,
     based_on: Option<String>,
     rpr: Vec<Prop>,
@@ -1458,6 +1505,7 @@ impl Styles {
             num: chain.iter().rev().find_map(|s| s.num),
             toc: chain.last().and_then(|s| s.toc),
             bib: chain.last().and_then(|s| s.bib),
+            fig: chain.last().and_then(|s| s.fig),
             ..StyleInfo::default()
         }
     }
@@ -1537,6 +1585,7 @@ fn read_styles(xml: &str) -> Styles {
                         info.style = style_from(&id, &name);
                         info.toc = toc_level(&name);
                         info.bib = bib_part(&name);
+                        info.fig = crate::captions::index_style(&name);
                         info.num = num_lvl.0.map(|n| (n, num_lvl.1));
                         by_id.insert(id, info);
                     }
@@ -1816,6 +1865,8 @@ struct Field {
     instr: String,
     separated: bool,
     kind: FieldKind,
+    /// Resultado de um campo que vira caractere (a página de um PAGEREF).
+    result: String,
 }
 
 #[derive(Default, PartialEq)]
@@ -1825,10 +1876,18 @@ enum FieldKind {
     /// Citação de uma fonte conhecida: o resultado vira a chamada.
     Citation(String, Option<String>),
     Bibliography,
+    /// Número de legenda, referência cruzada ou índice de ilustrações.
+    Caption(crate::captions::DocxField),
 }
 
 /// O que um campo é, pela instrução (fontes pela tag do Word).
-fn field_kind(instr: &str, tags: &HashMap<String, String>) -> FieldKind {
+/// Dentro de um Sumário ou índice (`in_toc`), as referências ficam como texto.
+fn field_kind(instr: &str, tags: &HashMap<String, String>, in_toc: bool) -> FieldKind {
+    match crate::captions::docx_field(instr) {
+        Some(crate::captions::DocxField::Ref(..)) if in_toc => return FieldKind::Other,
+        Some(f) => return FieldKind::Caption(f),
+        None => {}
+    }
     let word = instr.split_whitespace().next().unwrap_or("");
     if word.eq_ignore_ascii_case("BIBLIOGRAPHY") {
         return FieldKind::Bibliography;
@@ -1916,6 +1975,10 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
     let (sources, source_tags) = read_sources(&mut zip);
     let mut fields: Vec<Field> = Vec::new();
     let mut in_instr = false;
+    // Índice de ilustrações que terminou no parágrafo atual (rótulo) e os
+    // marcadores de cada parágrafo (alvos de referências cruzadas).
+    let mut fig_closed: Option<String> = None;
+    let (mut para_bookmarks, mut bookmarks) = (Vec::new(), Vec::new());
     // w:sdt aninhados e a profundidade do w:sdt da Bibliografia (galeria "Bibliographies").
     let (mut sdt_depth, mut bib_sdt) = (0u32, None::<u32>);
     let mut bib_title_seen = false;
@@ -2028,6 +2091,9 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         }
         if info.bib.is_some() {
             p.attrs.bibliography = info.bib;
+        }
+        if let Some(title) = info.fig {
+            crate::captions::index_entry(&mut p, None, title);
         }
         // Lista: a do parágrafo, ou a herdada do estilo (Lista com Marcadores…).
         if let Some((num_id, lvl)) = para_num.or(info.num) {
@@ -2184,15 +2250,35 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                     b"fldChar" => match attr(e, b"fldCharType").as_deref() {
                         Some("begin") => fields.push(Field::default()),
                         Some("separate") => {
+                            let in_toc = fields
+                                .iter()
+                                .rev()
+                                .skip(1)
+                                .any(|f| crate::captions::is_toc_instr(&f.instr));
                             if let Some(f) = fields.last_mut() {
-                                f.kind = field_kind(&f.instr, &source_tags);
+                                f.kind = field_kind(&f.instr, &source_tags, in_toc);
                                 f.separated = true;
                             }
                         }
                         Some("end") => {
                             if let Some(mut f) = fields.pop() {
                                 if !f.separated {
-                                    f.kind = field_kind(&f.instr, &source_tags);
+                                    let in_toc = fields
+                                        .iter()
+                                        .any(|f| crate::captions::is_toc_instr(&f.instr));
+                                    f.kind = field_kind(&f.instr, &source_tags, in_toc);
+                                }
+                                if let FieldKind::Caption(c) = &f.kind {
+                                    if let Some(span) =
+                                        crate::captions::docx_field_span(c, &f.result, &run.marks)
+                                    {
+                                        para.get_or_insert_with(Paragraph::default)
+                                            .spans
+                                            .push(span);
+                                    }
+                                    if let crate::captions::DocxField::FigureIndex(l) = c {
+                                        fig_closed = Some(l.clone());
+                                    }
                                 }
                                 if let FieldKind::Citation(id, page) = f.kind {
                                     let mut marks = run.marks.clone();
@@ -2324,6 +2410,13 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                         }
                     }
                     // Trecho comentado: vale o comentário aberto por último (respostas não marcam).
+                    b"bookmarkStart" => {
+                        if let Some(id) =
+                            attr(e, b"name").and_then(|n| crate::captions::bookmark_id(&n))
+                        {
+                            para_bookmarks.push(id);
+                        }
+                    }
                     b"commentRangeStart" => {
                         if let Some((id, c)) = attr(e, b"id").and_then(|w| docx_comments.get(&w)) {
                             comment_ranged.insert(id.clone());
@@ -2437,7 +2530,12 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                 }
             }
             // O resultado de um campo de citação não entra: vira a chamada no fim do campo.
-            Event::Text(_) if in_text && citing(&fields) => {}
+            Event::Text(t) if in_text && citing(&fields) => {
+                if let Some(f) = fields.iter_mut().rev().find(|f| f.separated) {
+                    f.result
+                        .push_str(&t.unescape().map_err(|e| invalid(format!("XML: {e}")))?);
+                }
+            }
             Event::Text(t) if in_text && skip_depth == 0 => {
                 last_reference = None;
                 let text = t.unescape().map_err(|e| invalid(format!("XML: {e}")))?;
@@ -2522,6 +2620,19 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                         if p.attrs.bibliography == Some(BibPart::Title) {
                             bib_title_seen = true;
                         }
+                        // Índice de ilustrações: as entradas ficam no campo TOC \c.
+                        let fig_label = fields
+                            .iter()
+                            .find_map(|f| match &f.kind {
+                                FieldKind::Caption(crate::captions::DocxField::FigureIndex(l)) => {
+                                    Some(l.clone())
+                                }
+                                _ => None,
+                            })
+                            .or(fig_closed.take());
+                        if fig_label.is_some() {
+                            crate::captions::index_entry(&mut p, fig_label, false);
+                        }
                         // Imagens do parágrafo: cada uma num parágrafo próprio, antes do texto.
                         if !para_images.is_empty() {
                             let attrs = nova_domain_text::ParaAttrs {
@@ -2552,6 +2663,10 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
                             carry_break = true;
                         } else {
                             out.push(p);
+                            if !para_bookmarks.is_empty() {
+                                bookmarks
+                                    .push((out.len() - 1, std::mem::take(&mut para_bookmarks)));
+                            }
                         }
                         from_break = false;
                     }
@@ -2563,6 +2678,8 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
         }
         buf.clear();
     }
+    crate::captions::apply_bookmarks(&mut out, &bookmarks);
+    crate::captions::fix_index_titles(&mut out);
     if out.is_empty() {
         out.push(Paragraph::default());
     }
@@ -2631,9 +2748,16 @@ fn read_document(bytes: &[u8]) -> Result<Document, AppError> {
 
 /// Dentro do resultado de um campo de citação (o texto dele não entra).
 fn citing(fields: &[Field]) -> bool {
-    fields
-        .iter()
-        .any(|f| f.separated && matches!(f.kind, FieldKind::Citation(..)))
+    fields.iter().any(|f| {
+        f.separated
+            && matches!(
+                f.kind,
+                FieldKind::Citation(..)
+                    | FieldKind::Caption(
+                        crate::captions::DocxField::Seq(_) | crate::captions::DocxField::Ref(..)
+                    )
+            )
+    })
 }
 
 /// Cores que o Word e o LibreOffice dão aos links.

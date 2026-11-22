@@ -64,6 +64,7 @@ const TAG: Record<BlockStyle, string> = {
   heading6: "h6",
   quote: "blockquote",
   code: "pre",
+  caption: "p",
 };
 
 function spanHtml(text: string, marks: Mark[]): string {

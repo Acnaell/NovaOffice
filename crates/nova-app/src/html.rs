@@ -52,7 +52,9 @@ fn span_html(text: &str, marks: &[Mark]) -> String {
             | Mark::Comment { .. }
             | Mark::Insert { .. }
             | Mark::Delete { .. }
-            | Mark::Citation { .. } => {}
+            | Mark::Citation { .. }
+            | Mark::Seq { .. }
+            | Mark::CrossRef { .. } => {}
             Mark::Highlight { value } => {
                 let hex = HIGHLIGHT
                     .iter()
@@ -200,6 +202,7 @@ pub fn export(doc: &TextDocument, title: &str) -> String {
                     BlockStyle::Heading6 => "h6",
                     BlockStyle::Quote => "blockquote",
                     BlockStyle::Code => "pre",
+                    BlockStyle::Caption => "p",
                 };
                 body.push_str(&paragraph_html(&p, tag, img.as_deref()));
             }
@@ -213,6 +216,7 @@ pub fn export(doc: &TextDocument, title: &str) -> String {
         body.push_str("</td></tr></table>");
     }
     let body = crate::citations::replace(&body, &crate::citations::texts(doc), esc);
+    let body = crate::captions::replace(&body, &crate::captions::texts(doc), esc);
     let notes = crate::notes::collect(doc);
     let mut body = crate::notes::replace_calls(&body, &notes, |n| {
         format!(r##"<sup><a href="#nota-{n}" id="chamada-{n}">{n}</a></sup>"##)

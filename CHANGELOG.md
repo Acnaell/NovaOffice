@@ -8,6 +8,17 @@ A seção da versão é usada como texto da página de release no GitHub.
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Legendas, Índice de Ilustrações e Referência Cruzada** (Referências → Legendas): Inserir
+  Legenda numera figuras, tabelas, quadros, gráficos e equações (ou um rótulo novo), acima ou abaixo
+  do item, no estilo Legenda e com o travessão da ABNT ("Figura 1 – Mapa"); a numeração se refaz
+  sozinha. Inserir Índice de Ilustrações monta a "LISTA DE FIGURAS" com pontilhado e páginas, e
+  Atualizar Índice a refaz. Referência Cruzada insere "Figura 3", o texto de um título ou a página,
+  que acompanham a numeração e seguem com Ctrl+clique. Lidos e gravados em .docx (campos SEQ, REF,
+  PAGEREF e TOC `\c` com marcadores) e .odt (`text:sequence`, `text:sequence-ref`,
+  `text:bookmark-ref` e os índices de ilustrações e de tabelas), validados no LibreOffice.
+
 ## [0.1.16] - 2026-11-21
 
 ### Adicionado
